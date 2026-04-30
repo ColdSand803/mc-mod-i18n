@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+.venv-*/
+
+# Build outputs
+build/
+dist/
+*.spec~
+
+# Runtime/output folders
+.ui_runs/
+.ui_runs_exe/
+.tmp/
+dist-test/
+dist-test-exe/
+
+# Local test mods and generated packs
+测试mod/
+*.jar
+*.zip
+
+# Logs
+*.log
+
+# IDE/editor
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
