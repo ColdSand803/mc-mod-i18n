@@ -30,3 +30,6 @@ dist-test-exe/
 .vscode/
 .DS_Store
 Thumbs.db
+
+.claude
+.codex

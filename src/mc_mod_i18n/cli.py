@@ -4,18 +4,22 @@ import argparse
 from io import BytesIO
 from pathlib import Path
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from zipfile import BadZipFile, ZipFile
 
 from .detector import detect_mod
 from .hardcoded import scan_jar_for_hardcoded
 from .lang import collect_lang_documents, target_path_for
-from .pack import OutputLangDocument, write_resource_pack
+from .pack import OutputLangDocument, read_pack_icon, resource_pack_filename, write_resource_pack
 from .report import ReportEntry, write_hardcoded_map_template, write_hardcoded_report, write_report
 from .translator import (
+    AI_PROVIDER_PRESETS,
     CopyTranslator,
     GlossaryTranslator,
     OpenAICompatibleTranslator,
     TranslationItem,
+    get_provider_preset,
+    is_ai_provider,
     load_glossary,
 )
 from .validator import validate_translation
@@ -46,12 +50,19 @@ def build_parser() -> argparse.ArgumentParser:
     translate.add_argument("--out", default="dist", help="output directory")
     translate.add_argument("--source-locale", default="en_us")
     translate.add_argument("--target-locale", default="zh_cn")
-    translate.add_argument("--provider", choices=["copy", "glossary", "openai-compatible"], default="glossary")
+    translate.add_argument("--provider", choices=["copy", "glossary", *AI_PROVIDER_PRESETS.keys()], default="glossary")
     translate.add_argument("--glossary", help="path to glossary JSON object")
     translate.add_argument("--overwrite-existing", action="store_true", help="overwrite existing target locale entries")
+    translate.add_argument("--skip-translated", action="store_true", help="skip JARs that already contain target locale files")
     translate.add_argument("--pack-format", type=int, default=15)
     translate.add_argument("--api-url", default="https://api.openai.com/v1/chat/completions")
     translate.add_argument("--api-key-env", default="OPENAI_API_KEY")
+    translate.add_argument("--api-key", default="", help="API key value; if omitted, --api-key-env is used")
+    translate.add_argument("--api-debug-log", default="", help="write OpenAI-compatible request/response JSONL log")
+    translate.add_argument("--api-concurrency", type=int, default=1, help="parallel API batches for OpenAI-compatible providers")
+    translate.add_argument("--api-retries", type=int, default=5, help="retry count for retryable API failures")
+    translate.add_argument("--api-batch-size", type=int, default=40, help="translation entries per API request")
+    translate.add_argument("--api-timeout", type=float, default=10.0, help="API request timeout seconds")
     translate.add_argument("--model", default="gpt-4o-mini")
     translate.add_argument("--scan-hardcoded", action="store_true", help="scan class constant pools and write hardcoded reports")
     translate.add_argument("--hardcoded-limit", type=int, default=5000, help="maximum hardcoded candidates to report")
@@ -76,15 +87,18 @@ def translate_command(args: argparse.Namespace) -> int:
     report_entries: list[ReportEntry] = []
     hardcoded_entries = []
 
-    for jar_path in jars:
+    def process_single(jar_path: Path) -> tuple[list[OutputLangDocument], list[ReportEntry], list]:
+        docs: list[OutputLangDocument] = []
+        report: list[ReportEntry] = []
+        hardcoded: list = []
         try:
             jar_documents, jar_report = process_jar(jar_path, args, translator)
-            output_documents.extend(jar_documents)
-            report_entries.extend(jar_report)
+            docs.extend(jar_documents)
+            report.extend(jar_report)
             if args.scan_hardcoded:
-                hardcoded_entries.extend(scan_jar_for_hardcoded(str(jar_path), max_entries=args.hardcoded_limit))
+                hardcoded.extend(scan_jar_for_hardcoded(str(jar_path), max_entries=args.hardcoded_limit))
         except (BadZipFile, RuntimeError, ValueError) as exc:
-            report_entries.append(
+            report.append(
                 ReportEntry(
                     jar=jar_path.name,
                     mod_id="unknown",
@@ -96,8 +110,25 @@ def translate_command(args: argparse.Namespace) -> int:
                     message=str(exc),
                 )
             )
+        return docs, report, hardcoded
 
-    pack_path = out_dir / "auto-i18n-resourcepack.zip"
+    if len(jars) <= 1:
+        for jar_path in jars:
+            jar_documents, jar_report, jar_hardcoded = process_single(jar_path)
+            output_documents.extend(jar_documents)
+            report_entries.extend(jar_report)
+            hardcoded_entries.extend(jar_hardcoded)
+    else:
+        worker_count = 1 if is_ai_provider(args.provider) else len(jars)
+        with ThreadPoolExecutor(max_workers=min(worker_count, len(jars))) as executor:
+            futures = {executor.submit(process_single, jar_path): jar_path for jar_path in jars}
+            for future in as_completed(futures):
+                jar_documents, jar_report, jar_hardcoded = future.result()
+                output_documents.extend(jar_documents)
+                report_entries.extend(jar_report)
+                hardcoded_entries.extend(jar_hardcoded)
+
+    pack_path = out_dir / resource_pack_filename(jars)
     report_path = out_dir / "report.html"
     hardcoded_report_path = out_dir / "hardcoded-report.html"
     hardcoded_map_path = out_dir / "hardcoded-map.template.json"
@@ -106,7 +137,8 @@ def translate_command(args: argparse.Namespace) -> int:
             pack_path,
             output_documents,
             args.pack_format,
-            f"Auto generated {args.target_locale} translations",
+            "§b汉化工具§r§6By co1dsand",
+            read_pack_icon(Path.cwd() / "co1dsand_logo.png"),
         )
     write_report(report_path, report_entries)
     if args.scan_hardcoded:
@@ -137,10 +169,32 @@ def create_translator(args: argparse.Namespace):
         return CopyTranslator()
     if args.provider == "glossary":
         return GlossaryTranslator(load_glossary(args.glossary))
+    if not is_ai_provider(args.provider):
+        raise ValueError(f"unknown provider: {args.provider}")
+    preset = get_provider_preset(args.provider)
+    default_preset = get_provider_preset("openai-compatible")
+    api_url = args.api_url or preset.api_url
+    api_key_env = args.api_key_env or preset.api_key_env
+    model = args.model or preset.model
+    if args.provider != "openai-compatible":
+        if args.api_url == default_preset.api_url:
+            api_url = preset.api_url
+        if args.api_key_env == default_preset.api_key_env:
+            api_key_env = preset.api_key_env
+        if args.model == default_preset.model:
+            model = preset.model
     return OpenAICompatibleTranslator(
-        api_url=args.api_url,
-        api_key_env=args.api_key_env,
-        model=args.model,
+        api_url=api_url,
+        api_key_env=api_key_env,
+        api_key=getattr(args, "api_key", ""),
+        model=model,
+        provider_label=preset.label,
+        debug_log_path=getattr(args, "api_debug_log", ""),
+        concurrency=getattr(args, "api_concurrency", 1),
+        max_retries=getattr(args, "api_retries", 5),
+        batch_size=max(1, getattr(args, "api_batch_size", 40)),
+        request_timeout=max(1.0, getattr(args, "api_timeout", 10.0)),
+        progress_callback=getattr(args, "progress_callback", None),
     )
 
 
@@ -157,6 +211,24 @@ def process_zip(
 ) -> tuple[list[OutputLangDocument], list[ReportEntry]]:
     documents: list[OutputLangDocument] = []
     report: list[ReportEntry] = []
+
+    if getattr(args, "skip_translated", False):
+        json_target_docs = [doc for doc in collect_lang_documents(zf, args.target_locale) if doc.format == "json"]
+        if json_target_docs:
+            metadata = detect_mod(zf, jar_label)
+            report.append(
+                ReportEntry(
+                    jar=jar_label,
+                    mod_id=metadata.mod_id,
+                    file="",
+                    key="",
+                    source="",
+                    target="",
+                    status="skipped",
+                    message=f"already contains {args.target_locale} translations",
+                )
+            )
+            return documents, report
 
     nested_jars = [name for name in sorted(zf.namelist()) if name.startswith("META-INF/jarjar/") and name.endswith(".jar")]
     for nested_name in nested_jars:
@@ -230,8 +302,25 @@ def process_zip(
             items.append(TranslationItem(id=item_id, key=key, text=source_text, mod_id=source_doc.mod_id))
 
         translations = translator.translate_batch(items) if items else {}
+        failed_items = getattr(translator, "failed_items", {})
 
         for item_id, (key, source_text) in item_sources.items():
+            if item_id in failed_items:
+                fallback = existing_entries.get(key, source_text)
+                output_entries[key] = fallback
+                report.append(
+                    ReportEntry(
+                        jar=jar_label,
+                        mod_id=source_doc.mod_id,
+                        file=target_path,
+                        key=key,
+                        source=source_text,
+                        target=fallback,
+                        status="api_failed",
+                        message=str(failed_items[item_id]),
+                    )
+                )
+                continue
             translated = translations.get(item_id, source_text)
             errors = validate_translation(source_text, translated)
             if errors:

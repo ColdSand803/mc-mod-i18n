@@ -35,7 +35,8 @@ python -m mc_mod_i18n translate ./example.jar --out ./dist
 
 - `copy`：复制原文，适合测试流程
 - `glossary`：使用内置术语和可选 `glossary.json` 做规则翻译
-- `openai-compatible`：调用 OpenAI 兼容 Chat Completions 接口
+- `openai` / `deepseek` / `moonshot` / `dashscope` / `zhipu` / `siliconflow`：内置常见 AI 翻译器预设
+- `openai-compatible`：自定义 OpenAI 兼容 Chat Completions 接口
 
 使用自定义术语表：
 
@@ -53,12 +54,15 @@ python -m mc_mod_i18n translate ./mods --provider glossary --glossary glossary.j
 }
 ```
 
-使用 OpenAI 兼容接口：
+使用 AI 接口：
 
 ```bash
 $env:OPENAI_API_KEY="sk-..."
-python -m mc_mod_i18n translate ./mods --provider openai-compatible --model gpt-4o-mini
+python -m mc_mod_i18n translate ./mods --provider openai --model gpt-4o-mini
+python -m mc_mod_i18n translate ./mods --provider deepseek --api-key "sk-..." --model deepseek-chat
 ```
+
+Web UI 可以直接填写 API Key；如果留空，则读取对应环境变量，例如 `OPENAI_API_KEY`、`DEEPSEEK_API_KEY`、`DASHSCOPE_API_KEY`。
 
 默认输出：
 
@@ -123,3 +127,11 @@ dist-test/
 ```
 
 `hardcoded-report.html` 用来确认哪些英文属于 Ponder / config / UI literal；`hardcoded-map.template.json` 后续用于生成补丁 Mod 或汉化配置模板。
+
+Web UI 处理完成后会显示“硬编码映射工作台”：
+
+- 可按 `ponder`、`config_comment`、`ui_literal`、`unknown_literal` 筛选候选文本
+- 可直接填写每条候选的 `translation`
+- 可导入已有 `hardcoded-map.json` / `hardcoded-map.template.json` 继续编辑
+- 导出时只写入已填写译文的条目，文件名为 `hardcoded-map.json`
+- 导出前会校验 `%s`、`%1$s`、`{0}`、`§a` 和换行等占位符
