@@ -441,6 +441,7 @@ class OpenAICompatibleTranslator(Translator):
         batch_size: int = 40,
         request_timeout: float = 10.0,
         progress_callback: Callable[..., None] | None = None,
+        task_id: str = "",
     ) -> None:
         self.api_url = normalize_chat_completions_url(api_url)
         self.api_key_env = api_key_env
@@ -453,8 +454,8 @@ class OpenAICompatibleTranslator(Translator):
         self.batch_size = max(1, batch_size)
         self.request_timeout = max(1.0, request_timeout)
         self.progress_callback = progress_callback
+        self.task_id = task_id
         self._debug_log_lock = Lock()
-        self._failed_items_lock = Lock()
         self._rate_limiter = RateLimiter()
         self.failed_items: dict[str, str] = {}
 
@@ -464,31 +465,24 @@ class OpenAICompatibleTranslator(Translator):
             raise RuntimeError(f"{self.provider_label} API Key 未填写，且环境变量 {self.api_key_env} 未设置")
         if not items:
             return {}
-        self._clear_failures(items)
 
         result: dict[str, str] = {}
+        failed_items: dict[str, str] = {}
         chunks = chunked(items, self.batch_size)
         total = len(chunks)
         self._report_progress(0, total)
-        completed = 0
         workers = max(1, min(self.concurrency, total))
-        if workers <= 1:
-            for chunk in chunks:
-                result.update(self._translate_chunk_safely(chunk, api_key))
-                completed += 1
-                self._report_progress(1, 0)
-            return result
 
         chunk_queue: Queue[list[TranslationItem]] = Queue()
         for chunk in chunks:
             chunk_queue.put(chunk)
         with ThreadPoolExecutor(max_workers=workers) as executor:
-            futures = [executor.submit(self._translate_worker, chunk_queue, api_key) for _ in range(workers)]
+            futures = [executor.submit(self._translate_worker, chunk_queue, failed_items, api_key) for _ in range(workers)]
             for future in as_completed(futures):
                 worker_result, worker_completed = future.result()
                 result.update(worker_result)
-                completed += worker_completed
                 self._report_progress(worker_completed, 0)
+        self.failed_items = failed_items
         return result
 
     def _report_progress(self, completed: int, total: int) -> None:
@@ -502,6 +496,7 @@ class OpenAICompatibleTranslator(Translator):
     def _translate_worker(
         self,
         chunk_queue: Queue[list[TranslationItem]],
+        failed_items: dict[str, str],
         api_key: str,
     ) -> tuple[dict[str, str], int]:
         translated: dict[str, str] = {}
@@ -512,27 +507,20 @@ class OpenAICompatibleTranslator(Translator):
                 chunk = chunk_queue.get_nowait()
             except Empty:
                 break
-            translated.update(self._translate_chunk_safely(chunk, api_key))
+            translated.update(self._translate_chunk_safely(chunk, failed_items, api_key))
             completed += 1
         return translated, completed
 
-    def _translate_chunk_safely(self, items: list[TranslationItem], api_key: str) -> dict[str, str]:
+    def _translate_chunk_safely(self, items: list[TranslationItem], failed_items: dict[str, str], api_key: str) -> dict[str, str]:
         try:
             return self._translate_chunk(items, api_key)
         except Exception as exc:
-            self._record_failed_items(items, str(exc))
+            self._record_failed_items(items, reason=str(exc), failed_items=failed_items)
             return {}
 
-    def _clear_failures(self, items: list[TranslationItem]) -> None:
-        item_ids = {item.id for item in items}
-        with self._failed_items_lock:
-            for item_id in item_ids:
-                self.failed_items.pop(item_id, None)
-
-    def _record_failed_items(self, items: list[TranslationItem], reason: str) -> None:
-        with self._failed_items_lock:
-            for item in items:
-                self.failed_items[item.id] = reason
+    def _record_failed_items(self, items: list[TranslationItem], reason: str, failed_items: dict[str, str]) -> None:
+        for item in items:
+            failed_items[item.id] = reason
         self._write_debug_log(
             {
                 "type": "batch_failed",
@@ -718,6 +706,7 @@ class OpenAICompatibleTranslator(Translator):
         path.parent.mkdir(parents=True, exist_ok=True)
         record = {
             "time": datetime.now(timezone.utc).astimezone(_BEIJING_TZ).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3],
+            "task_id": self.task_id,
             **record,
         }
         with self._debug_log_lock:

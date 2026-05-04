@@ -1,0 +1,2 @@
+[console_scripts]
+mc-mod-i18n = mc_mod_i18n.cli:main

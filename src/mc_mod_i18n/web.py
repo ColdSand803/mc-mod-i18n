@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 import argparse
+import hashlib
 import json
 import mimetypes
 from pathlib import Path
@@ -11,14 +13,14 @@ from threading import Event, Lock, Thread
 import time
 from typing import Any
 from urllib.parse import unquote, urlparse
-from zipfile import BadZipFile
+from zipfile import BadZipFile, ZipFile
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from .cli import create_translator, process_jar
+from .core import compute_zip_source_hash, create_translator, process_jar
 from .hardcoded import HardcodedEntry
 from .hardcoded import scan_jar_for_hardcoded
-from .pack import OutputLangDocument, read_pack_icon, resource_pack_filename, update_resource_pack_entries, write_resource_pack
+from .pack import OutputLangDocument, load_checkpoint, load_checkpoint_source_hash, read_pack_icon, resolve_pack_format, resource_pack_filename, save_checkpoint, update_resource_pack_entries, write_resource_pack
 from .report import (
     ReportEntry,
     build_hardcoded_map_template,
@@ -46,10 +48,25 @@ INDEX_HTML = r"""<!doctype html>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <script>
+    (() => {
+      try {
+        const key = 'mc-mod-i18n-theme';
+        const mode = localStorage.getItem(key) || 'auto';
+        const resolved = mode === 'auto'
+          ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+          : mode;
+        document.documentElement.dataset.themeMode = mode;
+        document.documentElement.dataset.theme = resolved;
+        document.documentElement.style.colorScheme = resolved;
+      } catch (error) {}
+    })();
+  </script>
   <style>
     :root {
       color-scheme: light;
       --bg: #f8f9ff;
+      --surface: #f8fafc;
       --panel: #ffffff;
       --panel-2: #eff4ff;
       --text: #0b1c30;
@@ -61,6 +78,70 @@ INDEX_HTML = r"""<!doctype html>
       --success: #16a34a;
       --warning: #f97316;
       --sidebar: #f1f5f9;
+      --nav-text: #32445c;
+      --tab-text: #34465c;
+      --field-bg: #ffffff;
+      --field-bg-soft: #f1f5f9;
+      --chip-bg: #ffffff;
+      --accent-soft: #eaf2ff;
+      --accent-soft-hover: #eff6ff;
+      --accent-soft-active: #dbeafe;
+      --accent-soft-line: #cfe1fb;
+      --accent-active-line: #93c5fd;
+      --danger-bg: #fff0ea;
+      --danger-line: #f0c6b8;
+      --loading-from: #fbfcfe;
+      --loading-to: #f5f8fb;
+      --overlay: rgba(15, 23, 42, .34);
+      --scroll-thumb: #c0ccd9;
+      --scroll-track: rgba(203, 213, 225, .36);
+      --dropdown-scroll-track: rgba(219, 227, 239, .7);
+      --dropdown-scroll-thumb: rgba(37, 99, 235, .34);
+      --dropdown-scroll-thumb-hover: rgba(37, 99, 235, .54);
+      --dropdown-scroll-thumb-active: rgba(0, 74, 198, .74);
+      --dropdown-scroll-shadow: rgba(37, 99, 235, .16);
+      --check-bg: linear-gradient(180deg, #ffffff, #f4f8ff);
+      --check-border: #b9c9dc;
+      --check-border-hover: #7ea8ea;
+      --check-checked: linear-gradient(180deg, #2563eb, #004ac6);
+      --check-checked-border: #004ac6;
+      --check-tick: #ffffff;
+      --check-shadow: rgba(37, 99, 235, .16);
+      --control-hover-bg: linear-gradient(180deg, #f8fbff, #eff6ff);
+      --control-hover-border: #9fc0f7;
+      --control-hover-text: #004ac6;
+      --control-active-bg: linear-gradient(135deg, #2563eb, #004ac6);
+      --control-active-border: #004ac6;
+      --control-active-text: #ffffff;
+      --control-active-shadow: 0 12px 28px rgba(37, 99, 235, .22);
+      --field-border: #d4deeb;
+      --field-border-hover: #9fc0f7;
+      --field-surface: linear-gradient(180deg, #ffffff, #f7faff);
+      --field-surface-soft: linear-gradient(180deg, #f8fbff, #eef4fb);
+      --field-shadow: inset 0 1px 0 rgba(255, 255, 255, .9), 0 6px 18px rgba(15, 23, 42, .05);
+      --field-shadow-hover: inset 0 1px 0 rgba(255, 255, 255, .95), 0 12px 28px rgba(37, 99, 235, .10);
+      --help-bg: rgba(234, 242, 255, .88);
+      --help-border: rgba(159, 192, 247, .56);
+      --help-text: #4d6483;
+      --status-info-bg: linear-gradient(180deg, #fbfdff, #eef4fb);
+      --status-info-border: #d8e4f2;
+      --status-info-text: #4d6483;
+      --status-success-bg: linear-gradient(180deg, #f2fff7, #e8fbef);
+      --status-success-border: #bbf7d0;
+      --status-success-text: #166534;
+      --status-error-bg: linear-gradient(180deg, #fff7f4, #fff0ea);
+      --status-error-border: #f0c6b8;
+      --status-error-text: #ba1a1a;
+      --status-accent-shadow: inset 4px 0 0 rgba(37, 99, 235, .22);
+      --card-surface: linear-gradient(180deg, #ffffff, #f7fbff);
+      --card-surface-soft: linear-gradient(180deg, #fbfdff, #f1f6fc);
+      --card-surface-strong: linear-gradient(135deg, #f8fbff, #edf4ff);
+      --card-border: #dbe5f0;
+      --card-shadow-soft: 0 10px 28px rgba(15, 23, 42, .06);
+      --card-shadow-strong: 0 18px 38px rgba(15, 23, 42, .10);
+      --card-highlight: rgba(37, 99, 235, .10);
+      --table-alt: #fcfdff;
+      --table-hover: #eef6ff;
       --shadow: 0 4px 14px rgba(15, 23, 42, .07);
       --radius-sm: 10px;
       --radius-md: 14px;
@@ -68,6 +149,88 @@ INDEX_HTML = r"""<!doctype html>
       --motion-fast: 160ms;
       --motion-base: 220ms;
       --focus-ring: 0 0 0 3px rgba(38, 104, 168, .14);
+    }
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --bg: #020617;
+      --surface: #040b18;
+      --panel: #0b1220;
+      --panel-2: #101a2d;
+      --text: #e5eefb;
+      --muted: #8da0ba;
+      --line: #22314a;
+      --accent: #60a5fa;
+      --accent-2: #3b82f6;
+      --danger: #fca5a5;
+      --success: #22c55e;
+      --warning: #fb923c;
+      --sidebar: #06101f;
+      --nav-text: #c0d2e8;
+      --tab-text: #c7d6ea;
+      --field-bg: #0f172a;
+      --field-bg-soft: #0b1527;
+      --chip-bg: #0f172a;
+      --accent-soft: rgba(96, 165, 250, .16);
+      --accent-soft-hover: rgba(96, 165, 250, .14);
+      --accent-soft-active: rgba(96, 165, 250, .20);
+      --accent-soft-line: rgba(96, 165, 250, .24);
+      --accent-active-line: rgba(147, 197, 253, .32);
+      --danger-bg: rgba(239, 68, 68, .14);
+      --danger-line: rgba(248, 113, 113, .24);
+      --loading-from: #081120;
+      --loading-to: #0b1628;
+      --overlay: rgba(2, 6, 23, .72);
+      --scroll-thumb: #314158;
+      --scroll-track: rgba(30, 41, 59, .52);
+      --dropdown-scroll-track: rgba(15, 23, 42, .88);
+      --dropdown-scroll-thumb: rgba(96, 165, 250, .34);
+      --dropdown-scroll-thumb-hover: rgba(125, 211, 252, .54);
+      --dropdown-scroll-thumb-active: rgba(147, 197, 253, .74);
+      --dropdown-scroll-shadow: rgba(96, 165, 250, .22);
+      --check-bg: linear-gradient(180deg, #111c31, #0b1527);
+      --check-border: #325072;
+      --check-border-hover: #60a5fa;
+      --check-checked: linear-gradient(180deg, #60a5fa, #2563eb);
+      --check-checked-border: #7dd3fc;
+      --check-tick: #03111f;
+      --check-shadow: rgba(96, 165, 250, .24);
+      --control-hover-bg: linear-gradient(180deg, rgba(96, 165, 250, .18), rgba(37, 99, 235, .24));
+      --control-hover-border: rgba(125, 211, 252, .5);
+      --control-hover-text: #d8ebff;
+      --control-active-bg: linear-gradient(135deg, #7dd3fc, #3b82f6);
+      --control-active-border: #93c5fd;
+      --control-active-text: #03111f;
+      --control-active-shadow: 0 14px 32px rgba(37, 99, 235, .28);
+      --field-border: #28405f;
+      --field-border-hover: #60a5fa;
+      --field-surface: linear-gradient(180deg, #101a2d, #0b1527);
+      --field-surface-soft: linear-gradient(180deg, #0f1a2f, #0a1426);
+      --field-shadow: inset 0 1px 0 rgba(255, 255, 255, .03), 0 10px 26px rgba(0, 0, 0, .18);
+      --field-shadow-hover: inset 0 1px 0 rgba(255, 255, 255, .04), 0 16px 34px rgba(37, 99, 235, .18);
+      --help-bg: rgba(15, 23, 42, .84);
+      --help-border: rgba(59, 130, 246, .24);
+      --help-text: #9fb4cf;
+      --status-info-bg: linear-gradient(180deg, #101b30, #0b1629);
+      --status-info-border: #22314a;
+      --status-info-text: #9db2cc;
+      --status-success-bg: linear-gradient(180deg, rgba(34, 197, 94, .14), rgba(21, 128, 61, .14));
+      --status-success-border: rgba(74, 222, 128, .32);
+      --status-success-text: #86efac;
+      --status-error-bg: linear-gradient(180deg, rgba(248, 113, 113, .12), rgba(239, 68, 68, .16));
+      --status-error-border: rgba(248, 113, 113, .28);
+      --status-error-text: #fecaca;
+      --status-accent-shadow: inset 4px 0 0 rgba(96, 165, 250, .28);
+      --card-surface: linear-gradient(180deg, #0d172a, #0a1324);
+      --card-surface-soft: linear-gradient(180deg, #101b31, #0b1527);
+      --card-surface-strong: linear-gradient(135deg, rgba(96, 165, 250, .12), rgba(15, 23, 42, .92));
+      --card-border: #22314a;
+      --card-shadow-soft: 0 16px 34px rgba(0, 0, 0, .22);
+      --card-shadow-strong: 0 22px 46px rgba(0, 0, 0, .30);
+      --card-highlight: rgba(96, 165, 250, .16);
+      --table-alt: #0e1626;
+      --table-hover: #122036;
+      --shadow: 0 18px 40px rgba(0, 0, 0, .34);
+      --focus-ring: 0 0 0 3px rgba(96, 165, 250, .22);
     }
 
     * { box-sizing: border-box; }
@@ -84,7 +247,7 @@ INDEX_HTML = r"""<!doctype html>
       min-height: 100vh;
       display: grid;
       grid-template-columns: minmax(260px, 300px) minmax(0, 1fr);
-      background: #f8fafc;
+      background: var(--surface);
     }
     .side-nav {
       border-right: 1px solid var(--line);
@@ -121,39 +284,43 @@ INDEX_HTML = r"""<!doctype html>
       gap: 12px;
       min-height: 44px;
       padding: 0 14px;
-      color: #32445c;
+      border: 1px solid transparent;
+      color: var(--nav-text);
       border-radius: var(--radius-sm);
       font-size: 14px;
       font-weight: 600;
-      transition: background-color var(--motion-fast) ease, color var(--motion-fast) ease, box-shadow var(--motion-fast) ease, transform var(--motion-fast) ease;
+      transition: background-color var(--motion-fast) ease, border-color var(--motion-fast) ease, color var(--motion-fast) ease, box-shadow var(--motion-fast) ease, transform var(--motion-fast) ease;
     }
     button.nav-item,
     .tab-pill {
       width: 100%;
-      border: 0;
+      border: 1px solid transparent;
       background: transparent;
-      color: #32445c;
+      color: var(--nav-text);
       text-align: left;
       justify-content: flex-start;
     }
     .tab-pill {
       width: auto;
-      height: 32px;
-      padding: 0 2px;
-      color: #34465c;
+      height: 34px;
+      padding: 0 12px;
+      color: var(--tab-text);
       font-size: 14px;
       font-weight: 700;
-      border-bottom: 2px solid transparent;
-      transition: color var(--motion-fast) ease, border-color var(--motion-fast) ease, opacity var(--motion-fast) ease;
+      border-radius: 999px;
+      transition: color var(--motion-fast) ease, border-color var(--motion-fast) ease, background-color var(--motion-fast) ease, box-shadow var(--motion-fast) ease, opacity var(--motion-fast) ease;
     }
     .tab-pill.active {
-      color: var(--accent);
-      border-bottom-color: var(--accent);
+      color: var(--control-active-text);
+      border-color: var(--control-active-border);
+      background: var(--control-active-bg);
+      box-shadow: var(--control-active-shadow);
     }
     .nav-item.active {
-      color: var(--accent);
-      background: #eaf2ff;
-      box-shadow: inset -3px 0 0 var(--accent);
+      color: var(--control-active-text);
+      border-color: var(--control-active-border);
+      background: var(--control-active-bg);
+      box-shadow: var(--control-active-shadow);
     }
     .nav-footer {
       margin-top: auto;
@@ -193,7 +360,7 @@ INDEX_HTML = r"""<!doctype html>
       gap: 20px;
       padding: 0 24px;
       border-bottom: 1px solid var(--line);
-      background: #fff;
+      background: var(--panel);
       box-shadow: 0 1px 3px rgba(15, 23, 42, .04);
       z-index: 5;
     }
@@ -211,7 +378,7 @@ INDEX_HTML = r"""<!doctype html>
       display: flex;
       align-items: center;
       gap: 24px;
-      color: #34465c;
+      color: var(--tab-text);
       font-size: 14px;
       font-weight: 600;
       overflow-x: auto;
@@ -237,7 +404,7 @@ INDEX_HTML = r"""<!doctype html>
       padding: 0 10px;
       border: 1px solid var(--line);
       border-radius: 999px;
-      background: #fff;
+      background: var(--chip-bg);
       color: var(--muted);
       font-size: 12px;
       font-weight: 700;
@@ -248,15 +415,15 @@ INDEX_HTML = r"""<!doctype html>
       height: 40px;
       border: 1px solid transparent;
       border-radius: var(--radius-sm);
-      background: #f1f5f9;
+      background: var(--field-bg-soft);
       padding: 0 14px;
       color: var(--text);
       transition: border-color var(--motion-fast) ease, box-shadow var(--motion-fast) ease, background-color var(--motion-fast) ease;
     }
     .top-search:focus {
-      border-color: #8eb6f0;
+      border-color: var(--accent-2);
       box-shadow: var(--focus-ring);
-      background: #fff;
+      background: var(--field-bg);
     }
     .ghost-select,
     .ghost-file {
@@ -272,7 +439,7 @@ INDEX_HTML = r"""<!doctype html>
       min-height: 42px;
       border: 1px solid var(--line);
       border-radius: var(--radius-sm);
-      background: #fff;
+      background: var(--field-bg);
       color: var(--text);
       padding: 0 12px;
       font: inherit;
@@ -320,11 +487,44 @@ INDEX_HTML = r"""<!doctype html>
       gap: 4px;
       max-height: 280px;
       overflow: auto;
-      padding: 6px;
+      padding: 6px 8px 6px 6px;
       border: 1px solid var(--line);
       border-radius: var(--radius-md);
-      background: #fff;
+      background: var(--field-bg);
       box-shadow: 0 18px 40px rgba(15, 23, 42, .16);
+      scrollbar-width: thin;
+      scrollbar-color: var(--dropdown-scroll-thumb) var(--dropdown-scroll-track);
+      scrollbar-gutter: stable;
+      overscroll-behavior: contain;
+    }
+    .ghost-menu::-webkit-scrollbar {
+      width: 14px;
+      height: 14px;
+    }
+    .ghost-menu::-webkit-scrollbar-track {
+      margin: 6px 0;
+      border-radius: 999px;
+      background: var(--dropdown-scroll-track);
+      box-shadow: inset 0 0 0 1px var(--line);
+    }
+    .ghost-menu::-webkit-scrollbar-thumb {
+      min-height: 40px;
+      border: 3px solid transparent;
+      border-radius: 999px;
+      background: linear-gradient(180deg, var(--dropdown-scroll-thumb-hover), var(--dropdown-scroll-thumb));
+      background-clip: padding-box;
+      box-shadow: inset 0 0 0 1px var(--dropdown-scroll-shadow);
+    }
+    .ghost-menu::-webkit-scrollbar-thumb:hover {
+      background: linear-gradient(180deg, var(--dropdown-scroll-thumb-hover), var(--dropdown-scroll-thumb-active));
+      background-clip: padding-box;
+    }
+    .ghost-menu::-webkit-scrollbar-thumb:active {
+      background: linear-gradient(180deg, var(--dropdown-scroll-thumb-active), var(--dropdown-scroll-thumb-active));
+      background-clip: padding-box;
+    }
+    .ghost-menu::-webkit-scrollbar-corner {
+      background: transparent;
     }
     .ghost-menu[hidden] {
       display: none;
@@ -346,14 +546,14 @@ INDEX_HTML = r"""<!doctype html>
       transition: background-color var(--motion-fast) ease, border-color var(--motion-fast) ease, color var(--motion-fast) ease, transform var(--motion-fast) ease;
     }
     .ghost-option:hover {
-      background: #eff6ff;
-      border-color: #cfe1fb;
-      color: #1d4ed8;
+      background: var(--accent-soft-hover);
+      border-color: var(--accent-soft-line);
+      color: var(--accent);
     }
     .ghost-option.active {
-      background: #dbeafe;
-      border-color: #93c5fd;
-      color: #1d4ed8;
+      background: var(--accent-soft-active);
+      border-color: var(--accent-active-line);
+      color: var(--accent);
     }
     .ghost-option strong {
       font-size: 13px;
@@ -417,7 +617,7 @@ INDEX_HTML = r"""<!doctype html>
       align-items: center;
       justify-content: space-between;
       gap: 12px;
-      background: #fff;
+      background: var(--panel);
     }
     h1, h2 {
       margin: 0;
@@ -436,7 +636,7 @@ INDEX_HTML = r"""<!doctype html>
       border-bottom: 1px solid var(--line);
       display: grid;
       gap: 14px;
-      background: #fff;
+      background: var(--panel);
     }
     .form-card h3 {
       margin: 0;
@@ -451,29 +651,41 @@ INDEX_HTML = r"""<!doctype html>
       gap: 7px;
       font-size: 13px;
       font-weight: 600;
-      color: #40536b;
+      color: var(--nav-text);
     }
     input, select, textarea {
       width: 100%;
-      border: 1px solid var(--line);
+      border: 1px solid var(--field-border);
       border-radius: var(--radius-sm);
-      background: #fff;
+      background: var(--field-surface);
       color: var(--text);
-      padding: 0 10px;
+      padding: 0 12px;
       font: inherit;
       outline: none;
-      transition: border-color var(--motion-fast) ease, box-shadow var(--motion-fast) ease, background-color var(--motion-fast) ease, transform var(--motion-fast) ease;
+      box-shadow: var(--field-shadow);
+      transition: border-color var(--motion-fast) ease, box-shadow var(--motion-fast) ease, background var(--motion-fast) ease, color var(--motion-fast) ease, transform var(--motion-fast) ease;
+    }
+    input:hover,
+    select:hover,
+    textarea:hover {
+      border-color: var(--field-border-hover);
+      box-shadow: var(--field-shadow-hover);
     }
     input:focus, select:focus, textarea:focus {
-      border-color: #6ba2d4;
-      box-shadow: var(--focus-ring);
+      border-color: var(--accent-2);
+      background: var(--field-surface);
+      box-shadow: var(--focus-ring), var(--field-shadow-hover);
     }
     input, select {
       height: 42px;
     }
+    input::placeholder,
+    textarea::placeholder {
+      color: color-mix(in srgb, var(--muted) 84%, transparent);
+    }
     textarea {
       min-height: 76px;
-      padding: 9px 10px;
+      padding: 10px 12px;
       resize: vertical;
       line-height: 1.45;
     }
@@ -481,7 +693,67 @@ INDEX_HTML = r"""<!doctype html>
       height: auto;
       padding: 14px;
       border-style: dashed;
-      background: #f8fafc;
+      background: var(--field-surface-soft);
+    }
+    input[type="checkbox"] {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 18px;
+      height: 18px;
+      margin: 0;
+      padding: 0;
+      border: 1.5px solid var(--check-border);
+      border-radius: 6px;
+      background: var(--check-bg);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35), 0 6px 16px var(--check-shadow);
+      display: inline-grid;
+      place-content: center;
+      cursor: pointer;
+      position: relative;
+      flex: 0 0 auto;
+      transition: border-color var(--motion-fast) ease, background var(--motion-fast) ease, box-shadow var(--motion-fast) ease, transform var(--motion-fast) ease;
+    }
+    input[type="checkbox"]::after {
+      content: "";
+      width: 5px;
+      height: 9px;
+      border-right: 2px solid transparent;
+      border-bottom: 2px solid transparent;
+      transform: rotate(45deg) scale(.7);
+      transform-origin: center;
+      opacity: 0;
+      transition: transform var(--motion-fast) ease, opacity var(--motion-fast) ease, border-color var(--motion-fast) ease;
+    }
+    input[type="checkbox"]:hover {
+      border-color: var(--check-border-hover);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35), 0 10px 22px var(--check-shadow);
+      transform: translateY(-1px);
+    }
+    input[type="checkbox"]:focus-visible {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: var(--focus-ring), inset 0 1px 0 rgba(255, 255, 255, .35), 0 10px 22px var(--check-shadow);
+    }
+    input[type="checkbox"]:checked {
+      background: var(--check-checked);
+      border-color: var(--check-checked-border);
+      box-shadow: 0 10px 22px var(--check-shadow);
+    }
+    input[type="checkbox"]:checked::after {
+      opacity: 1;
+      border-color: var(--check-tick);
+      transform: rotate(45deg) scale(1);
+    }
+    input[type="checkbox"]:disabled {
+      cursor: not-allowed;
+      opacity: .56;
+      transform: none;
+      box-shadow: none;
+    }
+    input[type="checkbox"]:disabled:hover {
+      border-color: var(--check-border);
+      transform: none;
+      box-shadow: none;
     }
     .grid-2 {
       display: grid;
@@ -494,18 +766,30 @@ INDEX_HTML = r"""<!doctype html>
       gap: 12px;
     }
     .field-help {
-      color: var(--muted);
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      width: fit-content;
+      max-width: 100%;
+      padding: 4px 10px;
+      border: 1px solid var(--help-border);
+      border-radius: 999px;
+      background: var(--help-bg);
+      color: var(--help-text);
       font-size: 12px;
       line-height: 1.45;
-      font-weight: 500;
+      font-weight: 600;
     }
     .api-box {
       display: grid;
       gap: 12px;
       padding: 14px;
-      border: 1px solid #cfdce8;
+      border: 1px solid var(--card-border);
       border-radius: var(--radius-md);
-      background: #f8fbff;
+      background:
+        radial-gradient(circle at top right, var(--card-highlight), transparent 42%),
+        linear-gradient(180deg, var(--panel-2), var(--field-bg));
+      box-shadow: var(--card-shadow-soft), inset 0 1px 0 rgba(255, 255, 255, .06);
     }
     .api-box[hidden] {
       display: none;
@@ -520,15 +804,36 @@ INDEX_HTML = r"""<!doctype html>
       display: block;
       font-size: 13px;
     }
+    .api-box-title {
+      display: grid;
+      gap: 6px;
+      min-width: 0;
+    }
+    .api-box-title > div {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      min-width: 0;
+    }
     .checkline {
       display: flex;
       align-items: center;
       gap: 10px;
       font-weight: 500;
+      cursor: pointer;
+      user-select: none;
     }
     .checkline input {
-      width: 16px;
-      height: 16px;
+      margin-top: -1px;
+    }
+    .checkline input:checked {
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--check-checked-border) 20%, transparent), 0 10px 22px var(--check-shadow);
+    }
+    .checkline input:checked + span,
+    .checkline input:checked ~ span {
+      color: var(--text);
+      font-weight: 700;
     }
     button {
       border: 0;
@@ -554,22 +859,27 @@ INDEX_HTML = r"""<!doctype html>
       background: var(--accent-2);
     }
     button:disabled {
-      cursor: wait;
+      cursor: not-allowed;
       opacity: .65;
     }
+    button[aria-busy="true"] {
+      cursor: wait;
+    }
     .status {
-      min-height: 44px;
-      padding: 11px 12px;
+      min-height: 52px;
+      padding: 12px 14px;
+      border: 1px solid var(--status-info-border);
       border-radius: var(--radius-md);
-      background: var(--panel-2);
-      color: var(--muted);
+      background: var(--status-info-bg);
+      color: var(--status-info-text);
       font-size: 13px;
       line-height: 1.45;
+      box-shadow: var(--status-accent-shadow);
     }
     .status.error {
-      background: #fff0ea;
-      color: var(--danger);
-      border: 1px solid #f0c6b8;
+      background: var(--status-error-bg);
+      color: var(--status-error-text);
+      border-color: var(--status-error-border);
     }
     .loading-card {
       min-height: 260px;
@@ -577,13 +887,20 @@ INDEX_HTML = r"""<!doctype html>
       place-items: center;
       gap: 16px;
       padding: 28px;
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius-lg);
       text-align: center;
-      background: linear-gradient(180deg, #fbfcfe, #f5f8fb);
+      background:
+        radial-gradient(circle at top, var(--card-highlight), transparent 52%),
+        linear-gradient(180deg, var(--loading-from), var(--loading-to));
+      box-shadow: var(--card-shadow-strong);
+      position: relative;
+      overflow: hidden;
     }
     .spinner {
       width: 46px;
       height: 46px;
-      border: 4px solid #d8e4ee;
+      border: 4px solid var(--line);
       border-top-color: var(--accent);
       border-radius: 999px;
       animation: spin .9s linear infinite;
@@ -605,7 +922,7 @@ INDEX_HTML = r"""<!doctype html>
       height: 8px;
       overflow: hidden;
       border-radius: 999px;
-      background: #dfe8f0;
+      background: var(--field-bg-soft);
     }
     .loading-progress span {
       display: block;
@@ -657,15 +974,17 @@ INDEX_HTML = r"""<!doctype html>
       gap: 12px;
       padding: 14px 16px;
       border-bottom: 1px solid var(--line);
-      background: #fff;
+      background: var(--card-surface-soft);
+      box-shadow: inset 0 -1px 0 rgba(255, 255, 255, .04);
     }
     .view-head strong {
       font-size: 14px;
     }
     .view-frame {
-      border: 1px solid var(--line);
+      border: 1px solid var(--card-border);
       border-radius: var(--radius-md);
-      background: #fff;
+      background: var(--card-surface);
+      box-shadow: var(--card-shadow-soft);
       overflow: hidden;
     }
     .view-body {
@@ -702,7 +1021,7 @@ INDEX_HTML = r"""<!doctype html>
       display: grid;
       place-items: center;
       padding: 20px;
-      background: rgba(15, 23, 42, .34);
+      background: var(--overlay);
     }
     .pack-name-dialog[hidden] {
       display: none;
@@ -714,7 +1033,7 @@ INDEX_HTML = r"""<!doctype html>
       padding: 18px;
       border: 1px solid var(--line);
       border-radius: 14px;
-      background: #fff;
+      background: var(--panel);
       box-shadow: 0 24px 64px rgba(15, 23, 42, .24);
     }
     .pack-name-head {
@@ -742,7 +1061,7 @@ INDEX_HTML = r"""<!doctype html>
       padding: 0;
       border: 1px solid var(--line);
       border-radius: 10px;
-      background: #fff;
+      background: var(--field-bg);
       color: var(--muted);
     }
     .pack-name-actions {
@@ -755,7 +1074,7 @@ INDEX_HTML = r"""<!doctype html>
     }
     .pack-name-actions .secondary {
       border: 1px solid var(--line);
-      background: #fff;
+      background: var(--field-bg);
       color: var(--text);
     }
     #retry-api-failures {
@@ -769,21 +1088,69 @@ INDEX_HTML = r"""<!doctype html>
       align-items: center;
     }
     .toolbar button {
-      height: 32px;
+      height: 40px;
       border: 1px solid var(--line);
-      background: #fff;
+      background: var(--field-bg);
       color: var(--text);
       font-size: 12px;
       font-weight: 700;
     }
     .toolbar button.active {
-      background: var(--accent);
-      border-color: var(--accent);
-      color: #fff;
+      background: var(--control-active-bg);
+      border-color: var(--control-active-border);
+      color: var(--control-active-text);
+      box-shadow: var(--control-active-shadow);
+    }
+    .theme-toggle {
+      min-width: 122px;
+      padding: 0 12px;
+      border: 1px solid var(--line);
+      background: var(--field-bg);
+      color: var(--text);
+      box-shadow: none;
+    }
+    .theme-toggle span {
+      font-size: 12px;
+      font-weight: 700;
     }
     .toolbar input {
       flex: 1;
       min-width: 190px;
+    }
+    .toolbar .ghost-select.jar-filter {
+      display: inline-flex;
+      gap: 0;
+      flex: 0 1 clamp(240px, 28vw, 420px);
+      min-width: 240px;
+      max-width: min(100%, 420px);
+    }
+    .toolbar .ghost-select.jar-filter .control {
+      min-height: 40px;
+      padding: 0 10px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .toolbar .ghost-select.jar-filter .value {
+      min-width: 0;
+    }
+    .toolbar .ghost-select.jar-filter .ghost-menu {
+      left: 0;
+      right: auto;
+      width: max-content;
+      min-width: 100%;
+      max-width: min(78vw, 720px);
+      top: calc(100% + 4px);
+      overflow-x: hidden;
+    }
+    .toolbar .ghost-select.jar-filter .ghost-option {
+      align-items: flex-start;
+    }
+    .toolbar .ghost-select.jar-filter .ghost-option strong {
+      display: block;
+      min-width: 0;
+      white-space: normal;
+      overflow-wrap: anywhere;
+      line-height: 1.4;
     }
     .pager {
       display: flex;
@@ -812,16 +1179,17 @@ INDEX_HTML = r"""<!doctype html>
       padding: 0 10px;
       border: 1px solid var(--line);
       border-radius: 10px;
-      background: #fff;
+      background: var(--field-bg);
       color: var(--text);
       font-size: 12px;
       font-weight: 800;
       cursor: pointer;
     }
     .pager button.active {
-      border-color: var(--accent);
-      background: var(--accent);
-      color: #fff;
+      border-color: var(--control-active-border);
+      background: var(--control-active-bg);
+      color: var(--control-active-text);
+      box-shadow: var(--control-active-shadow);
     }
     .pager button:disabled {
       cursor: not-allowed;
@@ -840,14 +1208,15 @@ INDEX_HTML = r"""<!doctype html>
     .tabs button {
       height: 34px;
       border: 1px solid var(--line);
-      background: #fff;
+      background: var(--field-bg);
       color: var(--text);
       font-size: 13px;
     }
     .tabs button.active {
-      background: var(--accent);
-      border-color: var(--accent);
-      color: #fff;
+      background: var(--control-active-bg);
+      border-color: var(--control-active-border);
+      color: var(--control-active-text);
+      box-shadow: var(--control-active-shadow);
     }
     .tabs button[data-result-tab="report"] { min-width: 110px; }
     .tab-panel {
@@ -860,14 +1229,26 @@ INDEX_HTML = r"""<!doctype html>
       gap: 14px;
     }
     .metric {
-      border: 1px solid var(--line);
+      border: 1px solid var(--card-border);
       border-radius: var(--radius-md);
       padding: 18px 16px 16px;
-      background: linear-gradient(180deg, #fff, #fbfdff);
+      background:
+        radial-gradient(circle at top right, var(--card-highlight), transparent 48%),
+        linear-gradient(180deg, var(--card-surface-strong), var(--field-bg));
       position: relative;
       overflow: hidden;
       min-height: 96px;
-      box-shadow: 0 8px 20px rgba(15, 23, 42, .05);
+      box-shadow: var(--card-shadow-soft);
+    }
+    .metric::after {
+      content: "";
+      position: absolute;
+      inset: auto -24px -26px auto;
+      width: 96px;
+      height: 96px;
+      border-radius: 999px;
+      background: radial-gradient(circle, var(--card-highlight), transparent 70%);
+      pointer-events: none;
     }
     .metric strong {
       display: block;
@@ -875,7 +1256,7 @@ INDEX_HTML = r"""<!doctype html>
       line-height: 1.1;
       margin-bottom: 8px;
       letter-spacing: 0;
-      color: #10233b;
+      color: var(--text);
     }
     .metric span {
       color: var(--muted);
@@ -895,21 +1276,27 @@ INDEX_HTML = r"""<!doctype html>
       align-items: center;
       justify-content: space-between;
       gap: 12px;
-      background: #fbfcfe;
+      padding: 12px 14px;
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius-md);
+      background: var(--card-surface-soft);
+      box-shadow: var(--card-shadow-soft);
     }
     .hardcoded-head h3 {
       margin: 0;
       font-size: 15px;
     }
     .hardcoded-row textarea.invalid {
-      border-color: var(--danger);
-      background: #fff8f5;
+      border-color: var(--status-error-border);
+      background: var(--status-error-bg);
+      color: var(--status-error-text);
+      box-shadow: 0 0 0 1px color-mix(in srgb, var(--status-error-border) 72%, transparent);
     }
     .hardcoded-row {
       cursor: pointer;
     }
     .hardcoded-row.selected td {
-      background: #eff6ff;
+      background: var(--accent-soft-hover);
     }
     .select-cell {
       width: 48px;
@@ -917,9 +1304,12 @@ INDEX_HTML = r"""<!doctype html>
       vertical-align: middle;
     }
     .select-cell input {
-      width: 16px;
-      height: 16px;
-      cursor: pointer;
+      width: 18px;
+      height: 18px;
+      margin-inline: auto;
+    }
+    .hardcoded-row.selected .select-cell input {
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent), 0 10px 22px var(--check-shadow);
     }
     .hardcoded-errors {
       color: var(--danger);
@@ -935,7 +1325,7 @@ INDEX_HTML = r"""<!doctype html>
       border-collapse: collapse;
       table-layout: fixed;
       font-size: 13px;
-      background: #fff;
+      background: var(--panel);
     }
     th, td {
       border-bottom: 1px solid var(--line);
@@ -945,19 +1335,19 @@ INDEX_HTML = r"""<!doctype html>
       word-break: break-word;
     }
     th {
-      background: #f8fafc;
-      color: #51637a;
+      background: var(--panel-2);
+      color: var(--muted);
       font-size: 12px;
       text-transform: uppercase;
       letter-spacing: .05em;
     }
     tr:hover td {
-      background: #f8fbff;
+      background: var(--table-hover);
     }
     .provider-badge {
-      color: #30536f;
-      background: #eaf3fb;
-      border-color: #c9ddec;
+      color: var(--accent);
+      background: var(--accent-soft);
+      border-color: var(--accent-soft-line);
     }
     .btn-key-apply {
       display: inline-flex;
@@ -968,15 +1358,15 @@ INDEX_HTML = r"""<!doctype html>
       font-size: 12px;
       font-weight: 600;
       color: var(--accent);
-      background: #eef4ff;
-      border: 1px solid #c5d8f0;
+      background: var(--accent-soft);
+      border: 1px solid var(--accent-soft-line);
       border-radius: var(--radius-sm);
       text-decoration: none;
       cursor: pointer;
       transition: background-color var(--motion-fast) ease, border-color var(--motion-fast) ease, color var(--motion-fast) ease;
     }
     .btn-key-apply:hover {
-      background: #dde8fb;
+      background: var(--accent-soft-hover);
     }
     .empty {
       padding: 36px 18px;
@@ -1024,9 +1414,9 @@ INDEX_HTML = r"""<!doctype html>
       letter-spacing: 0;
     }
     .status.success {
-      background: #ecfdf5;
-      color: #166534;
-      border: 1px solid #bbf7d0;
+      background: var(--status-success-bg);
+      color: var(--status-success-text);
+      border: 1px solid var(--status-success-border);
     }
     .results .actions a,
     .results .actions button,
@@ -1138,6 +1528,11 @@ INDEX_HTML = r"""<!doctype html>
       grid-template-columns: 92px minmax(0, 1fr) 64px;
       align-items: center;
       gap: 10px;
+      padding: 10px 12px;
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      background: var(--card-surface-soft);
+      box-shadow: var(--card-shadow-soft);
       color: var(--muted);
       font-size: 12px;
       font-weight: 700;
@@ -1151,26 +1546,27 @@ INDEX_HTML = r"""<!doctype html>
       text-align: right;
     }
     .loading-lane-bar {
-      height: 8px;
+      height: 10px;
       overflow: hidden;
       border-radius: 999px;
-      background: #dbe7f4;
+      background: color-mix(in srgb, var(--card-highlight) 55%, var(--field-bg-soft));
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--line) 72%, transparent);
     }
     .loading-lane-bar span {
       display: block;
       height: 100%;
       width: 42%;
       border-radius: inherit;
-      background: #2563eb;
+      background: linear-gradient(90deg, #2563eb, #60a5fa);
       animation: progress 1.35s ease-in-out infinite;
     }
     .loading-lane:nth-child(2n) .loading-lane-bar span {
       animation-delay: .18s;
-      background: #16a34a;
+      background: linear-gradient(90deg, #16a34a, #4ade80);
     }
     .loading-lane:nth-child(3n) .loading-lane-bar span {
       animation-delay: .36s;
-      background: #f97316;
+      background: linear-gradient(90deg, #f97316, #fb923c);
     }
     @keyframes sweep {
       0% { transform: translateX(-110%); }
@@ -1216,23 +1612,27 @@ INDEX_HTML = r"""<!doctype html>
       transition: transform var(--motion-base) ease, background-color var(--motion-base) ease, border-color var(--motion-base) ease, color var(--motion-base) ease, box-shadow var(--motion-base) ease, opacity var(--motion-base) ease;
     }
     .nav-item:hover,
-    .toolbar button:hover:not(:disabled),
-    .pager button:hover:not(:disabled),
-    .tabs button:hover:not(:disabled),
+    .tab-pill:hover:not(.active),
+    .toolbar button:hover:not(:disabled):not(.active),
+    .pager button:hover:not(:disabled):not(.active),
+    .tabs button:hover:not(:disabled):not(.active),
     .actions a:hover,
     .actions button:hover,
     #submit:hover:not(:disabled) {
       transform: translateY(-1px);
     }
-    .nav-item:hover {
-      background: rgba(255, 255, 255, .06);
+    .nav-item:hover:not(.active),
+    .tab-pill:hover:not(.active) {
+      border-color: var(--control-hover-border);
+      background: var(--control-hover-bg);
+      color: var(--control-hover-text);
     }
-    .toolbar button:hover:not(:disabled),
-    .pager button:hover:not(:disabled),
-    .tabs button:hover:not(:disabled) {
-      border-color: var(--accent);
-      background: #eff6ff;
-      color: #1d4ed8;
+    .toolbar button:hover:not(:disabled):not(.active),
+    .pager button:hover:not(:disabled):not(.active),
+    .tabs button:hover:not(:disabled):not(.active) {
+      border-color: var(--control-hover-border);
+      background: var(--control-hover-bg);
+      color: var(--control-hover-text);
     }
     .results-panel .results table thead th {
       position: sticky;
@@ -1240,10 +1640,10 @@ INDEX_HTML = r"""<!doctype html>
       z-index: 1;
     }
     .results-panel .results table tbody tr:nth-child(2n) td {
-      background: #fcfdff;
+      background: var(--table-alt);
     }
     .results-panel .results table tbody tr:hover td {
-      background: #eef6ff;
+      background: var(--table-hover);
     }
     .api-log-table {
       table-layout: fixed;
@@ -1304,13 +1704,63 @@ INDEX_HTML = r"""<!doctype html>
     .results-panel::-webkit-scrollbar-thumb {
       border: 3px solid transparent;
       background-clip: padding-box;
-      background-color: #c0ccd9;
+      background-color: var(--scroll-thumb);
       border-radius: 999px;
     }
     .results::-webkit-scrollbar-track,
     .config-panel::-webkit-scrollbar-track,
     .results-panel::-webkit-scrollbar-track {
       background: transparent;
+    }
+    :root[data-theme="dark"] .nav-item:hover {
+      background: rgba(96, 165, 250, .08);
+    }
+    :root[data-theme="dark"] .btn-key-apply,
+    :root[data-theme="dark"] .top-search,
+    :root[data-theme="dark"] .pill,
+    :root[data-theme="dark"] .ghost-select .control,
+    :root[data-theme="dark"] .ghost-file .control,
+    :root[data-theme="dark"] .ghost-menu,
+    :root[data-theme="dark"] .ghost-option,
+    :root[data-theme="dark"] input,
+    :root[data-theme="dark"] select,
+    :root[data-theme="dark"] textarea,
+    :root[data-theme="dark"] .toolbar button,
+    :root[data-theme="dark"] .pack-name-close,
+    :root[data-theme="dark"] .pack-name-actions .secondary {
+      background: var(--field-bg);
+      color: var(--text);
+    }
+    :root[data-theme="dark"] .btn-key-apply {
+      border-color: var(--accent-soft-line);
+      color: var(--accent);
+    }
+    :root[data-theme="dark"] .btn-key-apply:hover {
+      background: var(--accent-soft-hover);
+      border-color: var(--accent);
+    }
+    :root[data-theme="dark"] .panel-copy,
+    :root[data-theme="dark"] .field-help,
+    :root[data-theme="dark"] .pack-name-head span,
+    :root[data-theme="dark"] .loading-meta {
+      color: var(--muted);
+    }
+    :root[data-theme="dark"] input[type="file"],
+    :root[data-theme="dark"] .loading-progress {
+      background: var(--field-bg-soft);
+    }
+    :root[data-theme="dark"] .loading-lane {
+      border-color: var(--card-border);
+      background: var(--card-surface-soft);
+    }
+    :root[data-theme="dark"] .results table thead th,
+    :root[data-theme="dark"] .api-log-table thead th {
+      background: var(--panel-2);
+    }
+    :root[data-theme="dark"] .metric,
+    :root[data-theme="dark"] .job-pill,
+    :root[data-theme="dark"] .status {
+      border-color: var(--line);
     }
     @media (prefers-reduced-motion: reduce) {
       *, *::before, *::after {
@@ -1323,9 +1773,10 @@ INDEX_HTML = r"""<!doctype html>
         animation: none !important;
       }
       .nav-item:hover,
-      .toolbar button:hover:not(:disabled),
-      .pager button:hover:not(:disabled),
-      .tabs button:hover:not(:disabled),
+      .tab-pill:hover:not(.active),
+      .toolbar button:hover:not(:disabled):not(.active),
+      .pager button:hover:not(:disabled):not(.active),
+      .tabs button:hover:not(:disabled):not(.active),
       .actions a:hover,
       .actions button:hover,
       #submit:hover:not(:disabled) {
@@ -1515,6 +1966,7 @@ INDEX_HTML = r"""<!doctype html>
         </div>
         <div class="header-meta">
           <input class="top-search" placeholder="搜索工作区...">
+          <button type="button" id="theme-toggle" class="theme-toggle" title="主题"><i class="ri-computer-line" data-theme-icon></i><span data-theme-label>跟随系统</span></button>
           <span class="pill">本地处理</span>
           <span class="pill provider-badge">多 AI 翻译器</span>
         </div>
@@ -1640,22 +2092,20 @@ INDEX_HTML = r"""<!doctype html>
         <div class="form-card">
           <h3><i class="ri-flashlight-line"></i>AI API Configuration</h3>
         <div id="api-box" class="api-box" hidden>
-          <div class="api-box-head">
+          <div class="api-box-head api-box-title">
             <div>
               <strong>AI 接口配置</strong>
-              <div id="provider-help" class="field-help">选择翻译器后会自动填入推荐 URL 和模型。</div>
+              <span id="provider-badge" class="pill provider-badge">AI</span>
+              <a id="api-key-link" href="#" target="_blank" rel="noopener" class="btn-key-apply" hidden>申请 Key <i class="ri-external-link-line"></i></a>
             </div>
-            <span id="provider-badge" class="pill provider-badge">AI</span>
+            <div id="provider-help" class="field-help">选择翻译器后会自动填入推荐 URL 和模型。</div>
           </div>
           <div class="grid-2">
             <label>模型
               <input name="model" id="model" value="gpt-4o-mini">
             </label>
             <label>API Key
-              <div style="display:flex;gap:8px;align-items:center">
-                <input name="api_key" id="api_key" type="password" autocomplete="off" placeholder="可直接粘贴 Key" style="flex:1">
-                <a id="api-key-link" href="#" target="_blank" rel="noopener" class="btn-key-apply" hidden>申请 Key <i class="ri-external-link-line"></i></a>
-              </div>
+              <input name="api_key" id="api_key" type="password" autocomplete="off" placeholder="可直接粘贴 Key">
             </label>
           </div>
           <label>API URL
@@ -1686,7 +2136,7 @@ INDEX_HTML = r"""<!doctype html>
           </div>
           <label class="checkline">
             <input name="api_debug_log" type="checkbox">
-            记录 API 调试日志
+            <span>记录 API 调试日志</span>
           </label>
           <div class="field-help">会记录请求体、响应头和原始响应到本次任务目录；Authorization/API Key 会被隐藏。</div>
         </div>
@@ -1695,15 +2145,15 @@ INDEX_HTML = r"""<!doctype html>
           <h3><i class="ri-equalizer-line"></i>Advanced Options</h3>
         <label class="checkline">
           <input name="overwrite_existing" type="checkbox">
-          覆盖 JAR 内已有中文
+          <span>覆盖 JAR 内已有中文</span>
         </label>
         <label class="checkline">
           <input name="skip_translated" type="checkbox">
-          跳过已包含目标语言的 JAR
+          <span>跳过已包含目标语言的 JAR</span>
         </label>
         <label class="checkline">
           <input name="scan_hardcoded" type="checkbox" checked>
-          扫描 Ponder / 配置硬编码英文
+          <span>扫描 Ponder / 配置硬编码英文</span>
         </label>
         <button id="submit" type="submit"><i class="ri-rocket-2-line"></i><span>开始生成</span></button>
         <button id="cancel-btn" type="button" hidden><i class="ri-stop-circle-line"></i><span>中断</span></button>
@@ -1756,6 +2206,8 @@ INDEX_HTML = r"""<!doctype html>
       stage: 'idle',
       filesCompleted: 0,
       filesTotal: 0,
+      cacheHits: 0,
+      cacheMisses: 0,
       currentFile: '',
       retryAttempt: 0,
       retryMax: 0,
@@ -1768,6 +2220,9 @@ INDEX_HTML = r"""<!doctype html>
       payload: null,
       activeTab: 'language',
       languageSearch: '',
+      languageJarFilter: '全部',
+      languageFilteredCacheKey: '',
+      languageFilteredEntries: [],
       languageEdits: {},
       languagePage: 1,
       activeView: 'language',
@@ -1778,6 +2233,20 @@ INDEX_HTML = r"""<!doctype html>
       hardcodedPage: 1,
       apiLogPage: 1
     };
+    let languageSearchDebounce = 0;
+    let reportSearchDebounce = 0;
+    let hardcodedReportSearchDebounce = 0;
+    let apiLogSearchDebounce = 0;
+    let hardcodedWorkbenchSearchDebounce = 0;
+    const themeToggle = document.getElementById('theme-toggle');
+    const THEME_STORAGE_KEY = 'mc-mod-i18n-theme';
+    const themeModes = ['auto', 'dark', 'light'];
+    const themeMeta = {
+      auto: { label: '跟随系统', icon: 'ri-computer-line' },
+      dark: { label: '暗色', icon: 'ri-moon-clear-line' },
+      light: { label: '亮色', icon: 'ri-sun-line' }
+    };
+    const systemThemeQuery = window.matchMedia('(prefers-color-scheme: dark)');
     const apiBox = document.getElementById('api-box');
     const providerHelp = document.getElementById('provider-help');
     const providerBadge = document.getElementById('provider-badge');
@@ -1884,6 +2353,67 @@ INDEX_HTML = r"""<!doctype html>
       selected: new Set()
     };
     let apiLogLines = [];
+
+    function storedThemeMode() {
+      try {
+        return localStorage.getItem(THEME_STORAGE_KEY) || document.documentElement.dataset.themeMode || 'auto';
+      } catch (error) {
+        return document.documentElement.dataset.themeMode || 'auto';
+      }
+    }
+
+    function resolveThemeMode(mode) {
+      if (mode === 'auto') {
+        return systemThemeQuery.matches ? 'dark' : 'light';
+      }
+      return mode === 'dark' ? 'dark' : 'light';
+    }
+
+    function applyThemeMode(mode) {
+      const resolved = resolveThemeMode(mode);
+      document.documentElement.dataset.themeMode = mode;
+      document.documentElement.dataset.theme = resolved;
+      document.documentElement.style.colorScheme = resolved;
+      if (!themeToggle) {
+        return;
+      }
+      const meta = themeMeta[mode] || themeMeta.auto;
+      const icon = themeToggle.querySelector('[data-theme-icon]');
+      const label = themeToggle.querySelector('[data-theme-label]');
+      if (icon) {
+        icon.className = meta.icon;
+      }
+      if (label) {
+        label.textContent = meta.label;
+      }
+      themeToggle.dataset.themeMode = mode;
+      themeToggle.title = `主题：${meta.label}，点击切换`;
+    }
+
+    function cycleThemeMode() {
+      const current = document.documentElement.dataset.themeMode || 'auto';
+      const currentIndex = themeModes.indexOf(current);
+      const next = themeModes[(currentIndex + 1) % themeModes.length];
+      try {
+        localStorage.setItem(THEME_STORAGE_KEY, next);
+      } catch (error) {}
+      applyThemeMode(next);
+    }
+
+    applyThemeMode(storedThemeMode());
+    if (themeToggle) {
+      themeToggle.addEventListener('click', cycleThemeMode);
+    }
+    const handleSystemThemeChange = () => {
+      if ((document.documentElement.dataset.themeMode || 'auto') === 'auto') {
+        applyThemeMode('auto');
+      }
+    };
+    if (typeof systemThemeQuery.addEventListener === 'function') {
+      systemThemeQuery.addEventListener('change', handleSystemThemeChange);
+    } else if (typeof systemThemeQuery.addListener === 'function') {
+      systemThemeQuery.addListener(handleSystemThemeChange);
+    }
 
     function syncProvider() {
       const preset = providerPresets[provider.value];
@@ -2109,6 +2639,8 @@ INDEX_HTML = r"""<!doctype html>
         stage: 'idle',
         filesCompleted: 0,
         filesTotal: 0,
+        cacheHits: 0,
+        cacheMisses: 0,
         currentFile: '',
         retryAttempt: 0,
         retryMax: 0,
@@ -2165,6 +2697,8 @@ INDEX_HTML = r"""<!doctype html>
             stage: payload.stage || 'running',
             filesCompleted: payload.files_completed || 0,
             filesTotal: payload.files_total || 0,
+            cacheHits: payload.cache_hits || 0,
+            cacheMisses: payload.cache_misses || 0,
             currentFile: payload.current_file || '',
             retryAttempt: payload.retry_attempt || 0,
             retryMax: payload.retry_max || 0,
@@ -2180,8 +2714,9 @@ INDEX_HTML = r"""<!doctype html>
             renderResult(payload.result);
             const providerNote = payload.result.provider === 'glossary' ? ' 离线术语表适合快速预览，完整整句汉化请使用 AI 翻译器。' : '';
             const failureNote = payload.result.api_failure_count ? ` 汉化翻译存在异常缺失 ${payload.result.api_failure_count} 条，可在结果区查看并重试。` : '';
+            const cacheNote = payload.result.cache_hits ? ` 其中复用了 ${payload.result.cache_hits} 个缓存 JAR。` : '';
             statusBox.className = payload.result.api_failure_count ? 'status error' : 'status success';
-            statusBox.textContent = `完成：处理 ${payload.result.processed_jars} 个 JAR，生成 ${payload.result.generated_files} 个语言文件，耗时 ${formatSeconds(payload.result.elapsed_seconds)}。${providerNote}${failureNote}`;
+            statusBox.textContent = `完成：处理 ${payload.result.processed_jars} 个 JAR，生成 ${payload.result.generated_files} 个语言文件，耗时 ${formatSeconds(payload.result.elapsed_seconds)}。${cacheNote}${providerNote}${failureNote}`;
             switchView('language');
           } else if (payload.status === 'error') {
             stopLoading();
@@ -2219,17 +2754,41 @@ INDEX_HTML = r"""<!doctype html>
       const filesCompleted = loadingProgress.filesCompleted || 0;
       const filesTotal = loadingProgress.filesTotal || jarCount || 0;
       const filePercent = filesTotal ? Math.round((filesCompleted / filesTotal) * 100) : 0;
-      const stage = elapsed < 4
-        ? '正在上传并解析 JAR'
-        : (isAi ? '正在分批调用 AI 翻译接口' : '正在生成语言文件和报告');
+      const cacheHits = loadingProgress.cacheHits || 0;
+      const cacheMisses = loadingProgress.cacheMisses || 0;
+      const currentFile = loadingProgress.currentFile || '';
+      const stageMap = {
+        idle: '准备开始',
+        queued: '正在上传并解析 JAR',
+        processing_file: '正在分析语言文件',
+        reusing_cache: '正在复用缓存结果',
+        translating: isAi ? '正在分批调用 AI 翻译接口' : '正在生成语言文件',
+        retrying: '正在等待重试',
+        writing: '正在写入资源包和报告',
+        done: '处理完成',
+        cancelled: '任务已中断',
+        error: '处理失败'
+      };
+      const stage = stageMap[loadingProgress.stage] || (isAi ? '正在处理翻译任务' : '正在处理任务');
       const progressText = total ? `${completed}/${total}` : '正在统计请求总量';
       const fileText = filesTotal ? `${filesCompleted}/${filesTotal}` : '正在统计文件数量';
       const retryText = loadingProgress.retryAttempt
         ? `当前重试 ${loadingProgress.retryAttempt}/${loadingProgress.retryMax}，原因：${loadingProgress.retryReason || '请求失败'}，等待 ${Number(loadingProgress.retryDelay || 0).toFixed(1)}s，连接/读取超时 ${loadingProgress.requestTimeout}s。`
         : '';
+      const statusText = retryText
+        || (loadingProgress.stage === 'reusing_cache'
+          ? `缓存命中 ${cacheHits}/${filesTotal || jarCount || cacheHits || 0}${currentFile ? `，当前：${currentFile}` : ''}`
+          : (loadingProgress.stage === 'processing_file'
+            ? (currentFile ? `正在处理：${currentFile}` : '正在分析语言文件')
+            : (loadingProgress.stage === 'writing'
+              ? '正在写入资源包、报告和缓存'
+              : (isAi ? `翻译请求 ${progressText}` : '任务运行中'))));
+      const cacheText = filesTotal || cacheHits || cacheMisses
+        ? `缓存命中 ${cacheHits} 个，实际翻译 ${Math.max(0, cacheMisses)} 个。`
+        : '';
       const detail = isAi
-        ? `翻译器：${providerName}，并发上限：${concurrency}，每次请求 ${loadingProgress.batchSize || 40} 条，JAR：${jarCount} 个。耗时 ${elapsed}s。`
-        : `翻译器：${providerName}，JAR：${jarCount} 个。耗时 ${elapsed}s。`;
+        ? `翻译器：${providerName}，并发上限：${concurrency}，每次请求 ${loadingProgress.batchSize || 40} 条，JAR：${jarCount} 个。${cacheText}耗时 ${elapsed}s。`
+        : `翻译器：${providerName}，JAR：${jarCount} 个。${cacheText}耗时 ${elapsed}s。`;
       const card = document.getElementById('loading-card');
       if (!card) {
         results.innerHTML = `
@@ -2258,7 +2817,7 @@ INDEX_HTML = r"""<!doctype html>
         titleNode.textContent = stage;
       }
       if (statusNode) {
-        statusNode.textContent = retryText || (isAi ? `翻译请求 ${progressText}` : '任务运行中');
+        statusNode.textContent = statusText;
       }
       if (metaNode) {
         metaNode.innerHTML = `${escapeHtml(detail)}<br>文件进度和翻译请求进度分开统计；请求总数会随着解析到新的语言文件逐步增加。`;
@@ -2283,6 +2842,9 @@ INDEX_HTML = r"""<!doctype html>
       resultState.payload = payload;
       resultState.activeTab = 'language';
       resultState.languageSearch = '';
+      resultState.languageJarFilter = '全部';
+      resultState.languageFilteredCacheKey = '';
+      resultState.languageFilteredEntries = [];
       resultState.languageEdits = {};
       resultState.languagePage = 1;
       resultState.reportSearch = '';
@@ -2314,7 +2876,7 @@ INDEX_HTML = r"""<!doctype html>
           ${payload.pack_url ? `<button type="button" id="download-pack" data-pack-url="${escapeHtml(payload.pack_url)}" data-pack-name="${escapeHtml(payload.pack_filename || defaultPackFilename(payload.pack_url))}"><i class="ri-download-2-line"></i><span>下载资源包</span></button>` : ''}
           <button type="button" data-view="report"><i class="ri-file-list-3-line"></i><span>打开报告</span></button>
           <button type="button" data-view="hardcoded"><i class="ri-file-search-line"></i><span>硬编码报告</span></button>
-          <button type="button" data-view="api-log" ${apiLogLines.length ? '' : 'disabled'}><i class="ri-bug-line"></i><span>API 调试日志</span></button>
+          <button type="button" data-view="api-log"><i class="ri-bug-line"></i><span>API 调试日志</span></button>
           ${apiFailureCount ? `<button type="button" id="retry-api-failures"><i class="ri-refresh-line"></i><span>重试失败项</span></button>` : ''}
         </div>
         ${apiFailureCount ? `
@@ -2370,9 +2932,18 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function renderLanguageResults(payload) {
+      const jarNames = [...new Set((payload.entries || []).map(e => e.jar).filter(Boolean))];
+      const activeLabel = resultState.languageJarFilter || '全部';
+      const jarMenuOptions = ['<div class="ghost-option' + (activeLabel === '全部' ? ' active' : '') + '" data-select-value="全部" title="全部"><strong>全部</strong></div>']
+        .concat(jarNames.map(name => '<div class="ghost-option' + (activeLabel === name ? ' active' : '') + '" data-select-value="' + escapeHtml(name) + '" title="' + escapeHtml(name) + '"><strong>' + escapeHtml(name) + '</strong></div>'))
+        .join('');
       return `
         <div class="toolbar">
-          <input id="language-search" value="${escapeHtml(resultState.languageSearch)}" placeholder="搜索状态、JAR、Mod ID、Key、原文或译文">
+          <div class="ghost-select jar-filter" id="language-jar-filter-shell">
+            <button type="button" class="control" data-select-trigger="jar-filter"><span class="value" id="language-jar-filter-display" title="${escapeHtml(activeLabel)}">${escapeHtml(activeLabel)}</span><i class="ri-arrow-down-s-line chevron"></i></button>
+            <div class="ghost-menu" id="language-jar-filter-menu" hidden>${jarMenuOptions}</div>
+          </div>
+          <input id="language-search" value="${escapeHtml(resultState.languageSearch)}" placeholder="搜索状态、Mod ID、Key、原文或译文">
           <button type="button" id="export-language-edits"><i class="ri-download-2-line"></i><span>导出已修改译文</span></button>
         </div>
         <div id="language-result-content" class="view-content">
@@ -2382,14 +2953,7 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function renderLanguageResultTable(payload) {
-      const query = resultState.languageSearch.trim().toLowerCase();
-      const entries = (payload.entries || []).filter(entry => {
-        if (!query) {
-          return true;
-        }
-        const haystack = `${statusLabel(entry.status)} ${entry.status} ${entry.jar} ${entry.mod_id} ${entry.key} ${entry.source} ${entry.target} ${entry.message}`.toLowerCase();
-        return haystack.includes(query);
-      });
+      const entries = getFilteredLanguageEntries(payload);
       const pageInfo = paginate(entries, resultState.languagePage, 50);
       resultState.languagePage = pageInfo.page;
       const rows = pageInfo.rows.map(entry => {
@@ -2415,6 +2979,31 @@ INDEX_HTML = r"""<!doctype html>
         </table>
         ${renderPager('language', pageInfo)}
       `;
+    }
+
+    function getFilteredLanguageEntries(payload) {
+      if (!payload) {
+        return [];
+      }
+      const jarFilter = resultState.languageJarFilter || '全部';
+      const query = resultState.languageSearch.trim().toLowerCase();
+      const cacheKey = `${payload.job_id || ''}${jarFilter}${query}${(payload.entries || []).length}`;
+      if (resultState.languageFilteredCacheKey === cacheKey) {
+        return resultState.languageFilteredEntries;
+      }
+      const entries = (payload.entries || []).filter(entry => {
+        if (jarFilter !== '全部' && entry.jar !== jarFilter) {
+          return false;
+        }
+        if (!query) {
+          return true;
+        }
+        const haystack = `${statusLabel(entry.status)} ${entry.status} ${entry.mod_id} ${entry.key} ${entry.source} ${entry.target} ${entry.message}`.toLowerCase();
+        return haystack.includes(query);
+      });
+      resultState.languageFilteredCacheKey = cacheKey;
+      resultState.languageFilteredEntries = entries;
+      return entries;
     }
 
     function renderLanguageResultContent() {
@@ -2444,25 +3033,34 @@ INDEX_HTML = r"""<!doctype html>
       const reportSearch = document.getElementById('report-search');
       if (reportSearch) {
         reportSearch.addEventListener('input', () => {
-          resultState.reportSearch = reportSearch.value;
-          resultState.reportPage = 1;
-          renderReportContent();
+          clearTimeout(reportSearchDebounce);
+          reportSearchDebounce = window.setTimeout(() => {
+            resultState.reportSearch = reportSearch.value;
+            resultState.reportPage = 1;
+            renderReportContent();
+          }, 200);
         });
       }
       const hardcodedReportSearch = document.getElementById('hardcoded-report-search');
       if (hardcodedReportSearch) {
         hardcodedReportSearch.addEventListener('input', () => {
-          resultState.hardcodedSearch = hardcodedReportSearch.value;
-          resultState.hardcodedPage = 1;
-          renderHardcodedReportContent();
+          clearTimeout(hardcodedReportSearchDebounce);
+          hardcodedReportSearchDebounce = window.setTimeout(() => {
+            resultState.hardcodedSearch = hardcodedReportSearch.value;
+            resultState.hardcodedPage = 1;
+            renderHardcodedReportContent();
+          }, 200);
         });
       }
       const apiLogSearch = document.getElementById('api-log-search');
       if (apiLogSearch) {
         apiLogSearch.addEventListener('input', () => {
-          resultState.apiLogSearch = apiLogSearch.value;
-          resultState.apiLogPage = 1;
-          renderApiLogContent();
+          clearTimeout(apiLogSearchDebounce);
+          apiLogSearchDebounce = window.setTimeout(() => {
+            resultState.apiLogSearch = apiLogSearch.value;
+            resultState.apiLogPage = 1;
+            renderApiLogContent();
+          }, 200);
         });
       }
       document.querySelectorAll('[data-page-view]:not([data-page-view="language"])').forEach(button => {
@@ -2896,7 +3494,11 @@ INDEX_HTML = r"""<!doctype html>
 
     function renderApiLogView() {
       if (!apiLogLines.length) {
-        return '<div class="view-frame"><div class="empty">没有 API 调试日志。勾选“记录 API 调试日志”后会在这里显示。</div></div>';
+        const payload = resultState.payload || {};
+        const emptyMessage = payload.cache_hits && !payload.cache_misses
+          ? '本次结果全部来自缓存，未实际发起 API 请求，所以这里没有调试日志。'
+          : '没有 API 调试日志。勾选“记录 API 调试日志”后，实际发起 API 请求时会在这里显示。';
+        return `<div class="view-frame"><div class="empty">${emptyMessage}</div></div>`;
       }
       return `
         <div class="view-frame">
@@ -2990,15 +3592,89 @@ INDEX_HTML = r"""<!doctype html>
       return {};
     }
 
+    function bindJarFilterMenu(shell) {
+      const trigger = shell.querySelector('[data-select-trigger]');
+      const menu = shell.querySelector('.ghost-menu');
+      const display = shell.querySelector('#language-jar-filter-display');
+      if (!trigger || !menu) {
+        return;
+      }
+      const closeMenu = () => {
+        shell.classList.remove('open');
+        menu.hidden = true;
+      };
+      const openMenu = () => {
+        shell.classList.add('open');
+        menu.hidden = false;
+      };
+      trigger.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (shell.classList.contains('open')) {
+          closeMenu();
+        } else {
+          document.querySelectorAll('.ghost-select.open').forEach(item => {
+            if (item !== shell) {
+              item.classList.remove('open');
+              const otherMenu = item.querySelector('.ghost-menu');
+              if (otherMenu) {
+                otherMenu.hidden = true;
+              }
+            }
+          });
+          openMenu();
+        }
+      });
+      menu.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        const option = event.target.closest('[data-select-value]');
+        if (!option) {
+          return;
+        }
+        const value = option.dataset.selectValue;
+        resultState.languageJarFilter = value;
+        resultState.languageFilteredCacheKey = '';
+        resultState.languagePage = 1;
+        if (display) {
+          display.textContent = value;
+          display.title = value;
+        }
+        menu.querySelectorAll('.ghost-option').forEach(item => {
+          item.classList.toggle('active', item.dataset.selectValue === value);
+        });
+        closeMenu();
+        renderLanguageResultContent();
+      });
+      document.addEventListener('click', (event) => {
+        if (!shell.contains(event.target)) {
+          closeMenu();
+        }
+      });
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape') {
+          closeMenu();
+        }
+      });
+    }
+
     function bindLanguageResults() {
       const search = document.getElementById('language-search');
       if (!search) {
         return;
       }
+      const jarShell = document.getElementById('language-jar-filter-shell');
+      if (jarShell) {
+        bindJarFilterMenu(jarShell);
+      }
       search.addEventListener('input', () => {
-        resultState.languageSearch = search.value;
-        resultState.languagePage = 1;
-        renderLanguageResultContent();
+        clearTimeout(languageSearchDebounce);
+        languageSearchDebounce = window.setTimeout(() => {
+          resultState.languageSearch = search.value;
+          resultState.languageFilteredCacheKey = '';
+          resultState.languagePage = 1;
+          renderLanguageResultContent();
+        }, 200);
       });
       const exportButton = document.getElementById('export-language-edits');
       if (exportButton) {
@@ -3167,13 +3843,16 @@ INDEX_HTML = r"""<!doctype html>
       });
       const search = document.getElementById('hardcoded-search');
       search.addEventListener('input', () => {
-        hardcodedState.search = search.value;
-        hardcodedState.page = 1;
-        wrap.innerHTML = renderHardcodedRows();
-        bindHardcodedPager();
-        bindHardcodedSelection();
-        bindHardcodedTextareas();
-        updateHardcodedSelectedCount();
+        clearTimeout(hardcodedWorkbenchSearchDebounce);
+        hardcodedWorkbenchSearchDebounce = window.setTimeout(() => {
+          hardcodedState.search = search.value;
+          hardcodedState.page = 1;
+          wrap.innerHTML = renderHardcodedRows();
+          bindHardcodedPager();
+          bindHardcodedSelection();
+          bindHardcodedTextareas();
+          updateHardcodedSelectedCount();
+        }, 200);
       });
       document.getElementById('import-hardcoded').addEventListener('click', () => {
         document.getElementById('hardcoded-map-file').click();
@@ -3712,6 +4391,8 @@ def make_handler(workdir: Path):
                 total=0,
                 files_completed=0,
                 files_total=len(jar_paths),
+                cache_hits=0,
+                cache_misses=0,
                 current_file="",
                 retry_attempt=0,
                 retry_max=0,
@@ -3768,7 +4449,7 @@ def make_handler(workdir: Path):
 
             Thread(
                 target=run_translate_job,
-                args=(job_id, jar_paths, out_dir, api_debug_log_path, args, update_job, cancel_evt),
+                args=(job_id, jar_paths, out_dir, workdir / ".shared-cache", api_debug_log_path, args, update_job, cancel_evt),
                 daemon=True,
             ).start()
 
@@ -4012,10 +4693,40 @@ def collect_fields(parts: list[MultipartPart]) -> dict[str, str]:
     return fields
 
 
+def shared_cache_scope_dir(cache_root: Path, args: argparse.Namespace) -> Path:
+    glossary_hash = ""
+    glossary_path = getattr(args, "glossary", None)
+    if glossary_path:
+        try:
+            glossary_hash = hashlib.sha256(Path(glossary_path).read_bytes()).hexdigest()
+        except OSError:
+            glossary_hash = ""
+    scope = {
+        "source_locale": getattr(args, "source_locale", "en_us"),
+        "target_locale": getattr(args, "target_locale", "zh_cn"),
+        "provider": getattr(args, "provider", "glossary"),
+        "model": getattr(args, "model", ""),
+        "api_url": getattr(args, "api_url", ""),
+        "overwrite_existing": bool(getattr(args, "overwrite_existing", False)),
+        "skip_translated": bool(getattr(args, "skip_translated", False)),
+        "glossary_hash": glossary_hash,
+    }
+    digest = hashlib.sha256(json.dumps(scope, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+    scope_dir = cache_root / digest
+    scope_dir.mkdir(parents=True, exist_ok=True)
+    return scope_dir
+
+
+def shared_cache_key(jar_path: Path) -> str:
+    name_hash = hashlib.sha1(jar_path.name.encode("utf-8")).hexdigest()[:10]
+    return f"{jar_path.stem}-{name_hash}"
+
+
 def run_translate_job(
     job_id: str,
     jar_paths: list[Path],
     out_dir: Path,
+    shared_cache_root: Path,
     api_debug_log_path: Path,
     args: argparse.Namespace,
     update_job,
@@ -4024,6 +4735,9 @@ def run_translate_job(
     try:
         started_at = time.perf_counter()
         translator = create_translator(args)
+        if hasattr(translator, "task_id"):
+            translator.task_id = job_id
+        pack_format = resolve_pack_format(args.pack_format)
         if args.provider in {"copy", "glossary"}:
             update_job(job_id, stage="translating", completed=1, total=1)
 
@@ -4032,25 +4746,36 @@ def run_translate_job(
         hardcoded_entries = []
         files_completed = 0
         files_total = len(jar_paths)
-        for jar_path in jar_paths:
-            if cancel_event and cancel_event.is_set():
-                break
-            update_job(
-                job_id,
-                stage="processing_file",
-                files_completed=files_completed,
-                files_total=files_total,
-                current_file=jar_path.name,
-            )
+        cache_hits = 0
+        cache_misses = 0
+        shared_cache_dir = shared_cache_scope_dir(shared_cache_root, args)
+        def process_single(jar_path: Path) -> tuple[Path, list[OutputLangDocument], list[ReportEntry], list, str, bool]:
+            jar_docs: list[OutputLangDocument] = []
+            jar_entries: list[ReportEntry] = []
+            jar_hardcoded: list = []
+            source_hash = ""
+            cache_key = shared_cache_key(jar_path)
             try:
-                docs, entries = process_jar(jar_path, args, translator)
-                output_documents.extend(docs)
-                report_entries.extend(entries)
+                with ZipFile(jar_path) as zf:
+                    source_hash = compute_zip_source_hash(zf, args.source_locale)
+            except (BadZipFile, OSError, ValueError):
+                source_hash = ""
+            cached_hash = load_checkpoint_source_hash(shared_cache_dir, cache_key)
+            if source_hash and cached_hash and cached_hash == source_hash:
+                cached = load_checkpoint(shared_cache_dir, cache_key)
+                if cached is not None:
+                    update_job(job_id, stage="reusing_cache", current_file=f"{jar_path.name}（命中缓存）")
+                    jar_docs, jar_entries = cached
+                    if args.scan_hardcoded:
+                        jar_hardcoded = scan_jar_for_hardcoded(str(jar_path), max_entries=args.hardcoded_limit)
+                    save_checkpoint(out_dir, jar_path.stem, jar_docs, jar_entries, source_hash=source_hash)
+                    return jar_path, jar_docs, jar_entries, jar_hardcoded, source_hash, True
+            try:
+                jar_docs, jar_entries, source_hash = process_jar(jar_path, args, translator)
                 if args.scan_hardcoded:
-                    update_job(job_id, stage="scanning")
-                    hardcoded_entries.extend(scan_jar_for_hardcoded(str(jar_path), max_entries=args.hardcoded_limit))
+                    jar_hardcoded = scan_jar_for_hardcoded(str(jar_path), max_entries=args.hardcoded_limit)
             except (BadZipFile, RuntimeError, ValueError) as exc:
-                report_entries.append(
+                jar_entries.append(
                     ReportEntry(
                         jar=jar_path.name,
                         mod_id="unknown",
@@ -4062,14 +4787,67 @@ def run_translate_job(
                         message=str(exc),
                     )
                 )
-            finally:
-                files_completed += 1
+            save_checkpoint(out_dir, jar_path.stem, jar_docs, jar_entries, source_hash=source_hash)
+            save_checkpoint(shared_cache_dir, cache_key, jar_docs, jar_entries, source_hash=source_hash)
+            return jar_path, jar_docs, jar_entries, jar_hardcoded, source_hash, False
+
+        if len(jar_paths) <= 1:
+            for jar_path in jar_paths:
+                if cancel_event and cancel_event.is_set():
+                    break
                 update_job(
                     job_id,
+                    stage="processing_file",
                     files_completed=files_completed,
                     files_total=files_total,
                     current_file=jar_path.name,
                 )
+                _, jar_docs, jar_entries, jar_hardcoded, _, used_cache = process_single(jar_path)
+                output_documents.extend(jar_docs)
+                report_entries.extend(jar_entries)
+                hardcoded_entries.extend(jar_hardcoded)
+                files_completed += 1
+                cache_hits += 1 if used_cache else 0
+                cache_misses += 0 if used_cache else 1
+                update_job(
+                    job_id,
+                    files_completed=files_completed,
+                    files_total=files_total,
+                    cache_hits=cache_hits,
+                    cache_misses=cache_misses,
+                    current_file=jar_path.name,
+                )
+        else:
+            worker_count = max(1, getattr(args, "api_concurrency", 1)) if is_ai_provider(args.provider) else len(jar_paths)
+            update_job(
+                job_id,
+                stage="processing_file",
+                files_completed=files_completed,
+                files_total=files_total,
+                cache_hits=cache_hits,
+                cache_misses=cache_misses,
+                current_file=f"并行处理中（{len(jar_paths)} 个 JAR）",
+            )
+            with ThreadPoolExecutor(max_workers=min(worker_count, len(jar_paths))) as executor:
+                futures = {executor.submit(process_single, jar_path): jar_path for jar_path in jar_paths}
+                for future in as_completed(futures):
+                    if cancel_event and cancel_event.is_set():
+                        break
+                    jar_path, jar_docs, jar_entries, jar_hardcoded, _, used_cache = future.result()
+                    output_documents.extend(jar_docs)
+                    report_entries.extend(jar_entries)
+                    hardcoded_entries.extend(jar_hardcoded)
+                    files_completed += 1
+                    cache_hits += 1 if used_cache else 0
+                    cache_misses += 0 if used_cache else 1
+                    update_job(
+                        job_id,
+                        files_completed=files_completed,
+                        files_total=files_total,
+                        cache_hits=cache_hits,
+                        cache_misses=cache_misses,
+                        current_file=jar_path.name,
+                    )
 
         update_job(job_id, stage="writing")
         pack_filename = resource_pack_filename(jar_paths)
@@ -4081,7 +4859,7 @@ def run_translate_job(
             write_resource_pack(
                 pack_path,
                 output_documents,
-                args.pack_format,
+                pack_format,
                 "§b汉化工具§r§6By co1dsand",
                 read_co1dsand_pack_icon(),
             )
@@ -4113,6 +4891,8 @@ def run_translate_job(
             "summary": summary,
             "provider": args.provider,
             "elapsed_seconds": round(elapsed_seconds, 2),
+            "cache_hits": cache_hits,
+            "cache_misses": cache_misses,
             "api_failure_count": summary.get("api_failed", 0),
             "api_failed_entries": [entry.__dict__ for entry in report_entries if entry.status == "api_failed"],
             "entries": [entry.__dict__ for entry in report_entries],
@@ -4137,7 +4917,7 @@ def sanitize_job_id(job_id: str) -> str:
 
 
 def entry_id(entry: dict[str, Any]) -> str:
-    return f"{entry.get('jar', '')}\u0000{entry.get('file', '')}\u0000{entry.get('key', '')}"
+    return f"{entry.get('jar', '')}{entry.get('file', '')}{entry.get('key', '')}"
 
 
 def successful_retry_updates(

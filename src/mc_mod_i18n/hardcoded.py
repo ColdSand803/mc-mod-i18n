@@ -17,6 +17,12 @@ class HardcodedEntry:
     suggestion: str
 
 
+_NESTED_JAR_PREFIXES: tuple[str, ...] = (
+    "META-INF/jarjar/",
+    "META-INF/libraries/",
+    "META-INF/jars/",
+)
+
 ENGLISH_RE = re.compile(r"[A-Za-z][A-Za-z0-9 ,.!?;:'\"()_\-/%]+")
 EXCLUDE_RE = re.compile(
     r"^(?:"
@@ -42,7 +48,7 @@ def scan_zip_for_hardcoded(zf: ZipFile, label: str, max_entries: int = 5000) -> 
     seen: set[tuple[str, str, str]] = set()
 
     for name in sorted(zf.namelist()):
-        if name.startswith("META-INF/jarjar/") and name.endswith(".jar"):
+        if any(name.startswith(p) for p in _NESTED_JAR_PREFIXES) and name.endswith(".jar"):
             try:
                 with ZipFile(BytesIO(zf.read(name))) as nested:
                     nested_label = f"{label}::{name}"

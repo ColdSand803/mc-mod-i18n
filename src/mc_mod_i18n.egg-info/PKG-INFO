@@ -1,0 +1,144 @@
+Metadata-Version: 2.1
+Name: mc-mod-i18n
+Version: 0.1.0
+Summary: Generate Chinese Minecraft mod resource packs from mod JAR language files.
+Requires-Python: >=3.10
+Description-Content-Type: text/markdown
+
+# mc-mod-i18n
+
+Minecraft Mod JAR 自动汉化工具。当前版本实现 CLI MVP：扫描 Mod JAR 中的英文语言文件，生成 `zh_cn` 资源包 ZIP 和 HTML 报告。
+
+## 使用
+
+启动本地 UI：
+
+```bash
+$env:PYTHONPATH="src"
+python -m mc_mod_i18n serve
+```
+
+浏览器打开：
+
+```text
+http://127.0.0.1:8765
+```
+
+开发模式直接运行：
+
+```bash
+$env:PYTHONPATH="src"
+python -m mc_mod_i18n translate ./mods --out ./dist --provider glossary
+```
+
+处理单个 JAR：
+
+```bash
+$env:PYTHONPATH="src"
+python -m mc_mod_i18n translate ./example.jar --out ./dist
+```
+
+可选翻译器：
+
+- `copy`：复制原文，适合测试流程
+- `glossary`：使用内置术语和可选 `glossary.json` 做规则翻译
+- `openai` / `deepseek` / `moonshot` / `dashscope` / `zhipu` / `siliconflow`：内置常见 AI 翻译器预设
+- `openai-compatible`：自定义 OpenAI 兼容 Chat Completions 接口
+
+使用自定义术语表：
+
+```bash
+python -m mc_mod_i18n translate ./mods --provider glossary --glossary glossary.json
+```
+
+术语表示例：
+
+```json
+{
+  "Copper": "铜",
+  "Crystal": "水晶",
+  "Mana": "魔力"
+}
+```
+
+使用 AI 接口：
+
+```bash
+$env:OPENAI_API_KEY="sk-..."
+python -m mc_mod_i18n translate ./mods --provider openai --model gpt-4o-mini
+python -m mc_mod_i18n translate ./mods --provider deepseek --api-key "sk-..." --model deepseek-chat
+```
+
+Web UI 可以直接填写 API Key；如果留空，则读取对应环境变量，例如 `OPENAI_API_KEY`、`DEEPSEEK_API_KEY`、`DASHSCOPE_API_KEY`。
+
+默认输出：
+
+```text
+dist/
+├─ auto-i18n-resourcepack.zip
+└─ report.html
+```
+
+## 打包为 Windows exe
+
+安装 PyInstaller 并构建：
+
+```powershell
+.\scripts\build_exe.ps1 -InstallPyInstaller -Clean
+```
+
+如果已经安装过 PyInstaller：
+
+```powershell
+.\scripts\build_exe.ps1 -Clean
+```
+
+输出：
+
+```text
+dist/
+└─ mc-mod-i18n/
+   ├─ mc-mod-i18n.exe
+   └─ _internal/
+```
+
+启动 UI：
+
+```powershell
+.\dist\mc-mod-i18n\mc-mod-i18n.exe serve
+```
+
+命令行翻译：
+
+```powershell
+.\dist\mc-mod-i18n\mc-mod-i18n.exe translate .\mods --out .\dist-output
+```
+
+## JarJar 和硬编码扫描
+
+NeoForge bundled / JarJar 类型的 Mod 会把真实 Mod 放在 `META-INF/jarjar/*.jar` 里。工具会自动递归扫描这些内层 JAR。
+
+扫描 Ponder 教程、配置注释等硬编码英文：
+
+```powershell
+$env:PYTHONPATH="src"
+python -m mc_mod_i18n translate .\测试mod --out .\dist-test --scan-hardcoded
+```
+
+额外输出：
+
+```text
+dist-test/
+├─ hardcoded-report.html
+└─ hardcoded-map.template.json
+```
+
+`hardcoded-report.html` 用来确认哪些英文属于 Ponder / config / UI literal；`hardcoded-map.template.json` 后续用于生成补丁 Mod 或汉化配置模板。
+
+Web UI 处理完成后会显示“硬编码映射工作台”：
+
+- 可按 `ponder`、`config_comment`、`ui_literal`、`unknown_literal` 筛选候选文本
+- 可直接填写每条候选的 `translation`
+- 可导入已有 `hardcoded-map.json` / `hardcoded-map.template.json` 继续编辑
+- 导出时只写入已填写译文的条目，文件名为 `hardcoded-map.json`
+- 导出前会校验 `%s`、`%1$s`、`{0}`、`§a` 和换行等占位符

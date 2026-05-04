@@ -13,7 +13,7 @@ from .lang import parse_json_lang, parse_legacy_lang, render_lang
 class OutputLangDocument:
     path: str
     format: str
-    entries: dict[str, str]
+    entries: dict[str, str | dict[str, object]]
 
 
 def write_resource_pack(
@@ -131,3 +131,120 @@ def find_pack_icon_path(zf: ZipFile) -> str | None:
         if lower.endswith(".png") and ("icon" in lower or "logo" in lower):
             return name
     return None
+
+
+CHECKPOINT_DIR = ".checkpoints"
+
+
+def save_checkpoint(
+    out_dir: Path,
+    jar_stem: str,
+    documents: list[OutputLangDocument],
+    report_entries: list[object],
+    source_hash: str = "",
+) -> None:
+    ckpt_dir = out_dir / CHECKPOINT_DIR
+    ckpt_dir.mkdir(parents=True, exist_ok=True)
+    ckpt_path = ckpt_dir / f"{sanitize_pack_name(jar_stem)}.json"
+
+    from .report import ReportEntry
+
+    data: dict[str, object] = {
+        "jar_stem": jar_stem,
+        "documents": [
+            {"path": d.path, "format": d.format, "entries": d.entries}
+            for d in documents
+        ],
+        "report_entries": [
+            {
+                "jar": r.jar, "mod_id": r.mod_id, "file": r.file,
+                "key": r.key, "source": r.source, "target": r.target,
+                "status": r.status, "message": r.message,
+            }
+            for r in report_entries
+            if hasattr(r, "jar")
+        ],
+    }
+    if source_hash:
+        data["source_hash"] = source_hash
+
+    with open(ckpt_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def _load_checkpoint_data(out_dir: Path, jar_stem: str) -> dict[str, object] | None:
+    ckpt_path = (out_dir / CHECKPOINT_DIR) / f"{sanitize_pack_name(jar_stem)}.json"
+    if not ckpt_path.is_file():
+        return None
+    with open(ckpt_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def load_checkpoint(
+    out_dir: Path,
+    jar_stem: str,
+) -> tuple[list[OutputLangDocument], list[object]] | None:
+    data = _load_checkpoint_data(out_dir, jar_stem)
+    if data is None:
+        return None
+
+    from .report import ReportEntry
+
+    documents = [
+        OutputLangDocument(path=d["path"], format=d["format"], entries=d["entries"])
+        for d in data.get("documents", [])
+    ]
+    report_entries = [
+        ReportEntry(**r) for r in data.get("report_entries", [])
+    ]
+    return documents, report_entries
+
+
+def load_checkpoint_source_hash(out_dir: Path, jar_stem: str) -> str:
+    data = _load_checkpoint_data(out_dir, jar_stem)
+    if data is None:
+        return ""
+    value = data.get("source_hash", "")
+    return value if isinstance(value, str) else ""
+
+
+def completed_jar_stems(out_dir: Path) -> set[str]:
+    ckpt_dir = out_dir / CHECKPOINT_DIR
+    if not ckpt_dir.is_dir():
+        return set()
+    return {p.stem for p in ckpt_dir.glob("*.json")}
+
+
+PACK_FORMAT_MAP: dict[str, int] = {
+    "1.16.2": 6, "1.16.3": 6, "1.16.4": 6, "1.16.5": 6,
+    "1.17": 7, "1.17.1": 7,
+    "1.18": 9, "1.18.1": 9, "1.18.2": 9,
+    "1.19": 13, "1.19.1": 13, "1.19.2": 13,
+    "1.19.3": 14,
+    "1.19.4": 15,
+    "1.20": 18, "1.20.1": 18,
+    "1.20.2": 22, "1.20.3": 22, "1.20.4": 22,
+    "1.20.5": 32, "1.20.6": 32,
+    "1.21": 34, "1.21.1": 34,
+    "1.21.2": 46, "1.21.3": 46,
+    "1.21.4": 55, "1.21.5": 55,
+}
+
+
+def resolve_pack_format(value: str | int) -> int:
+    if isinstance(value, int):
+        return value
+    value = value.strip()
+    if value in PACK_FORMAT_MAP:
+        return PACK_FORMAT_MAP[value]
+    try:
+        return int(value)
+    except ValueError:
+        pass
+    for key, fmt in sorted(PACK_FORMAT_MAP.items(), reverse=True):
+        if key.startswith(value + ".") or key == value:
+            return fmt
+    raise ValueError(
+        f"Unknown Minecraft version '{value}'. "
+        f"Use a numeric value or one of: {', '.join(sorted(PACK_FORMAT_MAP.keys(), key=lambda x: [int(p) for p in x.split('.')]))}"
+    )
