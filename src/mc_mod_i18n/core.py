@@ -25,6 +25,11 @@ from .translator import (
 from .validator import pre_check_lang_documents, validate_document_completeness, validate_translation
 
 
+PROMPT_VERSION = "2026-05-11.translate-json-array.v2"
+CACHE_SCHEMA_VERSION = "2"
+UNCACHEABLE_REPORT_STATUSES = {"api_failed", "failed", "incomplete", "jar_failed"}
+
+
 def compute_source_hash(source_docs: list) -> str:
     payload = [
         {
@@ -72,6 +77,45 @@ def compute_zip_source_hash(zf: ZipFile, source_locale: str) -> str:
     )
 
 
+def compute_translation_config_hash(args: argparse.Namespace) -> str:
+    glossary_hash = ""
+    glossary_path = getattr(args, "glossary", None)
+    if glossary_path:
+        try:
+            glossary_hash = hashlib.sha256(Path(glossary_path).read_bytes()).hexdigest()
+        except OSError:
+            glossary_hash = ""
+
+    builtin_glossary_hash = hashlib.sha256(
+        json.dumps(
+            {
+                "glossary": GlossaryTranslator.BUILTIN_GLOSSARY,
+                "phrases": GlossaryTranslator.BUILTIN_PHRASES,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    scope = {
+        "schema": CACHE_SCHEMA_VERSION,
+        "prompt": PROMPT_VERSION,
+        "source_locale": getattr(args, "source_locale", "en_us"),
+        "target_locale": getattr(args, "target_locale", "zh_cn"),
+        "provider": getattr(args, "provider", "glossary"),
+        "model": getattr(args, "model", ""),
+        "api_url": getattr(args, "api_url", ""),
+        "overwrite_existing": bool(getattr(args, "overwrite_existing", False)),
+        "skip_translated": bool(getattr(args, "skip_translated", False)),
+        "pack_format": str(getattr(args, "pack_format", "")),
+        "glossary_hash": glossary_hash,
+        "builtin_glossary_hash": builtin_glossary_hash,
+    }
+    return hashlib.sha256(
+        json.dumps(scope, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+
 def create_translator(args: argparse.Namespace):
     if args.provider == "copy":
         return CopyTranslator()
@@ -103,7 +147,24 @@ def create_translator(args: argparse.Namespace):
         batch_size=max(1, getattr(args, "api_batch_size", 40)),
         request_timeout=max(1.0, getattr(args, "api_timeout", 10.0)),
         progress_callback=getattr(args, "progress_callback", None),
+        source_locale=getattr(args, "source_locale", "en_us"),
+        target_locale=getattr(args, "target_locale", "zh_cn"),
     )
+
+
+def report_has_uncacheable_failures(report_entries: list[ReportEntry]) -> bool:
+    return any(entry.status in UNCACHEABLE_REPORT_STATUSES for entry in report_entries)
+
+
+def translate_batch_with_failures(translator, items: list[TranslationItem]) -> tuple[dict[str, str], dict[str, str]]:
+    if not items:
+        return {}, {}
+    method = getattr(translator, "translate_batch_with_failures", None)
+    if callable(method):
+        return method(items)
+    translations = translator.translate_batch(items)
+    failed_items = getattr(translator, "failed_items", {})
+    return translations, dict(failed_items) if isinstance(failed_items, dict) else {}
 
 
 def process_jar(jar_path: Path, args: argparse.Namespace, translator) -> tuple[list[OutputLangDocument], list[ReportEntry], str]:
@@ -222,8 +283,7 @@ def process_zip(
             item_sources[item_id] = (key, source_text, raw_value)
             items.append(TranslationItem(id=item_id, key=key, text=source_text, mod_id=source_doc.mod_id))
 
-        translations = translator.translate_batch(items) if items else {}
-        failed_items = getattr(translator, "failed_items", {})
+        translations, failed_items = translate_batch_with_failures(translator, items)
 
         for item_id, (key, source_text, raw_value) in item_sources.items():
             if item_id in failed_items:

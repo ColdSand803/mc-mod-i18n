@@ -1,18 +1,23 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import dataclass
+from io import BytesIO
+import math
 from pathlib import Path
 import sys
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from zipfile import BadZipFile, ZipFile
 
-from .core import compute_zip_source_hash, create_translator, process_jar
-from .hardcoded import scan_jar_for_hardcoded
+from .core import compute_translation_config_hash, compute_zip_source_hash, create_translator, process_jar, report_has_uncacheable_failures
+from .hardcoded import _NESTED_JAR_PREFIXES, scan_jar_for_hardcoded
+from .lang import collect_lang_documents, target_path_for
 from .pack import (
     OutputLangDocument,
     completed_jar_stems,
     load_checkpoint,
+    load_checkpoint_config_hash,
     load_checkpoint_source_hash,
     read_pack_icon,
     resolve_pack_format,
@@ -23,6 +28,19 @@ from .pack import (
 )
 from .report import ReportEntry, write_hardcoded_map_template, write_hardcoded_report, write_report
 from .translator import AI_PROVIDER_PRESETS, is_ai_provider
+from .validator import pre_check_lang_documents
+
+
+@dataclass
+class DryRunStats:
+    processed_jars: int = 0
+    nested_jars: int = 0
+    source_language_files: int = 0
+    target_language_files: int = 0
+    entries_to_translate: int = 0
+    existing_entries: int = 0
+    precheck_warnings: int = 0
+    precheck_errors: int = 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -55,6 +73,8 @@ def build_parser() -> argparse.ArgumentParser:
     translate.add_argument("--overwrite-existing", action="store_true", help="overwrite existing target locale entries")
     translate.add_argument("--skip-translated", action="store_true", help="skip JARs that already contain target locale files")
     translate.add_argument("--resume", action="store_true", help="resume from checkpoints, skipping completed JARs")
+    translate.add_argument("--ignore-cache", action="store_true", help="ignore existing checkpoints/cache and translate again")
+    translate.add_argument("--dry-run", action="store_true", help="scan inputs and print work estimates without translating")
     translate.add_argument("--pack-format", default="15")
     translate.add_argument("--api-url", default="https://api.openai.com/v1/chat/completions")
     translate.add_argument("--api-key-env", default="OPENAI_API_KEY")
@@ -85,6 +105,10 @@ def translate_command(args: argparse.Namespace) -> int:
     input_jars = list(jars)
 
     pack_format = resolve_pack_format(args.pack_format)
+    config_hash = compute_translation_config_hash(args)
+    if getattr(args, "dry_run", False):
+        return dry_run_command(args, input_jars)
+
     translator = create_translator(args)
     task_id = uuid.uuid4().hex[:12]
     if hasattr(translator, "task_id"):
@@ -99,12 +123,13 @@ def translate_command(args: argparse.Namespace) -> int:
     hardcoded_entries = []
 
     # Resume from checkpoints
-    if getattr(args, "resume", False):
+    if getattr(args, "resume", False) and not getattr(args, "ignore_cache", False):
         completed = completed_jar_stems(out_dir)
         remaining_jars: list[Path] = []
         for jp in jars:
             if sanitize_pack_name(jp.stem) in completed:
                 checkpoint_hash = load_checkpoint_source_hash(out_dir, jp.stem)
+                checkpoint_config_hash = load_checkpoint_config_hash(out_dir, jp.stem)
                 current_hash = ""
                 try:
                     with ZipFile(jp) as zf:
@@ -112,8 +137,17 @@ def translate_command(args: argparse.Namespace) -> int:
                 except (BadZipFile, OSError, ValueError):
                     current_hash = ""
                 result = load_checkpoint(out_dir, jp.stem)
-                if result is not None and checkpoint_hash and checkpoint_hash == current_hash:
+                if (
+                    result is not None
+                    and checkpoint_hash
+                    and checkpoint_hash == current_hash
+                    and checkpoint_config_hash
+                    and checkpoint_config_hash == config_hash
+                ):
                     loaded_docs, loaded_reports = result
+                    if report_has_uncacheable_failures(loaded_reports):
+                        remaining_jars.append(jp)
+                        continue
                     output_documents.extend(loaded_docs)
                     report_entries.extend(loaded_reports)
                     print(f"[resume] loaded checkpoint: {jp.name}", file=sys.stderr)
@@ -145,7 +179,7 @@ def translate_command(args: argparse.Namespace) -> int:
                     message=str(exc),
                 )
             )
-        save_checkpoint(out_dir, jar_path.stem, docs, report, source_hash=source_hash)
+        save_checkpoint(out_dir, jar_path.stem, docs, report, source_hash=source_hash, config_hash=config_hash)
         return docs, report, hardcoded
 
     if len(jars) <= 1:
@@ -190,6 +224,68 @@ def translate_command(args: argparse.Namespace) -> int:
         print(f"Hardcoded report: {hardcoded_report_path}")
         print(f"Hardcoded map template: {hardcoded_map_path}")
     return 0
+
+
+def dry_run_command(args: argparse.Namespace, jars: list[Path]) -> int:
+    stats = DryRunStats(processed_jars=len(jars))
+    for jar_path in jars:
+        try:
+            with ZipFile(jar_path) as zf:
+                collect_dry_run_stats(zf, args, stats)
+        except (BadZipFile, OSError, ValueError) as exc:
+            print(f"[dry-run] jar_failed: {jar_path.name}: {exc}", file=sys.stderr)
+
+    batch_size = max(1, int(getattr(args, "api_batch_size", 40) or 40))
+    api_batches = math.ceil(stats.entries_to_translate / batch_size) if is_ai_provider(args.provider) else 0
+    print("Dry run: yes")
+    print(f"Processed JARs: {stats.processed_jars}")
+    print(f"Nested JARs: {stats.nested_jars}")
+    print(f"Source language files: {stats.source_language_files}")
+    print(f"Target language files: {stats.target_language_files}")
+    print(f"Entries to translate: {stats.entries_to_translate}")
+    print(f"Existing entries kept: {stats.existing_entries}")
+    print(f"Pre-check warnings: {stats.precheck_warnings}")
+    print(f"Pre-check errors: {stats.precheck_errors}")
+    print(f"Estimated API batches: {api_batches}")
+    print("Outputs written: no")
+    return 0
+
+
+def collect_dry_run_stats(zf: ZipFile, args: argparse.Namespace, stats: DryRunStats) -> None:
+    nested_jars = [
+        name for name in sorted(zf.namelist())
+        if any(name.startswith(prefix) for prefix in _NESTED_JAR_PREFIXES) and name.endswith(".jar")
+    ]
+    for nested_name in nested_jars:
+        try:
+            with ZipFile(BytesIO(zf.read(nested_name))) as nested_zf:
+                stats.nested_jars += 1
+                collect_dry_run_stats(nested_zf, args, stats)
+        except BadZipFile:
+            continue
+
+    source_docs = collect_lang_documents(zf, args.source_locale)
+    target_docs_list = collect_lang_documents(zf, args.target_locale)
+    target_docs = {doc.path: doc for doc in target_docs_list}
+    stats.source_language_files += len(source_docs)
+    stats.target_language_files += len(target_docs_list)
+
+    if source_docs:
+        warnings = pre_check_lang_documents(source_docs)
+        stats.precheck_warnings += sum(1 for warning in warnings if warning.severity != "error")
+        stats.precheck_errors += sum(1 for warning in warnings if warning.severity == "error")
+
+    if getattr(args, "skip_translated", False) and any(doc.format == "json" for doc in target_docs_list):
+        return
+
+    for source_doc in source_docs:
+        target_path = target_path_for(source_doc.path, args.source_locale, args.target_locale)
+        existing_entries = target_docs.get(target_path).entries if target_path in target_docs else {}
+        for key in source_doc.entries:
+            if key in existing_entries and not args.overwrite_existing:
+                stats.existing_entries += 1
+            else:
+                stats.entries_to_translate += 1
 
 
 def discover_jars(input_path: Path) -> list[Path]:

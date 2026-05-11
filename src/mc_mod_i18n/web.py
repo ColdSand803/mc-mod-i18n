@@ -17,10 +17,10 @@ from zipfile import BadZipFile, ZipFile
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from .core import compute_zip_source_hash, create_translator, process_jar
+from .core import compute_translation_config_hash, compute_zip_source_hash, create_translator, process_jar, report_has_uncacheable_failures, translate_batch_with_failures
 from .hardcoded import HardcodedEntry
 from .hardcoded import scan_jar_for_hardcoded
-from .pack import OutputLangDocument, load_checkpoint, load_checkpoint_source_hash, read_pack_icon, resolve_pack_format, resource_pack_filename, save_checkpoint, update_resource_pack_entries, write_resource_pack
+from .pack import OutputLangDocument, load_checkpoint, load_checkpoint_config_hash, load_checkpoint_source_hash, read_pack_icon, resolve_pack_format, resource_pack_filename, save_checkpoint, update_resource_pack_entries, write_resource_pack
 from .report import (
     ReportEntry,
     build_hardcoded_map_template,
@@ -397,6 +397,18 @@ INDEX_HTML = r"""<!doctype html>
       justify-content: flex-end;
       gap: 12px;
     }
+    .header-task {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .header-task strong {
+      color: var(--text);
+      font-size: 14px;
+    }
     .pill {
       display: inline-flex;
       align-items: center;
@@ -529,6 +541,25 @@ INDEX_HTML = r"""<!doctype html>
     .ghost-menu[hidden] {
       display: none;
     }
+    .ghost-menu-input {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      min-height: 38px;
+      margin-bottom: 4px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      background: var(--field-bg);
+      color: var(--text);
+      padding: 0 10px;
+      font: inherit;
+      outline: none;
+      box-shadow: var(--field-shadow);
+    }
+    .ghost-menu-input:focus {
+      border-color: var(--accent);
+      box-shadow: var(--focus-ring);
+    }
     .ghost-option {
       display: flex;
       align-items: center;
@@ -645,6 +676,38 @@ INDEX_HTML = r"""<!doctype html>
       gap: 9px;
       font-size: 15px;
       line-height: 1.4;
+    }
+    details.form-card summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin: 0;
+      cursor: pointer;
+      list-style: none;
+      font-size: 15px;
+      line-height: 1.4;
+      font-weight: 800;
+    }
+    details.form-card summary::-webkit-details-marker {
+      display: none;
+    }
+    details.form-card summary span {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+    }
+    details.form-card summary::after {
+      content: "展开";
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+    }
+    details.form-card[open] summary::after {
+      content: "收起";
+    }
+    details.form-card > :not(summary) {
+      margin-top: 14px;
     }
     label {
       display: grid;
@@ -1225,19 +1288,40 @@ INDEX_HTML = r"""<!doctype html>
     }
     .summary {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
       gap: 14px;
+    }
+    .summary-group {
+      display: grid;
+      gap: 10px;
+      padding: 14px;
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius-md);
+      background: var(--card-surface-soft);
+      box-shadow: var(--card-shadow-soft);
+    }
+    .summary-group h3 {
+      margin: 0;
+      font-size: 13px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0;
+    }
+    .summary-group-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+      gap: 10px;
     }
     .metric {
       border: 1px solid var(--card-border);
       border-radius: var(--radius-md);
-      padding: 18px 16px 16px;
+      padding: 14px 12px 12px;
       background:
         radial-gradient(circle at top right, var(--card-highlight), transparent 48%),
         linear-gradient(180deg, var(--card-surface-strong), var(--field-bg));
       position: relative;
       overflow: hidden;
-      min-height: 96px;
+      min-height: 82px;
       box-shadow: var(--card-shadow-soft);
     }
     .metric::after {
@@ -1555,10 +1639,14 @@ INDEX_HTML = r"""<!doctype html>
     .loading-lane-bar span {
       display: block;
       height: 100%;
-      width: 42%;
+      width: 0%;
       border-radius: inherit;
       background: linear-gradient(90deg, #2563eb, #60a5fa);
-      animation: progress 1.35s ease-in-out infinite;
+      transition: width 260ms ease;
+    }
+    .loading-lane-bar span.indeterminate {
+      width: 44%;
+      animation: progress-full 1.45s ease-in-out infinite;
     }
     .loading-lane:nth-child(2n) .loading-lane-bar span {
       animation-delay: .18s;
@@ -1575,6 +1663,10 @@ INDEX_HTML = r"""<!doctype html>
     @keyframes flow {
       0% { background-position: 0% 50%; }
       100% { background-position: 200% 50%; }
+    }
+    @keyframes progress-full {
+      0% { transform: translateX(-120%); }
+      100% { transform: translateX(230%); }
     }
     .section-hint {
       display: flex;
@@ -1721,6 +1813,7 @@ INDEX_HTML = r"""<!doctype html>
     :root[data-theme="dark"] .ghost-select .control,
     :root[data-theme="dark"] .ghost-file .control,
     :root[data-theme="dark"] .ghost-menu,
+    :root[data-theme="dark"] .ghost-menu-input,
     :root[data-theme="dark"] .ghost-option,
     :root[data-theme="dark"] input,
     :root[data-theme="dark"] select,
@@ -1957,15 +2050,9 @@ INDEX_HTML = r"""<!doctype html>
       <header>
         <div class="top-left">
           <div class="brand">MC-LocaliZ</div>
-          <div class="top-tabs">
-            <button type="button" class="tab-pill active" data-view="language">工作区</button>
-            <button type="button" class="tab-pill" data-view="report">报告</button>
-            <button type="button" class="tab-pill" data-view="hardcoded">硬编码</button>
-            <button type="button" class="tab-pill" data-view="api-log">API 日志</button>
-          </div>
+          <div class="header-task"><span>当前任务</span><strong id="header-job">未开始</strong></div>
         </div>
         <div class="header-meta">
-          <input class="top-search" placeholder="搜索工作区...">
           <button type="button" id="theme-toggle" class="theme-toggle" title="主题"><i class="ri-computer-line" data-theme-icon></i><span data-theme-label>跟随系统</span></button>
           <span class="pill">本地处理</span>
           <span class="pill provider-badge">多 AI 翻译器</span>
@@ -2089,8 +2176,8 @@ INDEX_HTML = r"""<!doctype html>
           <input name="glossary" type="file" accept=".json">
         </label>
         </div>
-        <div class="form-card">
-          <h3><i class="ri-flashlight-line"></i>AI API Configuration</h3>
+        <details class="form-card" data-advanced-panel>
+          <summary><span><i class="ri-flashlight-line"></i>高级 API 设置</span></summary>
         <div id="api-box" class="api-box" hidden>
           <div class="api-box-head api-box-title">
             <div>
@@ -2140,9 +2227,9 @@ INDEX_HTML = r"""<!doctype html>
           </label>
           <div class="field-help">会记录请求体、响应头和原始响应到本次任务目录；Authorization/API Key 会被隐藏。</div>
         </div>
-        </div>
-        <div class="form-card">
-          <h3><i class="ri-equalizer-line"></i>Advanced Options</h3>
+        </details>
+        <details class="form-card" data-advanced-panel open>
+          <summary><span><i class="ri-equalizer-line"></i>输出策略</span></summary>
         <label class="checkline">
           <input name="overwrite_existing" type="checkbox">
           <span>覆盖 JAR 内已有中文</span>
@@ -2152,13 +2239,17 @@ INDEX_HTML = r"""<!doctype html>
           <span>跳过已包含目标语言的 JAR</span>
         </label>
         <label class="checkline">
+          <input name="ignore_cache" type="checkbox">
+          <span>忽略缓存并重新翻译</span>
+        </label>
+        <label class="checkline">
           <input name="scan_hardcoded" type="checkbox" checked>
           <span>扫描 Ponder / 配置硬编码英文</span>
         </label>
         <button id="submit" type="submit"><i class="ri-rocket-2-line"></i><span>开始生成</span></button>
         <button id="cancel-btn" type="button" hidden><i class="ri-stop-circle-line"></i><span>中断</span></button>
         <div id="status" class="status">等待选择 JAR。</div>
-        </div>
+        </details>
       </form>
     </section>
 
@@ -2184,6 +2275,7 @@ INDEX_HTML = r"""<!doctype html>
     const statusBox = document.getElementById('status');
     const results = document.getElementById('results');
     const job = document.getElementById('job');
+    const headerJob = document.getElementById('header-job');
     const sourceLocale = document.getElementById('source_locale');
     const targetLocale = document.getElementById('target_locale');
     const provider = document.getElementById('provider');
@@ -2263,6 +2355,135 @@ INDEX_HTML = r"""<!doctype html>
     const targetLocaleMenu = document.getElementById('target-locale-menu');
     const providerMenu = document.getElementById('provider-menu');
     const packFormatMenu = document.getElementById('pack-format-menu');
+    const minecraftLocales = [
+      ["af_za", "Afrikaans"],
+      ["ar_sa", "العربية"],
+      ["ast_es", "Asturianu"],
+      ["az_az", "Azərbaycanca"],
+      ["ba_ru", "Башҡортса"],
+      ["bar", "Boarisch"],
+      ["be_by", "Беларуская"],
+      ["bg_bg", "Български"],
+      ["br_fr", "Brezhoneg"],
+      ["brb", "Brabants"],
+      ["bs_ba", "Bosanski"],
+      ["ca_es", "Català"],
+      ["cs_cz", "Čeština"],
+      ["cy_gb", "Cymraeg"],
+      ["da_dk", "Dansk"],
+      ["de_at", "Österreichisches Deutsch"],
+      ["de_ch", "Schweizerdeutsch"],
+      ["de_de", "Deutsch"],
+      ["el_gr", "Ελληνικά"],
+      ["en_au", "English (Australia)"],
+      ["en_ca", "English (Canada)"],
+      ["en_gb", "English (UK)"],
+      ["en_nz", "English (New Zealand)"],
+      ["en_pt", "Pirate Speak"],
+      ["en_ud", "ɥsᴉꞁƃuƎ"],
+      ["en_us", "English (US)"],
+      ["enp", "Anglish"],
+      ["enws", "Shakespearean English"],
+      ["eo_uy", "Esperanto"],
+      ["es_ar", "Español (Argentina)"],
+      ["es_cl", "Español (Chile)"],
+      ["es_ec", "Español (Ecuador)"],
+      ["es_es", "Español (España)"],
+      ["es_mx", "Español (México)"],
+      ["es_uy", "Español (Uruguay)"],
+      ["es_ve", "Español (Venezuela)"],
+      ["et_ee", "Eesti"],
+      ["eu_es", "Euskara"],
+      ["fa_ir", "فارسی"],
+      ["fi_fi", "Suomi"],
+      ["fil_ph", "Filipino"],
+      ["fo_fo", "Føroyskt"],
+      ["fr_ca", "Français (Canada)"],
+      ["fr_fr", "Français"],
+      ["fra_de", "Fränggisch"],
+      ["fy_nl", "Frysk"],
+      ["ga_ie", "Gaeilge"],
+      ["gd_gb", "Gàidhlig"],
+      ["gl_es", "Galego"],
+      ["gv_im", "Gaelg"],
+      ["haw_us", "ʻŌlelo Hawaiʻi"],
+      ["he_il", "עברית"],
+      ["hi_in", "हिन्दी"],
+      ["hr_hr", "Hrvatski"],
+      ["hu_hu", "Magyar"],
+      ["hy_am", "Հայերեն"],
+      ["id_id", "Bahasa Indonesia"],
+      ["ig_ng", "Igbo"],
+      ["io_en", "Ido"],
+      ["is_is", "Íslenska"],
+      ["isv", "Medžuslovjansky"],
+      ["it_it", "Italiano"],
+      ["ja_jp", "日本語"],
+      ["jbo_en", "Lojban"],
+      ["ka_ge", "ქართული"],
+      ["kk_kz", "Қазақша"],
+      ["kn_in", "ಕನ್ನಡ"],
+      ["ko_kr", "한국어"],
+      ["ksh", "Kölsch"],
+      ["kw_gb", "Kernewek"],
+      ["la_la", "Latina"],
+      ["lb_lu", "Lëtzebuergesch"],
+      ["li_li", "Limburgs"],
+      ["lol_us", "LOLCAT"],
+      ["lt_lt", "Lietuvių"],
+      ["lv_lv", "Latviešu"],
+      ["lzh", "文言"],
+      ["mi_nz", "Māori"],
+      ["mk_mk", "Македонски"],
+      ["mn_mn", "Монгол"],
+      ["moh_us", "Kanien'kéha"],
+      ["ms_my", "Bahasa Melayu"],
+      ["mt_mt", "Malti"],
+      ["nah", "Nahuatl"],
+      ["nds_de", "Plattdüütsch"],
+      ["nl_be", "Vlaams"],
+      ["nl_nl", "Nederlands"],
+      ["nn_no", "Norsk nynorsk"],
+      ["no_no", "Norsk bokmål"],
+      ["oc_fr", "Occitan"],
+      ["ovd", "Övdalsk"],
+      ["pl_pl", "Polski"],
+      ["pt_br", "Português (Brasil)"],
+      ["pt_pt", "Português (Portugal)"],
+      ["qya_aa", "Quenya"],
+      ["ro_ro", "Română"],
+      ["rpr", "Дореформенный русский"],
+      ["ru_ru", "Русский"],
+      ["ry_ua", "Русиньскый"],
+      ["sah_sah", "Саха тыла"],
+      ["se_no", "Davvisámegiella"],
+      ["sk_sk", "Slovenčina"],
+      ["sl_si", "Slovenščina"],
+      ["so_so", "Af-Soomaali"],
+      ["sq_al", "Shqip"],
+      ["sr_sp", "Српски"],
+      ["sv_se", "Svenska"],
+      ["swg", "Schwäbisch"],
+      ["sxu", "Säggs'sch"],
+      ["szl", "Ślōnskŏ"],
+      ["ta_in", "தமிழ்"],
+      ["th_th", "ไทย"],
+      ["tl_ph", "Tagalog"],
+      ["tlh_aa", "tlhIngan Hol"],
+      ["tok", "Toki Pona"],
+      ["tr_tr", "Türkçe"],
+      ["tt_ru", "Татарча"],
+      ["uk_ua", "Українська"],
+      ["val_es", "Català (Valencià)"],
+      ["vec_it", "Vèneto"],
+      ["vi_vn", "Tiếng Việt"],
+      ["yi_de", "ייִדיש"],
+      ["yo_ng", "Yorùbá"],
+      ["zh_cn", "简体中文"],
+      ["zh_hk", "繁體中文（香港）"],
+      ["zh_tw", "繁體中文"],
+      ["zlm_arab", "بهاس ملايو"]
+    ];
     const providerPresets = {
       'openai-compatible': {
         label: '自定义兼容',
@@ -2415,10 +2636,83 @@ INDEX_HTML = r"""<!doctype html>
       systemThemeQuery.addListener(handleSystemThemeChange);
     }
 
+    function normalizeLocaleValue(value) {
+      return String(value || '').trim().toLowerCase().replace(/-/g, '_');
+    }
+
+    function isValidLocaleValue(value) {
+      return /^[a-z0-9_]{2,24}$/.test(normalizeLocaleValue(value));
+    }
+
+    function labelForLocale(value) {
+      const normalized = normalizeLocaleValue(value);
+      const found = minecraftLocales.find(([code]) => code === normalized);
+      return found ? found[1] : '自定义语言';
+    }
+
+    function localeOptionText(value, label) {
+      return `${value} - ${label || labelForLocale(value)}`;
+    }
+
+    function ensureSelectOption(select, value, label) {
+      const normalized = normalizeLocaleValue(value);
+      if (!normalized) {
+        return null;
+      }
+      let option = Array.from(select.options).find(item => item.value === normalized);
+      if (!option) {
+        option = document.createElement('option');
+        option.value = normalized;
+        select.appendChild(option);
+      }
+      option.textContent = localeOptionText(normalized, label || labelForLocale(normalized));
+      return option;
+    }
+
+    function populateLocaleSelect(select, fallbackValue) {
+      const selectedValue = normalizeLocaleValue(select.value || fallbackValue);
+      select.innerHTML = minecraftLocales.map(([value, label]) => {
+        const selected = value === selectedValue ? ' selected' : '';
+        return `<option value="${escapeHtml(value)}"${selected}>${escapeHtml(localeOptionText(value, label))}</option>`;
+      }).join('');
+      if (!Array.from(select.options).some(option => option.value === selectedValue)) {
+        ensureSelectOption(select, selectedValue, labelForLocale(selectedValue));
+      }
+      select.value = selectedValue;
+    }
+
+    function buildLocaleSelectMenuOptions(select, name) {
+      return `
+        <input type="text" class="ghost-menu-input" data-locale-search="${escapeHtml(name)}" placeholder="输入语言代码，如 zh_tw">
+        <button type="button" class="ghost-option" data-select-value="${escapeHtml(name)}" data-value="" data-custom-locale="true" data-locale-apply hidden>
+          <strong>使用输入值</strong><span>自定义</span>
+        </button>
+        ${buildSelectMenuOptions(select, name)}
+      `;
+    }
+
+    function updateLocaleApply(menu, value) {
+      const apply = menu.querySelector('[data-locale-apply]');
+      if (!apply) {
+        return;
+      }
+      const normalized = normalizeLocaleValue(value);
+      apply.hidden = !isValidLocaleValue(normalized);
+      apply.dataset.value = normalized;
+      const label = apply.querySelector('strong');
+      if (label) {
+        label.textContent = normalized ? `使用 ${normalized}` : '使用输入值';
+      }
+    }
+
     function syncProvider() {
       const preset = providerPresets[provider.value];
       const keyLink = document.getElementById('api-key-link');
       apiBox.hidden = !preset;
+      const apiPanel = apiBox.closest('details');
+      if (apiPanel && preset) {
+        apiPanel.open = true;
+      }
       providerDisplay.textContent = provider.options[provider.selectedIndex]?.textContent || '翻译器';
       updateSelectMenuActive(providerMenu, provider.value);
       if (!preset) {
@@ -2442,10 +2736,14 @@ INDEX_HTML = r"""<!doctype html>
       updateSelectMenuActive(packFormatMenu, packFormat.value);
     }
     function syncSourceLocale() {
+      sourceLocale.value = normalizeLocaleValue(sourceLocale.value || 'en_us');
+      ensureSelectOption(sourceLocale, sourceLocale.value, labelForLocale(sourceLocale.value));
       sourceLocaleDisplay.textContent = sourceLocale.options[sourceLocale.selectedIndex]?.textContent || '源语言';
       updateSelectMenuActive(sourceLocaleMenu, sourceLocale.value);
     }
     function syncTargetLocale() {
+      targetLocale.value = normalizeLocaleValue(targetLocale.value || 'zh_cn');
+      ensureSelectOption(targetLocale, targetLocale.value, labelForLocale(targetLocale.value));
       targetLocaleDisplay.textContent = targetLocale.options[targetLocale.selectedIndex]?.textContent || '目标语言';
       updateSelectMenuActive(targetLocaleMenu, targetLocale.value);
     }
@@ -2459,6 +2757,8 @@ INDEX_HTML = r"""<!doctype html>
     packFormat.addEventListener('change', syncPackFormat);
     jarsInput.addEventListener('change', syncFiles);
     glossaryInput.addEventListener('change', syncFiles);
+    populateLocaleSelect(sourceLocale, 'en_us');
+    populateLocaleSelect(targetLocale, 'zh_cn');
     syncSourceLocale();
     syncTargetLocale();
     syncProvider();
@@ -2504,8 +2804,10 @@ INDEX_HTML = r"""<!doctype html>
     });
 
     function buildSelectMenus() {
-      sourceLocaleMenu.innerHTML = buildSelectMenuOptions(sourceLocale, 'source_locale');
-      targetLocaleMenu.innerHTML = buildSelectMenuOptions(targetLocale, 'target_locale');
+      sourceLocaleMenu.dataset.localeName = 'source_locale';
+      targetLocaleMenu.dataset.localeName = 'target_locale';
+      sourceLocaleMenu.innerHTML = buildLocaleSelectMenuOptions(sourceLocale, 'source_locale');
+      targetLocaleMenu.innerHTML = buildLocaleSelectMenuOptions(targetLocale, 'target_locale');
       providerMenu.innerHTML = Array.from(provider.options).map(option => `
         <button type="button" class="ghost-option ${option.selected ? 'active' : ''}" data-select-value="provider" data-value="${escapeHtml(option.value)}">
           <strong>${escapeHtml(option.textContent)}</strong>
@@ -2556,8 +2858,15 @@ INDEX_HTML = r"""<!doctype html>
         menu.hidden = true;
       };
       const openMenu = () => {
+        if (menu.dataset.localeName) {
+          menu.innerHTML = buildLocaleSelectMenuOptions(select, menu.dataset.localeName);
+        }
         shell.classList.add('open');
         menu.hidden = false;
+        const localeInput = menu.querySelector('[data-locale-search]');
+        if (localeInput) {
+          window.setTimeout(() => localeInput.focus(), 0);
+        }
       };
       trigger.addEventListener('click', (event) => {
         event.preventDefault();
@@ -2579,18 +2888,45 @@ INDEX_HTML = r"""<!doctype html>
         }
       });
       menu.addEventListener('click', (event) => {
-        event.preventDefault();
-        event.stopPropagation();
         const option = event.target.closest('[data-select-value]');
         if (!option) {
           return;
         }
-        select.value = option.dataset.value;
+        event.preventDefault();
+        event.stopPropagation();
+        const isLocaleMenu = Boolean(menu.dataset.localeName);
+        const customLocale = option.dataset.customLocale === 'true';
+        const value = isLocaleMenu ? normalizeLocaleValue(option.dataset.value || '') : (option.dataset.value || '');
+        if (!value) {
+          return;
+        }
+        if (isLocaleMenu && (customLocale || !Array.from(select.options).some(item => item.value === value))) {
+          ensureSelectOption(select, value, labelForLocale(value));
+        }
+        select.value = value;
         onChange();
         menu.querySelectorAll('.ghost-option').forEach(item => {
-          item.classList.toggle('active', item.dataset.value === option.dataset.value);
+          item.classList.toggle('active', item.dataset.value === value);
         });
         closeMenu();
+      });
+      menu.addEventListener('input', (event) => {
+        const input = event.target.closest('[data-locale-search]');
+        if (!input) {
+          return;
+        }
+        updateLocaleApply(menu, input.value);
+      });
+      menu.addEventListener('keydown', (event) => {
+        const input = event.target.closest('[data-locale-search]');
+        if (!input || event.key !== 'Enter') {
+          return;
+        }
+        event.preventDefault();
+        const apply = menu.querySelector('[data-locale-apply]');
+        if (apply && !apply.hidden) {
+          apply.click();
+        }
       });
       document.addEventListener('click', (event) => {
         if (!shell.contains(event.target)) {
@@ -2611,6 +2947,7 @@ INDEX_HTML = r"""<!doctype html>
       submit.disabled = true;
       startLoading();
       job.textContent = '';
+      headerJob.textContent = '上传中';
 
       try {
         const data = new FormData(form);
@@ -2621,6 +2958,7 @@ INDEX_HTML = r"""<!doctype html>
         }
         activeJobId = payload.job_id;
         job.textContent = activeJobId;
+        headerJob.textContent = activeJobId;
         startProgressPolling(activeJobId);
       } catch (error) {
         statusBox.className = 'status error';
@@ -2823,15 +3161,15 @@ INDEX_HTML = r"""<!doctype html>
         metaNode.innerHTML = `${escapeHtml(detail)}<br>文件进度和翻译请求进度分开统计；请求总数会随着解析到新的语言文件逐步增加。`;
       }
       if (progressNode) {
-        progressNode.style.width = `${Math.max(6, percent)}%`;
-        progressNode.style.animation = total ? 'none' : '';
+        progressNode.style.width = total ? `${Math.max(6, percent)}%` : '';
+        progressNode.classList.toggle('indeterminate', !total);
       }
       if (progressTextNode) {
         progressTextNode.textContent = progressText;
       }
       if (fileProgressNode) {
-        fileProgressNode.style.width = `${Math.max(6, filePercent)}%`;
-        fileProgressNode.style.animation = filesTotal ? 'none' : '';
+        fileProgressNode.style.width = filesTotal ? `${Math.max(6, filePercent)}%` : '';
+        fileProgressNode.classList.toggle('indeterminate', !filesTotal);
       }
       if (fileProgressTextNode) {
         fileProgressTextNode.textContent = fileText;
@@ -2869,10 +3207,12 @@ INDEX_HTML = r"""<!doctype html>
       const apiFailureCount = payload.api_failure_count || summary.api_failed || 0;
       const candidateCount = payload.hardcoded_count || 0;
       const reportEntryCount = summary ? Object.values(summary).reduce((a, b) => a + b, 0) : (Array.isArray(payload.entries) ? payload.entries.length : 0);
+      headerJob.textContent = payload.job_id || '未开始';
       const languageHeadTitle = resultState.activeTab === 'hardcoded' ? '硬编码映射' : '语言结果';
       const languageHeadDesc = resultState.activeTab === 'hardcoded' ? '选择候选、AI 翻译或导出映射' : '可搜索并导出人工修改';
       results.innerHTML = `
         <div class="actions">
+          <button type="button" data-view="language"><i class="ri-folder-open-line"></i><span>工作区</span></button>
           ${payload.pack_url ? `<button type="button" id="download-pack" data-pack-url="${escapeHtml(payload.pack_url)}" data-pack-name="${escapeHtml(payload.pack_filename || defaultPackFilename(payload.pack_url))}"><i class="ri-download-2-line"></i><span>下载资源包</span></button>` : ''}
           <button type="button" data-view="report"><i class="ri-file-list-3-line"></i><span>打开报告</span></button>
           <button type="button" data-view="hardcoded"><i class="ri-file-search-line"></i><span>硬编码报告</span></button>
@@ -2885,14 +3225,32 @@ INDEX_HTML = r"""<!doctype html>
           </div>
         ` : ''}
         <div class="summary">
-          <div class="metric"><strong>${payload.processed_jars}</strong><span>JAR</span></div>
-          <div class="metric"><strong>${payload.generated_files}</strong><span>语言文件</span></div>
-          <div class="metric"><strong>${summary.translated || 0}</strong><span>新增翻译</span></div>
-          <div class="metric"><strong>${reportEntryCount}</strong><span>报告条目</span></div>
-          <div class="metric"><strong>${formatSeconds(payload.elapsed_seconds)}</strong><span>耗时</span></div>
-          <div class="metric"><strong>${candidateCount}</strong><span>候选</span></div>
-          <div class="metric"><strong>${hardcodedCount}</strong><span>硬编码</span></div>
-          <div class="metric"><strong>${apiFailureCount}</strong><span>异常缺失</span></div>
+          <section class="summary-group">
+            <h3>输出产物</h3>
+            <div class="summary-group-grid">
+              <div class="metric"><strong>${payload.processed_jars}</strong><span>JAR</span></div>
+              <div class="metric"><strong>${payload.generated_files}</strong><span>语言文件</span></div>
+              <div class="metric"><strong>${hardcodedCount}</strong><span>硬编码映射</span></div>
+            </div>
+          </section>
+          <section class="summary-group">
+            <h3>质量概览</h3>
+            <div class="summary-group-grid">
+              <div class="metric"><strong>${summary.translated || 0}</strong><span>新增翻译</span></div>
+              <div class="metric"><strong>${summary.existing || 0}</strong><span>已有译文</span></div>
+              <div class="metric"><strong>${apiFailureCount + (summary.failed || 0) + (summary.incomplete || 0)}</strong><span>需处理</span></div>
+              <div class="metric"><strong>${reportEntryCount}</strong><span>报告条目</span></div>
+            </div>
+          </section>
+          <section class="summary-group">
+            <h3>性能概览</h3>
+            <div class="summary-group-grid">
+              <div class="metric"><strong>${formatSeconds(payload.elapsed_seconds)}</strong><span>耗时</span></div>
+              <div class="metric"><strong>${payload.cache_hits || 0}</strong><span>缓存命中</span></div>
+              <div class="metric"><strong>${payload.cache_misses || 0}</strong><span>实际翻译</span></div>
+              <div class="metric"><strong>${candidateCount}</strong><span>候选文本</span></div>
+            </div>
+          </section>
         </div>
         <div class="system-views">
           <div class="view-shell ${resultState.activeView === 'language' ? 'active' : ''}" data-result-view="language">
@@ -4413,6 +4771,7 @@ def make_handler(workdir: Path):
                 glossary=str(glossary_path) if glossary_path else None,
                 overwrite_existing=fields.get("overwrite_existing") == "on",
                 skip_translated=fields.get("skip_translated") == "on",
+                ignore_cache=fields.get("ignore_cache") == "on",
                 scan_hardcoded=fields.get("scan_hardcoded") == "on",
                 hardcoded_limit=5000,
                 pack_format=int(fields.get("pack_format", "15") or "15"),
@@ -4441,6 +4800,7 @@ def make_handler(workdir: Path):
                     "api_batch_size": args.api_batch_size,
                     "api_timeout": args.api_timeout,
                     "model": args.model,
+                    "ignore_cache": args.ignore_cache,
                 },
             )
 
@@ -4482,9 +4842,8 @@ def make_handler(workdir: Path):
                 for entry in failed_entries
             ]
             started_at = time.perf_counter()
-            translations = translator.translate_batch(items) if items else {}
+            translations, failed_map = translate_batch_with_failures(translator, items)
             elapsed_seconds = time.perf_counter() - started_at
-            failed_map = getattr(translator, "failed_items", {})
             updated = 0
             still_failed = 0
             remaining_failed_entries: list[dict[str, Any]] = []
@@ -4575,8 +4934,7 @@ def make_handler(workdir: Path):
                 for entry in entries
                 if str(entry.get("source", "")).strip()
             ]
-            translations = translator.translate_batch(items) if items else {}
-            failed_map = getattr(translator, "failed_items", {})
+            translations, failed_map = translate_batch_with_failures(translator, items)
             output: dict[str, str] = {}
             failed_count = 0
             for entry in entries:
@@ -4694,24 +5052,7 @@ def collect_fields(parts: list[MultipartPart]) -> dict[str, str]:
 
 
 def shared_cache_scope_dir(cache_root: Path, args: argparse.Namespace) -> Path:
-    glossary_hash = ""
-    glossary_path = getattr(args, "glossary", None)
-    if glossary_path:
-        try:
-            glossary_hash = hashlib.sha256(Path(glossary_path).read_bytes()).hexdigest()
-        except OSError:
-            glossary_hash = ""
-    scope = {
-        "source_locale": getattr(args, "source_locale", "en_us"),
-        "target_locale": getattr(args, "target_locale", "zh_cn"),
-        "provider": getattr(args, "provider", "glossary"),
-        "model": getattr(args, "model", ""),
-        "api_url": getattr(args, "api_url", ""),
-        "overwrite_existing": bool(getattr(args, "overwrite_existing", False)),
-        "skip_translated": bool(getattr(args, "skip_translated", False)),
-        "glossary_hash": glossary_hash,
-    }
-    digest = hashlib.sha256(json.dumps(scope, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+    digest = compute_translation_config_hash(args)[:16]
     scope_dir = cache_root / digest
     scope_dir.mkdir(parents=True, exist_ok=True)
     return scope_dir
@@ -4740,6 +5081,7 @@ def run_translate_job(
         pack_format = resolve_pack_format(args.pack_format)
         if args.provider in {"copy", "glossary"}:
             update_job(job_id, stage="translating", completed=1, total=1)
+        config_hash = compute_translation_config_hash(args)
 
         output_documents: list[OutputLangDocument] = []
         report_entries: list[ReportEntry] = []
@@ -4749,6 +5091,7 @@ def run_translate_job(
         cache_hits = 0
         cache_misses = 0
         shared_cache_dir = shared_cache_scope_dir(shared_cache_root, args)
+        ignore_cache = bool(getattr(args, "ignore_cache", False))
         def process_single(jar_path: Path) -> tuple[Path, list[OutputLangDocument], list[ReportEntry], list, str, bool]:
             jar_docs: list[OutputLangDocument] = []
             jar_entries: list[ReportEntry] = []
@@ -4760,16 +5103,19 @@ def run_translate_job(
                     source_hash = compute_zip_source_hash(zf, args.source_locale)
             except (BadZipFile, OSError, ValueError):
                 source_hash = ""
-            cached_hash = load_checkpoint_source_hash(shared_cache_dir, cache_key)
-            if source_hash and cached_hash and cached_hash == source_hash:
-                cached = load_checkpoint(shared_cache_dir, cache_key)
-                if cached is not None:
-                    update_job(job_id, stage="reusing_cache", current_file=f"{jar_path.name}（命中缓存）")
-                    jar_docs, jar_entries = cached
-                    if args.scan_hardcoded:
-                        jar_hardcoded = scan_jar_for_hardcoded(str(jar_path), max_entries=args.hardcoded_limit)
-                    save_checkpoint(out_dir, jar_path.stem, jar_docs, jar_entries, source_hash=source_hash)
-                    return jar_path, jar_docs, jar_entries, jar_hardcoded, source_hash, True
+            if not ignore_cache:
+                cached_hash = load_checkpoint_source_hash(shared_cache_dir, cache_key)
+                cached_config_hash = load_checkpoint_config_hash(shared_cache_dir, cache_key)
+                if source_hash and cached_hash and cached_hash == source_hash and cached_config_hash == config_hash:
+                    cached = load_checkpoint(shared_cache_dir, cache_key)
+                    if cached is not None:
+                        jar_docs, jar_entries = cached
+                    if cached is not None and not report_has_uncacheable_failures(jar_entries):
+                        update_job(job_id, stage="reusing_cache", current_file=f"{jar_path.name}（命中缓存）")
+                        if args.scan_hardcoded:
+                            jar_hardcoded = scan_jar_for_hardcoded(str(jar_path), max_entries=args.hardcoded_limit)
+                        save_checkpoint(out_dir, jar_path.stem, jar_docs, jar_entries, source_hash=source_hash, config_hash=config_hash)
+                        return jar_path, jar_docs, jar_entries, jar_hardcoded, source_hash, True
             try:
                 jar_docs, jar_entries, source_hash = process_jar(jar_path, args, translator)
                 if args.scan_hardcoded:
@@ -4787,8 +5133,9 @@ def run_translate_job(
                         message=str(exc),
                     )
                 )
-            save_checkpoint(out_dir, jar_path.stem, jar_docs, jar_entries, source_hash=source_hash)
-            save_checkpoint(shared_cache_dir, cache_key, jar_docs, jar_entries, source_hash=source_hash)
+            save_checkpoint(out_dir, jar_path.stem, jar_docs, jar_entries, source_hash=source_hash, config_hash=config_hash)
+            if not report_has_uncacheable_failures(jar_entries):
+                save_checkpoint(shared_cache_dir, cache_key, jar_docs, jar_entries, source_hash=source_hash, config_hash=config_hash)
             return jar_path, jar_docs, jar_entries, jar_hardcoded, source_hash, False
 
         if len(jar_paths) <= 1:

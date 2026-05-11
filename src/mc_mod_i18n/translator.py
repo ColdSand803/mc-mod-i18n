@@ -31,6 +31,9 @@ class Translator:
     def translate_batch(self, items: list[TranslationItem]) -> dict[str, str]:
         raise NotImplementedError
 
+    def translate_batch_with_failures(self, items: list[TranslationItem]) -> tuple[dict[str, str], dict[str, str]]:
+        return self.translate_batch(items), {}
+
 
 @dataclass(frozen=True)
 class ProviderPreset:
@@ -112,6 +115,38 @@ AI_PROVIDER_PRESETS: dict[str, ProviderPreset] = {
         key_url="https://platform.xiaomimimo.com/token-plan",
     ),
 }
+
+
+LOCALE_DISPLAY_NAMES: dict[str, str] = {
+    "en_us": "English (US)",
+    "en_gb": "English (UK)",
+    "en_ca": "English (Canada)",
+    "en_au": "English (Australia)",
+    "zh_cn": "简体中文",
+    "zh_tw": "繁體中文",
+    "zh_hk": "繁體中文（香港）",
+    "ja_jp": "日本語",
+    "ko_kr": "한국어",
+    "de_de": "Deutsch",
+    "fr_fr": "Français",
+    "es_es": "Español",
+    "es_mx": "Español (México)",
+    "pt_br": "Português (Brasil)",
+    "pt_pt": "Português (Portugal)",
+    "ru_ru": "Русский",
+    "uk_ua": "Українська",
+    "it_it": "Italiano",
+    "nl_nl": "Nederlands",
+    "pl_pl": "Polski",
+    "tr_tr": "Türkçe",
+}
+
+
+def locale_display_name(locale: str) -> str:
+    normalized = str(locale or "").strip().lower()
+    if not normalized:
+        return "目标语言"
+    return LOCALE_DISPLAY_NAMES.get(normalized, f"{normalized} 语言")
 
 
 def is_ai_provider(provider: str) -> bool:
@@ -442,6 +477,8 @@ class OpenAICompatibleTranslator(Translator):
         request_timeout: float = 10.0,
         progress_callback: Callable[..., None] | None = None,
         task_id: str = "",
+        source_locale: str = "en_us",
+        target_locale: str = "zh_cn",
     ) -> None:
         self.api_url = normalize_chat_completions_url(api_url)
         self.api_key_env = api_key_env
@@ -455,16 +492,23 @@ class OpenAICompatibleTranslator(Translator):
         self.request_timeout = max(1.0, request_timeout)
         self.progress_callback = progress_callback
         self.task_id = task_id
+        self.source_locale = source_locale
+        self.target_locale = target_locale
         self._debug_log_lock = Lock()
         self._rate_limiter = RateLimiter()
         self.failed_items: dict[str, str] = {}
 
     def translate_batch(self, items: list[TranslationItem]) -> dict[str, str]:
+        result, failed_items = self.translate_batch_with_failures(items)
+        self.failed_items = failed_items
+        return result
+
+    def translate_batch_with_failures(self, items: list[TranslationItem]) -> tuple[dict[str, str], dict[str, str]]:
         api_key = self.api_key or os.environ.get(self.api_key_env, "")
         if not api_key:
             raise RuntimeError(f"{self.provider_label} API Key 未填写，且环境变量 {self.api_key_env} 未设置")
         if not items:
-            return {}
+            return {}, {}
 
         result: dict[str, str] = {}
         failed_items: dict[str, str] = {}
@@ -482,8 +526,7 @@ class OpenAICompatibleTranslator(Translator):
                 worker_result, worker_completed = future.result()
                 result.update(worker_result)
                 self._report_progress(worker_completed, 0)
-        self.failed_items = failed_items
-        return result
+        return result, failed_items
 
     def _report_progress(self, completed: int, total: int) -> None:
         if self.progress_callback:
@@ -533,6 +576,8 @@ class OpenAICompatibleTranslator(Translator):
 
     def _translate_chunk(self, items: list[TranslationItem], api_key: str) -> dict[str, str]:
         start_time = time.monotonic()
+        source_language = locale_display_name(self.source_locale)
+        target_language = locale_display_name(self.target_locale)
         payload = {
             "model": self.model,
             "temperature": 0.2,
@@ -541,7 +586,7 @@ class OpenAICompatibleTranslator(Translator):
                 {
                     "role": "system",
                     "content": (
-                        "你是 Minecraft Mod 汉化助手。把英文游戏文本翻译成简体中文。"
+                        f"你是 Minecraft Mod 本地化助手。将 {source_language}（{self.source_locale}）游戏文本翻译成 {target_language}（{self.target_locale}）。"
                         "必须保留所有 printf 占位符、花括号占位符、Minecraft § 格式代码、换行和专有 ID。"
                         "只输出 JSON 数组，数组项包含 id 和 text。"
                     ),

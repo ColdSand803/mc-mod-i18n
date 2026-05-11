@@ -142,6 +142,7 @@ def save_checkpoint(
     documents: list[OutputLangDocument],
     report_entries: list[object],
     source_hash: str = "",
+    config_hash: str = "",
 ) -> None:
     ckpt_dir = out_dir / CHECKPOINT_DIR
     ckpt_dir.mkdir(parents=True, exist_ok=True)
@@ -167,6 +168,8 @@ def save_checkpoint(
     }
     if source_hash:
         data["source_hash"] = source_hash
+    if config_hash:
+        data["translation_config_hash"] = config_hash
 
     with open(ckpt_path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
@@ -205,6 +208,14 @@ def load_checkpoint_source_hash(out_dir: Path, jar_stem: str) -> str:
     if data is None:
         return ""
     value = data.get("source_hash", "")
+    return value if isinstance(value, str) else ""
+
+
+def load_checkpoint_config_hash(out_dir: Path, jar_stem: str) -> str:
+    data = _load_checkpoint_data(out_dir, jar_stem)
+    if data is None:
+        return ""
+    value = data.get("translation_config_hash", "")
     return value if isinstance(value, str) else ""
 
 
