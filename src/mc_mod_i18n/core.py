@@ -14,6 +14,7 @@ from .lang import collect_lang_documents, extract_plain_text, target_path_for
 from .pack import OutputLangDocument
 from .report import ReportEntry
 from .translator import (
+    AnthropicCompatibleTranslator,
     CopyTranslator,
     GlossaryTranslator,
     OpenAICompatibleTranslator,
@@ -135,7 +136,8 @@ def create_translator(args: argparse.Namespace):
             api_key_env = preset.api_key_env
         if args.model == default_preset.model:
             model = preset.model
-    return OpenAICompatibleTranslator(
+    translator_class = AnthropicCompatibleTranslator if args.provider == "anthropic-compatible" else OpenAICompatibleTranslator
+    return translator_class(
         api_url=api_url,
         api_key_env=api_key_env,
         api_key=getattr(args, "api_key", ""),

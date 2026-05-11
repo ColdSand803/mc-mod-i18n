@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import unittest
 
-from mc_mod_i18n.translator import OpenAICompatibleTranslator, TranslationItem
+from mc_mod_i18n.translator import AnthropicCompatibleTranslator, OpenAICompatibleTranslator, TranslationItem
 
 
 class CapturingTranslator(OpenAICompatibleTranslator):
@@ -30,6 +30,30 @@ class CapturingTranslator(OpenAICompatibleTranslator):
         }, ensure_ascii=False)
 
 
+class CapturingAnthropicTranslator(AnthropicCompatibleTranslator):
+    def __init__(self) -> None:
+        super().__init__(
+            api_url="https://example.test/v1",
+            api_key_env="TEST_API_KEY",
+            api_key="test-key",
+            model="test-model",
+        )
+        self.payload: dict[str, object] | None = None
+        self.headers: dict[str, str] = {}
+
+    def _open_with_retries(self, request, items, start_time=0.0):
+        self.payload = json.loads(request.data.decode("utf-8"))
+        self.headers = dict(request.header_items())
+        return 200, {}, json.dumps({
+            "content": [
+                {
+                    "type": "text",
+                    "text": json.dumps([{"id": items[0].id, "text": "铜锭"}], ensure_ascii=False),
+                }
+            ]
+        }, ensure_ascii=False)
+
+
 class TranslatorPromptTest(unittest.TestCase):
     def test_prompt_uses_traditional_chinese_when_target_locale_is_zh_tw(self) -> None:
         translator = CapturingTranslator(target_locale="zh_tw")
@@ -40,6 +64,20 @@ class TranslatorPromptTest(unittest.TestCase):
         system_prompt = translator.payload["messages"][0]["content"]
         self.assertIn("繁體中文", system_prompt)
         self.assertNotIn("翻译成简体中文", system_prompt)
+
+    def test_anthropic_compatible_uses_messages_format(self) -> None:
+        translator = CapturingAnthropicTranslator()
+
+        result = translator.translate_batch([TranslationItem("1", "item.example.copper", "Copper Ingot", "example")])
+
+        self.assertEqual({"1": "铜锭"}, result)
+        assert translator.payload is not None
+        self.assertEqual("test-model", translator.payload["model"])
+        self.assertIn("system", translator.payload)
+        self.assertNotIn("choices", translator.payload)
+        self.assertEqual("https://example.test/v1/messages", translator.api_url)
+        self.assertIn("X-api-key", translator.headers)
+        self.assertIn("Anthropic-version", translator.headers)
 
 
 if __name__ == "__main__":

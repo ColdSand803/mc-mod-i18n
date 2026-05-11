@@ -11,6 +11,20 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from zipfile import BadZipFile, ZipFile
 
 from .core import compute_translation_config_hash, compute_zip_source_hash, create_translator, process_jar, report_has_uncacheable_failures
+from .ftbquests import (
+    compute_ftbquests_config_hash,
+    compute_ftbquests_source_hash,
+    ftbquests_cache_key,
+    load_ftbquests_checkpoint,
+    load_ftbquests_checkpoint_config_hash,
+    load_ftbquests_checkpoint_source_hash,
+    load_ftbquests_source,
+    process_ftbquests_source,
+    save_ftbquests_checkpoint,
+    write_ftbquests_html_report,
+    write_ftbquests_json_report,
+    write_ftbquests_outputs,
+)
 from .hardcoded import _NESTED_JAR_PREFIXES, scan_jar_for_hardcoded
 from .lang import collect_lang_documents, target_path_for
 from .pack import (
@@ -49,6 +63,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "translate":
         return translate_command(args)
+    if args.command == "ftbquests":
+        return ftbquests_command(args)
     if args.command == "serve":
         from .web import serve
 
@@ -76,10 +92,10 @@ def build_parser() -> argparse.ArgumentParser:
     translate.add_argument("--ignore-cache", action="store_true", help="ignore existing checkpoints/cache and translate again")
     translate.add_argument("--dry-run", action="store_true", help="scan inputs and print work estimates without translating")
     translate.add_argument("--pack-format", default="15")
-    translate.add_argument("--api-url", default="https://api.openai.com/v1/chat/completions")
+    translate.add_argument("--api-url", "--api-base-url", dest="api_url", default="https://api.openai.com/v1", help="API BaseURL; full provider endpoint is also accepted")
     translate.add_argument("--api-key-env", default="OPENAI_API_KEY")
     translate.add_argument("--api-key", default="", help="API key value; if omitted, --api-key-env is used")
-    translate.add_argument("--api-debug-log", default="", help="write OpenAI-compatible request/response JSONL log")
+    translate.add_argument("--api-debug-log", default="", help="write API request/response JSONL log")
     translate.add_argument("--api-concurrency", type=int, default=1, help="parallel API work budget shared across JARs and batches")
     translate.add_argument("--api-retries", type=int, default=5, help="retry count for retryable API failures")
     translate.add_argument("--api-batch-size", type=int, default=40, help="translation entries per API request")
@@ -88,11 +104,84 @@ def build_parser() -> argparse.ArgumentParser:
     translate.add_argument("--scan-hardcoded", action="store_true", help="scan class constant pools and write hardcoded reports")
     translate.add_argument("--hardcoded-limit", type=int, default=5000, help="maximum hardcoded candidates to report")
 
+    ftbquests = subparsers.add_parser("ftbquests", help="translate FTB Quests lang SNBT files")
+    ftbquests.add_argument("input", help="FTB Quests folder, modpack ZIP, or lang/<locale>.snbt")
+    ftbquests.add_argument("--out", default="dist", help="output directory")
+    ftbquests.add_argument("--source-locale", default="en_us")
+    ftbquests.add_argument("--target-locale", default="zh_cn")
+    ftbquests.add_argument("--provider", choices=["copy", "glossary", *AI_PROVIDER_PRESETS.keys()], default="glossary")
+    ftbquests.add_argument("--glossary", help="path to glossary JSON object")
+    ftbquests.add_argument("--overwrite-existing", action="store_true", help="overwrite existing target locale entries")
+    ftbquests.add_argument("--ignore-cache", action="store_true", help="ignore existing FTB Quests checkpoints/cache")
+    ftbquests.add_argument("--cache-dir", default="", help="shared cache directory; defaults to <out>/.ftbquests-cache")
+    ftbquests.add_argument("--output-mode", choices=["directory", "patch", "both"], default="both")
+    ftbquests.add_argument("--api-url", "--api-base-url", dest="api_url", default="https://api.openai.com/v1", help="API BaseURL; full provider endpoint is also accepted")
+    ftbquests.add_argument("--api-key-env", default="OPENAI_API_KEY")
+    ftbquests.add_argument("--api-key", default="", help="API key value; if omitted, --api-key-env is used")
+    ftbquests.add_argument("--api-debug-log", default="", help="write API request/response JSONL log")
+    ftbquests.add_argument("--api-concurrency", type=int, default=1, help="parallel API work budget")
+    ftbquests.add_argument("--api-retries", type=int, default=5, help="retry count for retryable API failures")
+    ftbquests.add_argument("--api-batch-size", type=int, default=40, help="translation entries per API request")
+    ftbquests.add_argument("--api-timeout", type=float, default=10.0, help="API request timeout seconds")
+    ftbquests.add_argument("--model", default="gpt-4o-mini")
+
     serve = subparsers.add_parser("serve", help="start the local web UI")
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8765)
     serve.add_argument("--workdir", default=".ui_runs", help="directory for uploaded files and generated outputs")
     return parser
+
+
+def ftbquests_command(args: argparse.Namespace) -> int:
+    input_path = Path(args.input)
+    out_dir = Path(args.out)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        source = load_ftbquests_source(input_path, args.source_locale)
+    except (OSError, ValueError) as exc:
+        print(f"FTB Quests input failed: {exc}", file=sys.stderr)
+        return 2
+
+    config_hash = compute_ftbquests_config_hash(args)
+    cache_root = Path(args.cache_dir) if args.cache_dir else out_dir / ".ftbquests-cache"
+    cache_scope = cache_root / config_hash[:16]
+    cache_scope.mkdir(parents=True, exist_ok=True)
+    cache_key = ftbquests_cache_key(input_path)
+    source_hash = compute_ftbquests_source_hash(source)
+    result = None
+    if not getattr(args, "ignore_cache", False):
+        cached_hash = load_ftbquests_checkpoint_source_hash(cache_scope, cache_key)
+        cached_config_hash = load_ftbquests_checkpoint_config_hash(cache_scope, cache_key)
+        if cached_hash == source_hash and cached_config_hash == config_hash:
+            result = load_ftbquests_checkpoint(cache_scope, cache_key)
+            if result is not None:
+                print(f"[cache] loaded FTB Quests checkpoint: {input_path}", file=sys.stderr)
+
+    if result is None:
+        translator = create_translator(args)
+        result = process_ftbquests_source(source, args, translator)
+        save_ftbquests_checkpoint(cache_scope, cache_key, result, config_hash=config_hash)
+
+    directory_path, patch_path = write_ftbquests_outputs(out_dir, result, args.output_mode)
+    html_report = out_dir / "ftbquests-report.html"
+    json_report = out_dir / "ftbquests-report.json"
+    write_ftbquests_html_report(html_report, result)
+    write_ftbquests_json_report(json_report, result)
+
+    summary: dict[str, int] = {}
+    for entry in result.report_entries:
+        summary[entry.status] = summary.get(entry.status, 0) + 1
+    print(f"Mode: {result.mode}")
+    print(f"Texts translated: {summary.get('translated', 0)}")
+    print(f"Existing entries kept: {summary.get('existing', 0)}")
+    print(f"Output files: {len(result.output_files)}")
+    if directory_path:
+        print(f"FTB Quests directory: {directory_path}")
+    if patch_path:
+        print(f"FTB Quests patch ZIP: {patch_path}")
+    print(f"Report: {html_report}")
+    print(f"JSON report: {json_report}")
+    return 0
 
 
 def translate_command(args: argparse.Namespace) -> int:

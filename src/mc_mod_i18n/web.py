@@ -6,19 +6,37 @@ import argparse
 import hashlib
 import json
 import mimetypes
+import os
 from pathlib import Path
 import re
+import shutil
 from secrets import token_hex
 from threading import Event, Lock, Thread
 import time
 from typing import Any
 from urllib.parse import unquote, urlparse
+import urllib.error
+import urllib.request
 from zipfile import BadZipFile, ZipFile
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from .core import compute_translation_config_hash, compute_zip_source_hash, create_translator, process_jar, report_has_uncacheable_failures, translate_batch_with_failures
-from .hardcoded import HardcodedEntry
+from .ftbquests import (
+    compute_ftbquests_config_hash,
+    compute_ftbquests_source_hash,
+    ftbquests_cache_key,
+    load_ftbquests_checkpoint,
+    load_ftbquests_checkpoint_config_hash,
+    load_ftbquests_checkpoint_source_hash,
+    load_ftbquests_source,
+    process_ftbquests_source,
+    save_ftbquests_checkpoint,
+    write_ftbquests_html_report,
+    write_ftbquests_json_report,
+    write_ftbquests_outputs,
+)
+from .hardcoded import HardcodedEntry, hardcoded_category_label, hardcoded_category_order
 from .hardcoded import scan_jar_for_hardcoded
 from .pack import OutputLangDocument, load_checkpoint, load_checkpoint_config_hash, load_checkpoint_source_hash, read_pack_icon, resolve_pack_format, resource_pack_filename, save_checkpoint, update_resource_pack_entries, write_resource_pack
 from .report import (
@@ -28,7 +46,7 @@ from .report import (
     write_hardcoded_report,
     write_report,
 )
-from .translator import TranslationItem, is_ai_provider
+from .translator import TranslationItem, get_provider_preset, is_ai_provider
 from .validator import validate_translation
 
 
@@ -52,13 +70,18 @@ INDEX_HTML = r"""<!doctype html>
     (() => {
       try {
         const key = 'mc-mod-i18n-theme';
-        const mode = localStorage.getItem(key) || 'auto';
+        const lightThemes = ['light', 'forest', 'monet', 'qingming-scroll', 'cezanne', 'sisley', 'pissarro', 'morandi', 'gauguin', 'matisse', 'qi-baishi', 'healing-sea-blue', 'mint-tea-green', 'cream-berry-purple', 'seafoam-apricot', 'klein-gold', 'honey-sunset', 'crimson-ivory', 'sakura-mist'];
+        const darkThemes = ['dark', 'midnight', 'dongbei-rain', 'rainbow-rgb', 'bleach-tybw', 'eva', 'starry-night', 'p-site', 'neon-track', 'orange-slate'];
+        const knownThemes = ['auto'].concat(lightThemes, darkThemes);
+        const stored = localStorage.getItem(key) || 'auto';
+        const mode = knownThemes.includes(stored) ? stored : 'auto';
         const resolved = mode === 'auto'
           ? (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
           : mode;
+        const scheme = darkThemes.includes(resolved) ? 'dark' : 'light';
         document.documentElement.dataset.themeMode = mode;
         document.documentElement.dataset.theme = resolved;
-        document.documentElement.style.colorScheme = resolved;
+        document.documentElement.style.colorScheme = scheme;
       } catch (error) {}
     })();
   </script>
@@ -74,7 +97,9 @@ INDEX_HTML = r"""<!doctype html>
       --line: #dbe3ef;
       --accent: #004ac6;
       --accent-2: #2563eb;
+      --button-text: #ffffff;
       --danger: #ba1a1a;
+      --danger-text: #ffffff;
       --success: #16a34a;
       --warning: #f97316;
       --sidebar: #f1f5f9;
@@ -161,7 +186,9 @@ INDEX_HTML = r"""<!doctype html>
       --line: #22314a;
       --accent: #60a5fa;
       --accent-2: #3b82f6;
+      --button-text: #03111f;
       --danger: #fca5a5;
+      --danger-text: #2a0505;
       --success: #22c55e;
       --warning: #fb923c;
       --sidebar: #06101f;
@@ -231,6 +258,632 @@ INDEX_HTML = r"""<!doctype html>
       --table-hover: #122036;
       --shadow: 0 18px 40px rgba(0, 0, 0, .34);
       --focus-ring: 0 0 0 3px rgba(96, 165, 250, .22);
+    }
+    :root[data-theme="forest"],
+    :root[data-theme="dongbei-rain"],
+    :root[data-theme="rainbow-rgb"],
+    :root[data-theme="bleach-tybw"],
+    :root[data-theme="eva"],
+    :root[data-theme="starry-night"],
+    :root[data-theme="monet"],
+    :root[data-theme="qingming-scroll"],
+    :root[data-theme="cezanne"],
+    :root[data-theme="sisley"],
+    :root[data-theme="pissarro"],
+    :root[data-theme="morandi"],
+    :root[data-theme="gauguin"],
+    :root[data-theme="matisse"],
+    :root[data-theme="qi-baishi"],
+    :root[data-theme="p-site"],
+    :root[data-theme="sakura-mist"],
+    :root[data-theme="healing-sea-blue"],
+    :root[data-theme="mint-tea-green"],
+    :root[data-theme="neon-track"],
+    :root[data-theme="cream-berry-purple"],
+    :root[data-theme="orange-slate"],
+    :root[data-theme="seafoam-apricot"],
+    :root[data-theme="klein-gold"],
+    :root[data-theme="honey-sunset"],
+    :root[data-theme="crimson-ivory"],
+    :root[data-theme="midnight"] {
+      color-scheme: var(--sv-color-scheme);
+      --bg: var(--sv-bg);
+      --surface: var(--sv-bg-deep);
+      --panel: var(--sv-surface);
+      --panel-2: var(--sv-surface-dark);
+      --text: var(--sv-ink);
+      --muted: var(--sv-muted);
+      --line: color-mix(in srgb, var(--sv-muted) 28%, var(--sv-bg-deep));
+      --accent: var(--sv-accent);
+      --accent-2: var(--sv-accent-strong-ui, var(--sv-accent-strong));
+      --button-text: var(--sv-on-accent);
+      --danger: var(--sv-danger);
+      --danger-text: var(--sv-on-danger, var(--sv-on-accent));
+      --success: var(--sv-signal);
+      --warning: var(--sv-warning, color-mix(in srgb, var(--sv-signal) 52%, var(--sv-danger)));
+      --sidebar: color-mix(in srgb, var(--sv-bg-deep) 74%, var(--sv-surface));
+      --nav-text: var(--sv-muted);
+      --tab-text: color-mix(in srgb, var(--sv-muted) 72%, var(--sv-ink));
+      --field-bg: var(--sv-surface);
+      --field-bg-soft: var(--sv-surface-dark);
+      --chip-bg: var(--sv-surface);
+      --accent-soft: color-mix(in srgb, var(--sv-accent) 12%, var(--sv-surface));
+      --accent-soft-hover: color-mix(in srgb, var(--sv-accent) 16%, var(--sv-surface));
+      --accent-soft-active: color-mix(in srgb, var(--sv-accent) 22%, var(--sv-surface));
+      --accent-soft-line: color-mix(in srgb, var(--sv-accent) 34%, var(--sv-bg-deep));
+      --accent-active-line: color-mix(in srgb, var(--sv-accent) 48%, var(--sv-bg-deep));
+      --danger-bg: color-mix(in srgb, var(--sv-danger) 12%, var(--sv-surface));
+      --danger-line: color-mix(in srgb, var(--sv-danger) 28%, var(--sv-surface-dark));
+      --loading-from: var(--sv-surface);
+      --loading-to: var(--sv-surface-dark);
+      --overlay: var(--sv-overlay);
+      --scroll-thumb: color-mix(in srgb, var(--sv-muted) 58%, var(--sv-accent));
+      --scroll-track: color-mix(in srgb, var(--sv-bg-deep) 46%, transparent);
+      --dropdown-scroll-track: color-mix(in srgb, var(--sv-bg-deep) 72%, var(--sv-surface));
+      --dropdown-scroll-thumb: color-mix(in srgb, var(--sv-accent) 42%, transparent);
+      --dropdown-scroll-thumb-hover: color-mix(in srgb, var(--sv-accent) 60%, transparent);
+      --dropdown-scroll-thumb-active: color-mix(in srgb, var(--sv-accent) 78%, transparent);
+      --dropdown-scroll-shadow: color-mix(in srgb, var(--sv-accent) 18%, transparent);
+      --check-bg: linear-gradient(180deg, var(--sv-surface), var(--sv-surface-dark));
+      --check-border: color-mix(in srgb, var(--sv-muted) 48%, var(--sv-bg-deep));
+      --check-border-hover: var(--sv-accent);
+      --check-checked: linear-gradient(180deg, var(--sv-accent), var(--sv-accent-strong-ui, var(--sv-accent-strong)));
+      --check-checked-border: var(--sv-accent);
+      --check-tick: var(--sv-on-accent);
+      --check-shadow: color-mix(in srgb, var(--sv-accent) 18%, transparent);
+      --control-hover-bg: linear-gradient(180deg, color-mix(in srgb, var(--sv-accent) 10%, var(--sv-surface)), color-mix(in srgb, var(--sv-accent) 16%, var(--sv-surface-dark)));
+      --control-hover-border: color-mix(in srgb, var(--sv-accent) 48%, var(--sv-bg-deep));
+      --control-hover-text: var(--sv-accent);
+      --control-active-bg: linear-gradient(135deg, var(--sv-accent), var(--sv-accent-strong-ui, var(--sv-accent-strong)));
+      --control-active-border: var(--sv-accent);
+      --control-active-text: var(--sv-on-accent);
+      --control-active-shadow: 0 12px 28px color-mix(in srgb, var(--sv-accent) 24%, transparent);
+      --field-border: color-mix(in srgb, var(--sv-muted) 30%, var(--sv-bg-deep));
+      --field-border-hover: color-mix(in srgb, var(--sv-accent) 54%, var(--sv-bg-deep));
+      --field-surface: linear-gradient(180deg, var(--sv-surface), color-mix(in srgb, var(--sv-bg) 58%, var(--sv-surface)));
+      --field-surface-soft: linear-gradient(180deg, color-mix(in srgb, var(--sv-surface) 72%, var(--sv-surface-dark)), var(--sv-surface-dark));
+      --field-shadow: inset 0 1px 0 var(--sv-inner-highlight), 0 8px 22px var(--sv-shadow-soft);
+      --field-shadow-hover: inset 0 1px 0 var(--sv-inner-highlight), 0 12px 28px color-mix(in srgb, var(--sv-accent) 12%, transparent);
+      --help-bg: color-mix(in srgb, var(--sv-accent) 10%, var(--sv-surface));
+      --help-border: color-mix(in srgb, var(--sv-accent) 24%, var(--sv-bg-deep));
+      --help-text: color-mix(in srgb, var(--sv-muted) 64%, var(--sv-ink));
+      --status-info-bg: linear-gradient(180deg, var(--sv-surface), color-mix(in srgb, var(--sv-bg) 72%, var(--sv-surface-dark)));
+      --status-info-border: color-mix(in srgb, var(--sv-muted) 24%, var(--sv-bg-deep));
+      --status-info-text: color-mix(in srgb, var(--sv-muted) 72%, var(--sv-ink));
+      --status-success-bg: linear-gradient(180deg, color-mix(in srgb, var(--sv-signal) 10%, var(--sv-surface)), color-mix(in srgb, var(--sv-signal) 14%, var(--sv-surface-dark)));
+      --status-success-border: color-mix(in srgb, var(--sv-signal) 34%, var(--sv-surface-dark));
+      --status-success-text: color-mix(in srgb, var(--sv-signal) 68%, var(--sv-ink));
+      --status-error-bg: linear-gradient(180deg, color-mix(in srgb, var(--sv-danger) 10%, var(--sv-surface)), color-mix(in srgb, var(--sv-danger) 14%, var(--sv-surface-dark)));
+      --status-error-border: color-mix(in srgb, var(--sv-danger) 34%, var(--sv-surface-dark));
+      --status-error-text: color-mix(in srgb, var(--sv-danger) 72%, var(--sv-ink));
+      --status-accent-shadow: inset 4px 0 0 color-mix(in srgb, var(--sv-accent) 28%, transparent);
+      --card-surface: linear-gradient(180deg, var(--sv-surface), color-mix(in srgb, var(--sv-bg) 66%, var(--sv-surface)));
+      --card-surface-soft: linear-gradient(180deg, color-mix(in srgb, var(--sv-surface) 82%, var(--sv-bg)), var(--sv-surface-dark));
+      --card-surface-strong: linear-gradient(135deg, color-mix(in srgb, var(--sv-accent) 10%, var(--sv-surface)), color-mix(in srgb, var(--sv-bg) 76%, var(--sv-surface)));
+      --card-border: color-mix(in srgb, var(--sv-muted) 24%, var(--sv-bg-deep));
+      --card-shadow-soft: 0 10px 28px var(--sv-shadow-soft);
+      --card-shadow-strong: 0 18px 38px var(--sv-shadow-strong);
+      --card-highlight: color-mix(in srgb, var(--sv-accent) 12%, transparent);
+      --table-alt: color-mix(in srgb, var(--sv-bg) 76%, var(--sv-surface));
+      --table-hover: color-mix(in srgb, var(--sv-accent) 12%, var(--sv-surface));
+      --shadow: 0 6px 18px var(--sv-shadow-soft);
+      --focus-ring: 0 0 0 3px color-mix(in srgb, var(--sv-accent) 20%, transparent);
+    }
+    :root[data-theme="forest"] {
+      --sv-color-scheme: light;
+      --sv-accent: #2f6b3f;
+      --sv-accent-strong: #1f4d2b;
+      --sv-signal: #0f766e;
+      --sv-danger: #b54432;
+      --sv-warning: #b7791f;
+      --sv-bg: #f3f7f0;
+      --sv-bg-deep: #e6efe2;
+      --sv-ink: #172313;
+      --sv-muted: #53624d;
+      --sv-surface: #ffffff;
+      --sv-surface-dark: #e6efe2;
+      --sv-on-accent: #ffffff;
+      --sv-overlay: rgba(23, 35, 19, .34);
+      --sv-inner-highlight: rgba(255, 255, 255, .82);
+      --sv-shadow-soft: rgba(23, 35, 19, .08);
+      --sv-shadow-strong: rgba(23, 35, 19, .14);
+    }
+    :root[data-theme="midnight"] {
+      --sv-color-scheme: dark;
+      --sv-accent: #4f8cff;
+      --sv-accent-strong: #7aa7ff;
+      --sv-signal: #4fd1c5;
+      --sv-danger: #fb7185;
+      --sv-warning: #fbbf24;
+      --sv-bg: #07111f;
+      --sv-bg-deep: #020617;
+      --sv-ink: #eaf2ff;
+      --sv-muted: #9fb1c8;
+      --sv-surface: #0e1b2e;
+      --sv-surface-dark: #14243a;
+      --sv-on-accent: #06101f;
+      --sv-overlay: rgba(2, 6, 23, .72);
+      --sv-inner-highlight: rgba(255, 255, 255, .04);
+      --sv-shadow-soft: rgba(0, 0, 0, .24);
+      --sv-shadow-strong: rgba(0, 0, 0, .34);
+    }
+    :root[data-theme="monet"] {
+      --sv-color-scheme: light;
+      --sv-accent: #6b9f8a;
+      --sv-accent-strong: #4e806f;
+      --sv-signal: #5d927d;
+      --sv-danger: #b85f73;
+      --sv-warning: #a57940;
+      --sv-bg: #eef4f2;
+      --sv-bg-deep: #dcebe8;
+      --sv-ink: #243a3a;
+      --sv-muted: #60706b;
+      --sv-surface: #fffffa;
+      --sv-surface-dark: #e4efeb;
+      --sv-on-accent: #ffffff;
+      --sv-overlay: rgba(36, 58, 58, .32);
+      --sv-inner-highlight: rgba(255, 255, 255, .86);
+      --sv-shadow-soft: rgba(36, 58, 58, .08);
+      --sv-shadow-strong: rgba(36, 58, 58, .14);
+    }
+    :root[data-theme="morandi"] {
+      --sv-color-scheme: light;
+      --sv-accent: #8d8580;
+      --sv-accent-strong: #6f6662;
+      --sv-signal: #748375;
+      --sv-danger: #a06b68;
+      --sv-warning: #9a784f;
+      --sv-bg: #eeece8;
+      --sv-bg-deep: #d9d5cf;
+      --sv-ink: #2f2d2b;
+      --sv-muted: #66615c;
+      --sv-surface: #faf8f4;
+      --sv-surface-dark: #dfdbd4;
+      --sv-on-accent: #ffffff;
+      --sv-overlay: rgba(47, 45, 43, .32);
+      --sv-inner-highlight: rgba(255, 255, 255, .82);
+      --sv-shadow-soft: rgba(47, 45, 43, .08);
+      --sv-shadow-strong: rgba(47, 45, 43, .14);
+    }
+    :root[data-theme="sakura-mist"] {
+      --sv-color-scheme: light;
+      --sv-accent: #535369;
+      --sv-accent-strong: #3d3d52;
+      --sv-signal: #767692;
+      --sv-danger: #c9617d;
+      --sv-warning: #b7796b;
+      --sv-bg: #ffe3ee;
+      --sv-bg-deep: #f6d7e4;
+      --sv-ink: #272333;
+      --sv-muted: #6f6474;
+      --sv-surface: #fffafd;
+      --sv-surface-dark: #eadae3;
+      --sv-on-accent: #ffffff;
+      --sv-overlay: rgba(39, 35, 51, .32);
+      --sv-inner-highlight: rgba(255, 255, 255, .84);
+      --sv-shadow-soft: rgba(39, 35, 51, .08);
+      --sv-shadow-strong: rgba(39, 35, 51, .14);
+    }
+    :root[data-theme="healing-sea-blue"] {
+      --sv-color-scheme: light;
+      --sv-accent: #0081ff;
+      --sv-accent-strong: #005ec4;
+      --sv-signal: #7b7a00;
+      --sv-danger: #d34f4f;
+      --sv-warning: #a79f00;
+      --sv-bg: #eef7ff;
+      --sv-bg-deep: #d8ecff;
+      --sv-ink: #08204a;
+      --sv-muted: #4d6280;
+      --sv-surface: #ffffff;
+      --sv-surface-dark: #dbefff;
+      --sv-on-accent: #ffffff;
+      --sv-overlay: rgba(8, 32, 74, .32);
+      --sv-inner-highlight: rgba(255, 255, 255, .86);
+      --sv-shadow-soft: rgba(8, 32, 74, .08);
+      --sv-shadow-strong: rgba(8, 32, 74, .14);
+    }
+    :root[data-theme="mint-tea-green"] {
+      --sv-color-scheme: light;
+      --sv-accent: #178b85;
+      --sv-accent-strong: #0f6d68;
+      --sv-signal: #4f8f4f;
+      --sv-danger: #b85f73;
+      --sv-warning: #a57940;
+      --sv-bg: #eefaf7;
+      --sv-bg-deep: #d0efea;
+      --sv-ink: #173a36;
+      --sv-muted: #55706b;
+      --sv-surface: #fffffa;
+      --sv-surface-dark: #dff3ee;
+      --sv-on-accent: #ffffff;
+      --sv-overlay: rgba(23, 58, 54, .32);
+      --sv-inner-highlight: rgba(255, 255, 255, .86);
+      --sv-shadow-soft: rgba(23, 58, 54, .08);
+      --sv-shadow-strong: rgba(23, 58, 54, .14);
+    }
+    :root[data-theme="klein-gold"] {
+      --sv-color-scheme: light;
+      --sv-accent: #002fa7;
+      --sv-accent-strong: #ffcf14;
+      --sv-accent-strong-ui: #005ec4;
+      --sv-signal: #967800;
+      --sv-danger: #e05252;
+      --sv-warning: #e6b800;
+      --sv-bg: #f5f8ff;
+      --sv-bg-deep: #d9e5ff;
+      --sv-ink: #061a4d;
+      --sv-muted: #52617b;
+      --sv-surface: #ffffff;
+      --sv-surface-dark: #e8efff;
+      --sv-on-accent: #ffffff;
+      --sv-overlay: rgba(6, 26, 77, .34);
+      --sv-inner-highlight: rgba(255, 255, 255, .86);
+      --sv-shadow-soft: rgba(6, 26, 77, .08);
+      --sv-shadow-strong: rgba(6, 26, 77, .14);
+    }
+    :root[data-theme="dongbei-rain"] {
+      --sv-color-scheme: dark;
+      --sv-accent: #c9162f;
+      --sv-accent-strong: #f2f0e9;
+      --sv-accent-strong-ui: #8f1022;
+      --sv-signal: #3f7f35;
+      --sv-danger: #e34f86;
+      --sv-warning: #d28b37;
+      --sv-bg: #4d2f1f;
+      --sv-bg-deep: #2f1c14;
+      --sv-ink: #fffaf0;
+      --sv-muted: #e2cfc0;
+      --sv-surface: #632d27;
+      --sv-surface-dark: #5b3022;
+      --sv-on-accent: #fffaf0;
+      --sv-overlay: rgba(47, 28, 20, .74);
+      --sv-inner-highlight: rgba(255, 255, 255, .05);
+      --sv-shadow-soft: rgba(0, 0, 0, .24);
+      --sv-shadow-strong: rgba(0, 0, 0, .34);
+    }
+    :root[data-theme="rainbow-rgb"] {
+      --sv-color-scheme: dark;
+      --sv-accent: #00d4ff;
+      --sv-accent-strong: #ffffff;
+      --sv-accent-strong-ui: #3b82f6;
+      --sv-signal: #00ff85;
+      --sv-danger: #ff3366;
+      --sv-warning: #ff8a00;
+      --sv-bg: #070711;
+      --sv-bg-deep: #02040d;
+      --sv-ink: #f8fbff;
+      --sv-muted: #b9c7da;
+      --sv-surface: #0a0e1c;
+      --sv-surface-dark: #101427;
+      --sv-on-accent: #02040d;
+      --sv-overlay: rgba(2, 4, 13, .76);
+      --sv-inner-highlight: rgba(255, 255, 255, .04);
+      --sv-shadow-soft: rgba(0, 0, 0, .25);
+      --sv-shadow-strong: rgba(0, 0, 0, .36);
+    }
+    :root[data-theme="bleach-tybw"] {
+      --sv-color-scheme: dark;
+      --sv-accent: #e6397c;
+      --sv-accent-strong: #ff78ad;
+      --sv-signal: #f8f4f7;
+      --sv-danger: #ff477e;
+      --sv-warning: #f0b54c;
+      --sv-bg: #1a1a1d;
+      --sv-bg-deep: #0d0d10;
+      --sv-ink: #fff7fb;
+      --sv-muted: #c9b8c1;
+      --sv-surface: #1f1f24;
+      --sv-surface-dark: #141418;
+      --sv-on-accent: #fff7fb;
+      --sv-overlay: rgba(13, 13, 16, .76);
+      --sv-inner-highlight: rgba(255, 255, 255, .04);
+      --sv-shadow-soft: rgba(0, 0, 0, .25);
+      --sv-shadow-strong: rgba(0, 0, 0, .36);
+    }
+    :root[data-theme="eva"] {
+      --sv-color-scheme: dark;
+      --sv-accent: #b7ff2a;
+      --sv-accent-strong: #8b5cf6;
+      --sv-signal: #ff9f1c;
+      --sv-danger: #ff4fb3;
+      --sv-warning: #ff9f1c;
+      --sv-bg: #090812;
+      --sv-bg-deep: #030208;
+      --sv-ink: #f6ffe8;
+      --sv-muted: #d3c6ff;
+      --sv-surface: #120e22;
+      --sv-surface-dark: #0c0918;
+      --sv-on-accent: #090812;
+      --sv-overlay: rgba(3, 2, 8, .78);
+      --sv-inner-highlight: rgba(255, 255, 255, .04);
+      --sv-shadow-soft: rgba(0, 0, 0, .26);
+      --sv-shadow-strong: rgba(0, 0, 0, .38);
+    }
+    :root[data-theme="starry-night"] {
+      --sv-color-scheme: dark;
+      --sv-accent: #f6c945;
+      --sv-accent-strong: #ffe27a;
+      --sv-signal: #5eead4;
+      --sv-danger: #fb7185;
+      --sv-warning: #f6c945;
+      --sv-bg: #07142e;
+      --sv-bg-deep: #030817;
+      --sv-ink: #f8efcb;
+      --sv-muted: #b8c7e6;
+      --sv-surface: #0d1f3f;
+      --sv-surface-dark: #162d58;
+      --sv-on-accent: #07142e;
+      --sv-overlay: rgba(3, 8, 23, .76);
+      --sv-inner-highlight: rgba(255, 255, 255, .04);
+      --sv-shadow-soft: rgba(0, 0, 0, .25);
+      --sv-shadow-strong: rgba(0, 0, 0, .36);
+    }
+    :root[data-theme="qingming-scroll"] {
+      --sv-color-scheme: light;
+      --sv-accent: #2f6673;
+      --sv-accent-strong: #1e4c57;
+      --sv-signal: #5f7f4f;
+      --sv-danger: #b34a32;
+      --sv-warning: #9b7136;
+      --sv-bg: #f3e8d2;
+      --sv-bg-deep: #e4d2ad;
+      --sv-ink: #2a241b;
+      --sv-muted: #6d6253;
+      --sv-surface: #fff9eb;
+      --sv-surface-dark: #eadbbb;
+      --sv-on-accent: #ffffff;
+      --sv-overlay: rgba(42, 36, 27, .34);
+      --sv-inner-highlight: rgba(255, 255, 255, .78);
+      --sv-shadow-soft: rgba(42, 36, 27, .09);
+      --sv-shadow-strong: rgba(42, 36, 27, .15);
+    }
+    :root[data-theme="cezanne"] {
+      --sv-color-scheme: light;
+      --sv-accent: #8f4f2f;
+      --sv-accent-strong: #6f3a22;
+      --sv-signal: #5e7a4d;
+      --sv-danger: #a64735;
+      --sv-warning: #9b7136;
+      --sv-bg: #efe6d8;
+      --sv-bg-deep: #d7c4aa;
+      --sv-ink: #2f241d;
+      --sv-muted: #685b4f;
+      --sv-surface: #fff9ee;
+      --sv-surface-dark: #e0cfb6;
+      --sv-on-accent: #ffffff;
+      --sv-overlay: rgba(47, 36, 29, .34);
+      --sv-inner-highlight: rgba(255, 255, 255, .78);
+      --sv-shadow-soft: rgba(47, 36, 29, .09);
+      --sv-shadow-strong: rgba(47, 36, 29, .15);
+    }
+    :root[data-theme="sisley"] {
+      --sv-color-scheme: light;
+      --sv-accent: #5f8fa8;
+      --sv-accent-strong: #3f718a;
+      --sv-signal: #6b946d;
+      --sv-danger: #a85d55;
+      --sv-warning: #9a784f;
+      --sv-bg: #eef4ef;
+      --sv-bg-deep: #d7e5dc;
+      --sv-ink: #24343a;
+      --sv-muted: #5d6d70;
+      --sv-surface: #fafeff;
+      --sv-surface-dark: #dcebe3;
+      --sv-on-accent: #ffffff;
+      --sv-overlay: rgba(36, 52, 58, .32);
+      --sv-inner-highlight: rgba(255, 255, 255, .84);
+      --sv-shadow-soft: rgba(36, 52, 58, .08);
+      --sv-shadow-strong: rgba(36, 52, 58, .14);
+    }
+    :root[data-theme="pissarro"] {
+      --sv-color-scheme: light;
+      --sv-accent: #7f8f4e;
+      --sv-accent-strong: #5f6f35;
+      --sv-signal: #607e4a;
+      --sv-danger: #a05742;
+      --sv-warning: #9a784f;
+      --sv-bg: #f1eddf;
+      --sv-bg-deep: #ded5ba;
+      --sv-ink: #2d2a1e;
+      --sv-muted: #675f4c;
+      --sv-surface: #fffcef;
+      --sv-surface-dark: #e5ddc4;
+      --sv-on-accent: #ffffff;
+      --sv-overlay: rgba(45, 42, 30, .32);
+      --sv-inner-highlight: rgba(255, 255, 255, .82);
+      --sv-shadow-soft: rgba(45, 42, 30, .09);
+      --sv-shadow-strong: rgba(45, 42, 30, .15);
+    }
+    :root[data-theme="gauguin"] {
+      --sv-color-scheme: light;
+      --sv-accent: #b65f2a;
+      --sv-accent-strong: #8f431f;
+      --sv-signal: #247a72;
+      --sv-danger: #b33b4b;
+      --sv-warning: #b65f2a;
+      --sv-bg: #f1e0c2;
+      --sv-bg-deep: #d6ad73;
+      --sv-ink: #2c2117;
+      --sv-muted: #6e5944;
+      --sv-surface: #fff6e0;
+      --sv-surface-dark: #e8c790;
+      --sv-on-accent: #ffffff;
+      --sv-overlay: rgba(44, 33, 23, .34);
+      --sv-inner-highlight: rgba(255, 255, 255, .78);
+      --sv-shadow-soft: rgba(44, 33, 23, .10);
+      --sv-shadow-strong: rgba(44, 33, 23, .16);
+    }
+    :root[data-theme="matisse"] {
+      --sv-color-scheme: light;
+      --sv-accent: #2468c9;
+      --sv-accent-strong: #174d9b;
+      --sv-signal: #1f8f78;
+      --sv-danger: #d33732;
+      --sv-warning: #b7791f;
+      --sv-bg: #f4efe5;
+      --sv-bg-deep: #d8e0e8;
+      --sv-ink: #18243a;
+      --sv-muted: #536176;
+      --sv-surface: #fffcf4;
+      --sv-surface-dark: #e2e8ef;
+      --sv-on-accent: #ffffff;
+      --sv-overlay: rgba(24, 36, 58, .32);
+      --sv-inner-highlight: rgba(255, 255, 255, .84);
+      --sv-shadow-soft: rgba(24, 36, 58, .08);
+      --sv-shadow-strong: rgba(24, 36, 58, .14);
+    }
+    :root[data-theme="qi-baishi"] {
+      --sv-color-scheme: light;
+      --sv-accent: #b7352d;
+      --sv-accent-strong: #8d251f;
+      --sv-signal: #386a55;
+      --sv-danger: #9f2f2a;
+      --sv-warning: #9a784f;
+      --sv-bg: #f6f0e3;
+      --sv-bg-deep: #e3d7c1;
+      --sv-ink: #211f1b;
+      --sv-muted: #635c52;
+      --sv-surface: #fffcf3;
+      --sv-surface-dark: #e8dec9;
+      --sv-on-accent: #ffffff;
+      --sv-overlay: rgba(33, 31, 27, .32);
+      --sv-inner-highlight: rgba(255, 255, 255, .84);
+      --sv-shadow-soft: rgba(33, 31, 27, .08);
+      --sv-shadow-strong: rgba(33, 31, 27, .14);
+    }
+    :root[data-theme="p-site"] {
+      --sv-color-scheme: dark;
+      --sv-accent: #ff9900;
+      --sv-accent-strong: #f2b400;
+      --sv-signal: #f2b400;
+      --sv-danger: #ff4d4d;
+      --sv-warning: #f2b400;
+      --sv-bg: #050505;
+      --sv-bg-deep: #000000;
+      --sv-ink: #f7f7f7;
+      --sv-muted: #b8b8b8;
+      --sv-surface: #161616;
+      --sv-surface-dark: #101010;
+      --sv-on-accent: #050505;
+      --sv-overlay: rgba(0, 0, 0, .78);
+      --sv-inner-highlight: rgba(255, 255, 255, .04);
+      --sv-shadow-soft: rgba(0, 0, 0, .28);
+      --sv-shadow-strong: rgba(0, 0, 0, .40);
+    }
+    :root[data-theme="neon-track"] {
+      --sv-color-scheme: dark;
+      --sv-accent: #00fd00;
+      --sv-accent-strong: #0947fe;
+      --sv-signal: #2cff5a;
+      --sv-danger: #ff3d7a;
+      --sv-warning: #a3ff12;
+      --sv-bg: #07180b;
+      --sv-bg-deep: #020a04;
+      --sv-ink: #efffee;
+      --sv-muted: #b7d7c1;
+      --sv-surface: #09180f;
+      --sv-surface-dark: #0d2316;
+      --sv-on-accent: #020a04;
+      --sv-overlay: rgba(2, 10, 4, .78);
+      --sv-inner-highlight: rgba(255, 255, 255, .04);
+      --sv-shadow-soft: rgba(0, 0, 0, .28);
+      --sv-shadow-strong: rgba(0, 0, 0, .40);
+    }
+    :root[data-theme="cream-berry-purple"] {
+      --sv-color-scheme: light;
+      --sv-accent: #652c97;
+      --sv-accent-strong: #4c1f74;
+      --sv-signal: #c85c8b;
+      --sv-danger: #b63f65;
+      --sv-warning: #a57940;
+      --sv-bg: #fff0f2;
+      --sv-bg-deep: #f3d7df;
+      --sv-ink: #2d183a;
+      --sv-muted: #745d7e;
+      --sv-surface: #fffafb;
+      --sv-surface-dark: #f7dfe7;
+      --sv-on-accent: #ffffff;
+      --sv-overlay: rgba(45, 24, 58, .32);
+      --sv-inner-highlight: rgba(255, 255, 255, .84);
+      --sv-shadow-soft: rgba(45, 24, 58, .08);
+      --sv-shadow-strong: rgba(45, 24, 58, .14);
+    }
+    :root[data-theme="orange-slate"] {
+      --sv-color-scheme: dark;
+      --sv-accent: #ff7400;
+      --sv-accent-strong: #ff9a3d;
+      --sv-signal: #7ad0b1;
+      --sv-danger: #ff5f55;
+      --sv-warning: #ff9a3d;
+      --sv-bg: #172728;
+      --sv-bg-deep: #0d1718;
+      --sv-ink: #fff2e5;
+      --sv-muted: #c8d0cc;
+      --sv-surface: #2b3c3d;
+      --sv-surface-dark: #213132;
+      --sv-on-accent: #172728;
+      --sv-overlay: rgba(13, 23, 24, .76);
+      --sv-inner-highlight: rgba(255, 255, 255, .04);
+      --sv-shadow-soft: rgba(0, 0, 0, .25);
+      --sv-shadow-strong: rgba(0, 0, 0, .36);
+    }
+    :root[data-theme="seafoam-apricot"] {
+      --sv-color-scheme: light;
+      --sv-accent: #01847f;
+      --sv-accent-strong: #006b67;
+      --sv-signal: #d9775f;
+      --sv-danger: #c74d5a;
+      --sv-warning: #d9775f;
+      --sv-bg: #effaf7;
+      --sv-bg-deep: #d3eee9;
+      --sv-ink: #123936;
+      --sv-muted: #5c706d;
+      --sv-surface: #fffbf7;
+      --sv-surface-dark: #f4ded6;
+      --sv-on-accent: #ffffff;
+      --sv-overlay: rgba(18, 57, 54, .32);
+      --sv-inner-highlight: rgba(255, 255, 255, .84);
+      --sv-shadow-soft: rgba(18, 57, 54, .08);
+      --sv-shadow-strong: rgba(18, 57, 54, .14);
+    }
+    :root[data-theme="honey-sunset"] {
+      --sv-color-scheme: light;
+      --sv-accent: #ff6067;
+      --sv-accent-strong: #d9434a;
+      --sv-signal: #a47600;
+      --sv-danger: #d9434a;
+      --sv-warning: #d89d00;
+      --sv-bg: #fff7d6;
+      --sv-bg-deep: #ffeaa0;
+      --sv-ink: #3b2b19;
+      --sv-muted: #76694d;
+      --sv-surface: #fffcee;
+      --sv-surface-dark: #ffe8a3;
+      --sv-on-accent: #3b2b19;
+      --sv-overlay: rgba(59, 43, 25, .32);
+      --sv-inner-highlight: rgba(255, 255, 255, .78);
+      --sv-shadow-soft: rgba(59, 43, 25, .09);
+      --sv-shadow-strong: rgba(59, 43, 25, .15);
+    }
+    :root[data-theme="crimson-ivory"] {
+      --sv-color-scheme: light;
+      --sv-accent: #990033;
+      --sv-accent-strong: #740026;
+      --sv-signal: #7f6a4f;
+      --sv-danger: #b52a3f;
+      --sv-warning: #9a784f;
+      --sv-bg: #f4eee5;
+      --sv-bg-deep: #ddcdb7;
+      --sv-ink: #341019;
+      --sv-muted: #6f5b57;
+      --sv-surface: #fffaf2;
+      --sv-surface-dark: #e8dac8;
+      --sv-on-accent: #ffffff;
+      --sv-overlay: rgba(52, 16, 25, .32);
+      --sv-inner-highlight: rgba(255, 255, 255, .82);
+      --sv-shadow-soft: rgba(52, 16, 25, .08);
+      --sv-shadow-strong: rgba(52, 16, 25, .14);
     }
 
     * { box-sizing: border-box; }
@@ -489,6 +1142,31 @@ INDEX_HTML = r"""<!doctype html>
       color: var(--muted);
       flex: 0 0 auto;
     }
+    .mode-switch {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .mode-switch button {
+      justify-content: flex-start;
+      min-height: 46px;
+      padding: 0 12px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      background: var(--field-bg);
+      color: var(--text);
+      box-shadow: none;
+    }
+    .mode-switch button.active {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+      color: var(--accent);
+      box-shadow: var(--focus-ring);
+    }
+    .mode-dependent[hidden] {
+      display: none !important;
+    }
     .ghost-menu {
       position: absolute;
       left: 0;
@@ -541,24 +1219,61 @@ INDEX_HTML = r"""<!doctype html>
     .ghost-menu[hidden] {
       display: none;
     }
-    .ghost-menu-input {
-      position: sticky;
-      top: 0;
-      z-index: 1;
-      min-height: 38px;
-      margin-bottom: 4px;
-      border: 1px solid var(--line);
-      border-radius: var(--radius-sm);
-      background: var(--field-bg);
+    .locale-control {
+      position: relative;
+    }
+    .locale-control-input {
+      display: none;
+      width: 100%;
+      min-width: 0;
+      min-height: 36px;
+      height: 36px;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
       color: var(--text);
-      padding: 0 10px;
+      padding: 0;
       font: inherit;
       outline: none;
-      box-shadow: var(--field-shadow);
+      box-shadow: none;
+      -webkit-appearance: none;
+      appearance: none;
     }
-    .ghost-menu-input:focus {
-      border-color: var(--accent);
-      box-shadow: var(--focus-ring);
+    .locale-select.open .locale-control-value {
+      display: none;
+    }
+    .locale-select.open .locale-control-input {
+      display: block;
+    }
+    .locale-control-input:hover,
+    .locale-control-input:focus,
+    .locale-control-input:focus-visible {
+      border: 0;
+      background: transparent;
+      box-shadow: none;
+      outline: none;
+    }
+    .locale-control-input::-webkit-search-cancel-button {
+      cursor: pointer;
+    }
+    .locale-control-input::-webkit-search-decoration,
+    .locale-control-input::-webkit-search-results-button,
+    .locale-control-input::-webkit-search-results-decoration {
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    .ghost-options {
+      display: grid;
+      gap: 4px;
+    }
+    .ghost-empty {
+      padding: 10px 12px;
+      border: 1px dashed var(--line);
+      border-radius: var(--radius-sm);
+      color: var(--muted);
+      background: var(--field-bg-soft);
+      font-size: 12px;
+      line-height: 1.45;
     }
     .ghost-option {
       display: flex;
@@ -569,17 +1284,18 @@ INDEX_HTML = r"""<!doctype html>
       padding: 8px 10px;
       border: 1px solid transparent;
       border-radius: var(--radius-sm);
-      background: #fff;
+      background: var(--field-bg);
       color: var(--text);
       cursor: pointer;
       font: inherit;
       text-align: left;
-      transition: background-color var(--motion-fast) ease, border-color var(--motion-fast) ease, color var(--motion-fast) ease, transform var(--motion-fast) ease;
+      transition: background-color var(--motion-fast) ease, border-color var(--motion-fast) ease, color var(--motion-fast) ease;
     }
     .ghost-option:hover {
       background: var(--accent-soft-hover);
       border-color: var(--accent-soft-line);
       color: var(--accent);
+      transform: none;
     }
     .ghost-option.active {
       background: var(--accent-soft-active);
@@ -746,6 +1462,20 @@ INDEX_HTML = r"""<!doctype html>
     textarea::placeholder {
       color: color-mix(in srgb, var(--muted) 84%, transparent);
     }
+    .locale-control .locale-control-input,
+    .locale-control .locale-control-input:hover,
+    .locale-control .locale-control-input:focus,
+    .locale-control .locale-control-input:focus-visible {
+      height: 36px;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      box-shadow: none;
+      padding: 0;
+      outline: none;
+      -webkit-appearance: none;
+      appearance: none;
+    }
     textarea {
       min-height: 76px;
       padding: 10px 12px;
@@ -907,7 +1637,7 @@ INDEX_HTML = r"""<!doctype html>
       font-weight: 700;
       cursor: pointer;
       background: var(--accent);
-      color: #fff;
+      color: var(--button-text);
       transition: transform var(--motion-fast) ease, opacity var(--motion-fast) ease, background-color var(--motion-fast) ease, box-shadow var(--motion-fast) ease;
     }
     button:hover:not(:disabled) { transform: translateY(-1px); }
@@ -1066,7 +1796,7 @@ INDEX_HTML = r"""<!doctype html>
       padding: 0 13px;
       border-radius: var(--radius-sm);
       background: var(--accent-2);
-      color: #fff;
+      color: var(--button-text);
       text-decoration: none;
       font-weight: 700;
       font-size: 13px;
@@ -1077,7 +1807,8 @@ INDEX_HTML = r"""<!doctype html>
       background: var(--accent-2);
       font-size: 13px;
     }
-    .pack-name-dialog {
+    .pack-name-dialog,
+    .settings-dialog {
       position: fixed;
       inset: 0;
       z-index: 100;
@@ -1086,10 +1817,12 @@ INDEX_HTML = r"""<!doctype html>
       padding: 20px;
       background: var(--overlay);
     }
-    .pack-name-dialog[hidden] {
+    .pack-name-dialog[hidden],
+    .settings-dialog[hidden] {
       display: none;
     }
-    .pack-name-card {
+    .pack-name-card,
+    .settings-card {
       width: min(460px, 100%);
       display: grid;
       gap: 16px;
@@ -1099,25 +1832,32 @@ INDEX_HTML = r"""<!doctype html>
       background: var(--panel);
       box-shadow: 0 24px 64px rgba(15, 23, 42, .24);
     }
-    .pack-name-head {
+    .settings-card {
+      width: min(560px, 100%);
+    }
+    .pack-name-head,
+    .settings-head {
       display: flex;
       align-items: flex-start;
       justify-content: space-between;
       gap: 14px;
     }
-    .pack-name-head strong {
+    .pack-name-head strong,
+    .settings-head strong {
       display: block;
       font-size: 16px;
       line-height: 1.35;
     }
-    .pack-name-head span {
+    .pack-name-head span,
+    .settings-head span {
       display: block;
       margin-top: 4px;
       color: var(--muted);
       font-size: 13px;
       line-height: 1.45;
     }
-    .pack-name-close {
+    .pack-name-close,
+    .settings-close {
       width: 34px;
       height: 34px;
       min-height: 34px;
@@ -1127,18 +1867,249 @@ INDEX_HTML = r"""<!doctype html>
       background: var(--field-bg);
       color: var(--muted);
     }
-    .pack-name-actions {
+    .pack-name-actions,
+    .settings-actions {
       display: flex;
       justify-content: flex-end;
       gap: 10px;
+      flex-wrap: wrap;
     }
-    .pack-name-actions button {
+    .pack-name-actions button,
+    .settings-actions button {
       border-radius: 10px;
     }
-    .pack-name-actions .secondary {
+    .pack-name-actions .secondary,
+    .settings-actions .secondary {
       border: 1px solid var(--line);
       background: var(--field-bg);
       color: var(--text);
+    }
+    .settings-actions .danger {
+      border: 1px solid var(--danger-line);
+      background: var(--danger-bg);
+      color: var(--danger);
+    }
+    .pack-name-field,
+    .settings-field {
+      display: grid;
+      gap: 7px;
+    }
+    .settings-status {
+      min-height: 18px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1.45;
+    }
+    .settings-status.error {
+      color: var(--danger);
+    }
+    .settings-current {
+      display: grid;
+      gap: 3px;
+      padding-top: 2px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .settings-current strong {
+      color: var(--text);
+      font-size: 13px;
+      overflow-wrap: anywhere;
+    }
+    .settings-section {
+      display: grid;
+      gap: 10px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-md);
+      background: var(--card-surface-soft);
+    }
+    .settings-section-title {
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 800;
+      line-height: 1.4;
+    }
+    .theme-preview {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 44px;
+      padding: 9px 10px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      background: var(--field-bg-soft);
+    }
+    .theme-preview strong {
+      display: block;
+      color: var(--text);
+      font-size: 13px;
+      line-height: 1.35;
+    }
+    .theme-preview span {
+      display: block;
+      margin-top: 2px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+    .theme-swatches {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      flex: 0 0 auto;
+    }
+    .theme-swatch {
+      width: 24px;
+      height: 24px;
+      border: 1px solid color-mix(in srgb, var(--line) 72%, transparent);
+      border-radius: 8px;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, .28);
+    }
+    .pack-name-input-wrap,
+    .secret-input {
+      position: relative;
+      display: flex;
+      align-items: center;
+      min-width: 0;
+    }
+    .pack-name-input-wrap input {
+      padding-right: 56px;
+    }
+    .pack-name-suffix {
+      position: absolute;
+      right: 12px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 800;
+      pointer-events: none;
+    }
+    .pack-name-error {
+      min-height: 18px;
+      color: var(--danger);
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1.45;
+    }
+    .secret-input input {
+      padding-right: 46px;
+    }
+    .secret-toggle {
+      position: absolute;
+      right: 5px;
+      width: 34px;
+      min-width: 34px;
+      height: 32px;
+      min-height: 32px;
+      padding: 0;
+      display: grid;
+      place-items: center;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--muted);
+      transform: none;
+    }
+    .secret-toggle:hover:not(:disabled),
+    .secret-toggle:focus-visible {
+      border-color: var(--accent-soft-line);
+      background: var(--accent-soft-hover);
+      color: var(--accent);
+      transform: none;
+    }
+    .model-field {
+      display: grid;
+      gap: 7px;
+    }
+    .model-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: end;
+    }
+    .model-row .ghost-select {
+      min-width: 0;
+      gap: 0;
+    }
+    .model-row .ghost-menu {
+      top: calc(100% + 6px);
+    }
+    .model-control-input {
+      display: none;
+      width: 100%;
+      min-width: 0;
+      height: 36px;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      color: var(--text);
+      padding: 0;
+      font: inherit;
+      outline: none;
+      box-shadow: none;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    .model-select.open .model-control-value {
+      display: none;
+    }
+    .model-select.open .model-control-input {
+      display: block;
+    }
+    .model-control .model-control-input,
+    .model-control .model-control-input:hover,
+    .model-control .model-control-input:focus,
+    .model-control .model-control-input:focus-visible {
+      height: 36px;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      box-shadow: none;
+      padding: 0;
+      outline: none;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    .model-control-input::-webkit-search-decoration,
+    .model-control-input::-webkit-search-results-button,
+    .model-control-input::-webkit-search-results-decoration {
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    .model-refresh {
+      width: 42px;
+      min-width: 42px;
+      height: 42px;
+      min-height: 42px;
+      padding: 0;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--line);
+      background: var(--field-bg);
+      color: var(--muted);
+      transform: none;
+    }
+    .model-refresh:hover:not(:disabled),
+    .model-refresh:focus-visible {
+      border-color: var(--accent-soft-line);
+      background: var(--accent-soft-hover);
+      color: var(--accent);
+      transform: none;
+    }
+    .model-refresh[aria-busy="true"] i {
+      animation: spin 900ms linear infinite;
+    }
+    .model-status {
+      min-height: 18px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+      line-height: 1.45;
+    }
+    .model-status.error {
+      color: var(--danger);
     }
     #retry-api-failures {
       min-width: 132px;
@@ -1164,17 +2135,135 @@ INDEX_HTML = r"""<!doctype html>
       color: var(--control-active-text);
       box-shadow: var(--control-active-shadow);
     }
+    .theme-picker {
+      position: relative;
+      flex: 0 0 auto;
+    }
     .theme-toggle {
-      min-width: 122px;
-      padding: 0 12px;
+      min-width: 210px;
+      max-width: 260px;
+      padding: 0 10px;
       border: 1px solid var(--line);
       background: var(--field-bg);
       color: var(--text);
       box-shadow: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
     }
-    .theme-toggle span {
+    .theme-trigger-main {
+      min-width: 0;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .theme-trigger-main span {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
       font-size: 12px;
       font-weight: 700;
+    }
+    .theme-trigger-swatches {
+      margin-left: auto;
+    }
+    .theme-trigger-swatches .theme-swatch {
+      width: 16px;
+      height: 16px;
+      border-radius: 5px;
+    }
+    .theme-toggle .chevron {
+      color: var(--muted);
+      flex: 0 0 auto;
+    }
+    .theme-menu {
+      position: absolute;
+      right: 0;
+      top: calc(100% + 8px);
+      z-index: 70;
+      width: min(380px, calc(100vw - 32px));
+      max-height: min(520px, calc(100vh - 92px));
+      overflow: auto;
+      padding: 8px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-md);
+      background: var(--panel);
+      box-shadow: 0 18px 44px rgba(15, 23, 42, .18);
+      scrollbar-width: thin;
+      scrollbar-color: var(--dropdown-scroll-thumb) var(--dropdown-scroll-track);
+    }
+    .theme-menu[hidden] {
+      display: none;
+    }
+    .theme-group {
+      display: grid;
+      gap: 4px;
+    }
+    .theme-group + .theme-group {
+      margin-top: 8px;
+      padding-top: 8px;
+      border-top: 1px solid var(--line);
+    }
+    .theme-group-title {
+      padding: 4px 8px;
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 800;
+      line-height: 1.35;
+    }
+    .theme-option {
+      width: 100%;
+      height: auto;
+      min-height: 46px;
+      padding: 8px 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      border: 1px solid transparent;
+      border-radius: var(--radius-sm);
+      background: var(--field-bg);
+      color: var(--text);
+      box-shadow: none;
+      transform: none;
+    }
+    .theme-option:hover:not(:disabled),
+    .theme-option:focus-visible {
+      border-color: var(--accent-soft-line);
+      background: var(--accent-soft-hover);
+      color: var(--text);
+      transform: none;
+    }
+    .theme-option.active {
+      border-color: var(--accent-active-line);
+      background: var(--accent-soft-active);
+      color: var(--text);
+    }
+    .theme-option-copy {
+      min-width: 0;
+      display: grid;
+      gap: 2px;
+      text-align: left;
+    }
+    .theme-option-copy strong {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-size: 13px;
+      line-height: 1.35;
+    }
+    .theme-option-copy span {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+      line-height: 1.35;
     }
     .toolbar input {
       flex: 1;
@@ -1207,6 +2296,33 @@ INDEX_HTML = r"""<!doctype html>
     }
     .toolbar .ghost-select.jar-filter .ghost-option {
       align-items: flex-start;
+    }
+    .toolbar .ghost-select.jar-filter .jar-tree-option {
+      justify-content: flex-start;
+      gap: 10px;
+      height: auto;
+      min-height: 38px;
+    }
+    .jar-tree-label {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+    .jar-tree-label i {
+      flex: 0 0 auto;
+      color: var(--muted);
+      font-size: 15px;
+    }
+    .jar-tree-path {
+      margin-left: auto;
+      max-width: 260px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
     }
     .toolbar .ghost-select.jar-filter .ghost-option strong {
       display: block;
@@ -1477,9 +2593,9 @@ INDEX_HTML = r"""<!doctype html>
     .metric:nth-child(2)::before { background: var(--accent-2); }
     .metric:nth-child(3)::before { background: var(--success); }
     .metric:nth-child(4)::before { background: var(--warning); }
-    .metric:nth-child(5)::before { background: #7c3aed; }
-    .metric:nth-child(6)::before { background: #0891b2; }
-    .metric:nth-child(7)::before { background: #ea580c; }
+    .metric:nth-child(5)::before { background: color-mix(in srgb, var(--accent) 72%, var(--danger)); }
+    .metric:nth-child(6)::before { background: color-mix(in srgb, var(--success) 72%, var(--accent)); }
+    .metric:nth-child(7)::before { background: color-mix(in srgb, var(--warning) 72%, var(--danger)); }
     .metric:nth-child(8)::before { background: var(--danger); }
     .metric strong,
     .job-pill {
@@ -1492,7 +2608,7 @@ INDEX_HTML = r"""<!doctype html>
       padding: 0 10px;
       border-radius: 999px;
       border: 1px solid var(--line);
-      background: #f8fbff;
+      background: var(--field-bg-soft);
       color: var(--muted);
       font-size: 12px;
       letter-spacing: 0;
@@ -1518,7 +2634,7 @@ INDEX_HTML = r"""<!doctype html>
       justify-content: center;
       gap: 8px;
       background: var(--danger);
-      color: #fff;
+      color: var(--danger-text);
       border: 0;
       border-radius: 8px;
       padding: 10px 22px;
@@ -1583,8 +2699,8 @@ INDEX_HTML = r"""<!doctype html>
       margin-top: 8px;
       padding: 6px 10px;
       border-radius: 999px;
-      background: #eff6ff;
-      color: #1d4ed8;
+      background: var(--accent-soft-hover);
+      color: var(--control-hover-text);
       font-size: 12px;
       font-weight: 700;
     }
@@ -1595,7 +2711,7 @@ INDEX_HTML = r"""<!doctype html>
     .loading-progress {
       height: 10px;
       border-radius: 999px;
-      background: #dbe7f4;
+      background: var(--field-bg-soft);
     }
     .loading-progress span {
       border-radius: inherit;
@@ -1813,14 +2929,15 @@ INDEX_HTML = r"""<!doctype html>
     :root[data-theme="dark"] .ghost-select .control,
     :root[data-theme="dark"] .ghost-file .control,
     :root[data-theme="dark"] .ghost-menu,
-    :root[data-theme="dark"] .ghost-menu-input,
     :root[data-theme="dark"] .ghost-option,
     :root[data-theme="dark"] input,
     :root[data-theme="dark"] select,
     :root[data-theme="dark"] textarea,
     :root[data-theme="dark"] .toolbar button,
     :root[data-theme="dark"] .pack-name-close,
-    :root[data-theme="dark"] .pack-name-actions .secondary {
+    :root[data-theme="dark"] .settings-close,
+    :root[data-theme="dark"] .pack-name-actions .secondary,
+    :root[data-theme="dark"] .settings-actions .secondary {
       background: var(--field-bg);
       color: var(--text);
     }
@@ -1835,11 +2952,13 @@ INDEX_HTML = r"""<!doctype html>
     :root[data-theme="dark"] .panel-copy,
     :root[data-theme="dark"] .field-help,
     :root[data-theme="dark"] .pack-name-head span,
+    :root[data-theme="dark"] .settings-head span,
     :root[data-theme="dark"] .loading-meta {
       color: var(--muted);
     }
     :root[data-theme="dark"] input[type="file"],
-    :root[data-theme="dark"] .loading-progress {
+    :root[data-theme="dark"] .loading-progress,
+    :root[data-theme="dark"] .ghost-empty {
       background: var(--field-bg-soft);
     }
     :root[data-theme="dark"] .loading-lane {
@@ -1911,6 +3030,18 @@ INDEX_HTML = r"""<!doctype html>
         width: 100%;
         justify-content: flex-start;
         flex-wrap: wrap;
+      }
+      .theme-picker {
+        width: 100%;
+      }
+      .theme-toggle {
+        width: 100%;
+        max-width: none;
+      }
+      .theme-menu {
+        left: 0;
+        right: auto;
+        width: min(100%, calc(100vw - 32px));
       }
       .top-search {
         width: 100%;
@@ -2042,6 +3173,7 @@ INDEX_HTML = r"""<!doctype html>
         <button type="button" class="nav-item" data-view="api-log"><i class="ri-bug-line"></i><span>API 日志</span></button>
       </nav>
       <div class="nav-footer">
+        <button type="button" class="nav-item" id="settings-open"><i class="ri-settings-3-line"></i><span>设置</span></button>
         <div class="nav-item"><i class="ri-file-list-3-line"></i><span>文档</span></div>
         <div class="nav-item"><i class="ri-question-line"></i><span>帮助</span></div>
       </div>
@@ -2053,9 +3185,16 @@ INDEX_HTML = r"""<!doctype html>
           <div class="header-task"><span>当前任务</span><strong id="header-job">未开始</strong></div>
         </div>
         <div class="header-meta">
-          <button type="button" id="theme-toggle" class="theme-toggle" title="主题"><i class="ri-computer-line" data-theme-icon></i><span data-theme-label>跟随系统</span></button>
+          <div class="theme-picker" id="theme-picker">
+            <button type="button" id="theme-toggle" class="theme-toggle" title="主题" aria-haspopup="listbox" aria-expanded="false" aria-controls="theme-menu">
+              <span class="theme-trigger-main"><i class="ri-computer-line" data-theme-icon></i><span data-theme-label>跟随系统</span></span>
+              <span class="theme-swatches theme-trigger-swatches" data-theme-trigger-swatches aria-hidden="true"></span>
+              <i class="ri-arrow-down-s-line chevron" aria-hidden="true"></i>
+            </button>
+            <div class="theme-menu" id="theme-menu" role="listbox" hidden></div>
+          </div>
           <span class="pill">本地处理</span>
-          <span class="pill provider-badge">多 AI 翻译器</span>
+          <span class="pill provider-badge">兼容 API</span>
         </div>
       </header>
       <main>
@@ -2068,18 +3207,31 @@ INDEX_HTML = r"""<!doctype html>
       </div>
       <form id="translate-form">
         <div class="form-card">
-          <h3><i class="ri-archive-2-line"></i>Mod JAR Selection</h3>
-        <label class="ghost-file">Mod JAR
+          <h3><i class="ri-archive-2-line"></i>输入类型</h3>
+          <input type="hidden" name="input_kind" id="input_kind" value="jar">
+          <div class="mode-switch" role="radiogroup" aria-label="处理类型">
+            <button type="button" class="active" data-input-kind="jar" aria-pressed="true"><i class="ri-file-zip-line"></i><span>Mod JAR 语言文件</span></button>
+            <button type="button" data-input-kind="ftbquests" aria-pressed="false"><i class="ri-book-open-line"></i><span>FTB Quests 任务书</span></button>
+          </div>
+        <label class="ghost-file mode-dependent" id="jar-file-wrap">Mod JAR
           <span class="control"><span class="value" id="jars-display">选择一个或多个 JAR</span><i class="ri-folder-upload-line icon"></i></span>
           <input id="jars" name="jars" type="file" accept=".jar" multiple required>
+        </label>
+        <label class="ghost-file mode-dependent" id="ftbquests-file-wrap" hidden>FTB Quests / 整合包 ZIP
+          <span class="control"><span class="value" id="ftbquests-display">选择整合包 ZIP、quests ZIP 或 en_us.snbt</span><i class="ri-folder-upload-line icon"></i></span>
+          <input id="ftbquests-files" name="ftbquests_files" type="file" accept=".zip,.snbt" multiple>
+        </label>
+        <label class="ghost-file mode-dependent" id="ftbquests-directory-wrap" hidden>FTB Quests 目录
+          <span class="control"><span class="value" id="ftbquests-directory-display">选择 quests、lang 或 en_us 目录</span><i class="ri-folder-open-line icon"></i></span>
+          <input id="ftbquests-directory" name="ftbquests_directory_files" type="file" webkitdirectory directory multiple>
         </label>
         </div>
         <div class="form-card">
           <h3><i class="ri-translate-2"></i>Language Settings</h3>
         <div class="grid-2">
-          <label class="ghost-select" id="source-locale-select">源语言
-            <button type="button" class="control" data-select-trigger="source_locale"><span class="value" id="source-locale-display"></span><i class="ri-arrow-down-s-line chevron"></i></button>
-            <div class="ghost-menu" id="source-locale-menu" hidden></div>
+          <label class="ghost-select locale-select" id="source-locale-select">源语言
+            <div class="control locale-control" data-select-trigger="source_locale" role="combobox" tabindex="0" aria-haspopup="listbox" aria-expanded="false" aria-controls="source-locale-menu"><span class="value locale-control-value" id="source-locale-display"></span><input type="search" class="locale-control-input" data-locale-control-search="source_locale" placeholder="搜索代码或语言" autocomplete="off" spellcheck="false" aria-label="搜索源语言"><i class="ri-arrow-down-s-line chevron"></i></div>
+            <div class="ghost-menu" id="source-locale-menu" role="listbox" hidden></div>
             <select name="source_locale" id="source_locale" tabindex="-1" aria-hidden="true">
               <option value="en_us" selected>en_us - English (US)</option>
               <option value="en_gb">en_gb - English (UK)</option>
@@ -2089,9 +3241,9 @@ INDEX_HTML = r"""<!doctype html>
               <option value="ko_kr">ko_kr - 한국어</option>
             </select>
           </label>
-          <label class="ghost-select" id="target-locale-select">目标语言
-            <button type="button" class="control" data-select-trigger="target_locale"><span class="value" id="target-locale-display"></span><i class="ri-arrow-down-s-line chevron"></i></button>
-            <div class="ghost-menu" id="target-locale-menu" hidden></div>
+          <label class="ghost-select locale-select" id="target-locale-select">目标语言
+            <div class="control locale-control" data-select-trigger="target_locale" role="combobox" tabindex="0" aria-haspopup="listbox" aria-expanded="false" aria-controls="target-locale-menu"><span class="value locale-control-value" id="target-locale-display"></span><input type="search" class="locale-control-input" data-locale-control-search="target_locale" placeholder="搜索代码或语言" autocomplete="off" spellcheck="false" aria-label="搜索目标语言"><i class="ri-arrow-down-s-line chevron"></i></div>
+            <div class="ghost-menu" id="target-locale-menu" role="listbox" hidden></div>
             <select name="target_locale" id="target_locale" tabindex="-1" aria-hidden="true">
               <option value="zh_cn" selected>zh_cn - 简体中文</option>
               <option value="zh_tw">zh_tw - 繁体中文</option>
@@ -2111,16 +3263,8 @@ INDEX_HTML = r"""<!doctype html>
             <select name="provider" id="provider" tabindex="-1" aria-hidden="true">
               <option value="glossary">离线术语表（有限）</option>
               <option value="copy">复制原文</option>
-              <option value="openai">OpenAI</option>
-              <option value="deepseek">DeepSeek</option>
-              <option value="moonshot">Moonshot</option>
-              <option value="dashscope">通义千问 / 百炼</option>
-              <option value="zhipu">智谱 AI</option>
-              <option value="siliconflow">硅基流动</option>
-              <option value="gemini">Google Gemini (免费)</option>
-              <option value="groq">Groq (免费)</option>
-              <option value="mimo">小米 MiMo (免费)</option>
-              <option value="openai-compatible">自定义 OpenAI 兼容</option>
+              <option value="openai-compatible">兼容 OpenAI</option>
+              <option value="anthropic-compatible">兼容 Anthropic</option>
             </select>
           </label>
           <label class="ghost-select" id="pack-format-select">资源包格式
@@ -2185,19 +3329,28 @@ INDEX_HTML = r"""<!doctype html>
               <span id="provider-badge" class="pill provider-badge">AI</span>
               <a id="api-key-link" href="#" target="_blank" rel="noopener" class="btn-key-apply" hidden>申请 Key <i class="ri-external-link-line"></i></a>
             </div>
-            <div id="provider-help" class="field-help">选择翻译器后会自动填入推荐 URL 和模型。</div>
+            <div id="provider-help" class="field-help">选择翻译器后会自动填入推荐 BaseURL 和模型。</div>
           </div>
-          <div class="grid-2">
-            <label>模型
-              <input name="model" id="model" value="gpt-4o-mini">
-            </label>
-            <label>API Key
+          <label class="model-field">模型
+            <div class="model-row">
+              <span class="ghost-select model-select" id="model-select">
+                <div class="control model-control" data-model-trigger role="combobox" tabindex="0" aria-haspopup="listbox" aria-expanded="false" aria-controls="model-menu"><span class="value model-control-value" id="model-display">gpt-4o-mini</span><input type="search" class="model-control-input" id="model-search" placeholder="搜索模型" autocomplete="off" spellcheck="false" aria-label="搜索模型"><i class="ri-arrow-down-s-line chevron"></i></div>
+                <div class="ghost-menu" id="model-menu" role="listbox" hidden></div>
+                <input type="hidden" name="model" id="model" value="gpt-4o-mini">
+              </span>
+              <button type="button" id="model-refresh" class="model-refresh" title="获取模型列表" aria-label="获取模型列表"><i class="ri-refresh-line"></i></button>
+            </div>
+            <span id="model-status" class="model-status"></span>
+          </label>
+          <label>API Key
+            <div class="secret-input">
               <input name="api_key" id="api_key" type="password" autocomplete="off" placeholder="可直接粘贴 Key">
-            </label>
-          </div>
-          <label>API URL
-            <input name="api_url" id="api_url" value="https://api.openai.com/v1/chat/completions">
-            <span class="field-help">可填 base URL，例如 https://aiapi.hhnto.top/v1；也可填完整 /chat/completions 地址。</span>
+              <button type="button" id="api-key-toggle" class="secret-toggle" aria-label="查看 API Key" aria-pressed="false"><i class="ri-eye-line"></i></button>
+            </div>
+          </label>
+          <label>BaseURL
+            <input name="api_url" id="api_base_url" value="https://api.openai.com/v1">
+            <span class="field-help">填写接口 BaseURL，例如 https://api.openai.com/v1；完整 /chat/completions 或 /messages 也兼容。</span>
           </label>
           <label>API Key 环境变量
             <input name="api_key_env" id="api_key_env" value="OPENAI_API_KEY">
@@ -2242,6 +3395,8 @@ INDEX_HTML = r"""<!doctype html>
           <input name="ignore_cache" type="checkbox">
           <span>忽略缓存并重新翻译</span>
         </label>
+        <input type="hidden" name="cache_dir" id="cache_dir">
+        <input type="hidden" name="ftbquests_output_mode" id="ftbquests_output_mode" value="both">
         <label class="checkline">
           <input name="scan_hardcoded" type="checkbox" checked>
           <span>扫描 Ponder / 配置硬编码英文</span>
@@ -2268,6 +3423,30 @@ INDEX_HTML = r"""<!doctype html>
   </main>
     </div>
   </div>
+  <div class="settings-dialog" id="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title" hidden>
+    <div class="settings-card">
+      <div class="settings-head">
+        <div>
+          <strong id="settings-title">设置</strong>
+          <span>缓存目录与本地维护</span>
+        </div>
+        <button type="button" class="settings-close" id="settings-close" aria-label="关闭设置"><i class="ri-close-line"></i></button>
+      </div>
+      <label class="settings-field">缓存目录
+        <input class="ghost-input" id="settings-cache-dir" placeholder="默认：服务工作目录/.shared-cache" autocomplete="off" spellcheck="false">
+      </label>
+      <div class="settings-current">
+        <span>当前</span>
+        <strong id="settings-cache-effective">默认：服务工作目录/.shared-cache</strong>
+      </div>
+      <div class="settings-status" id="settings-status"></div>
+      <div class="settings-actions">
+        <button type="button" class="secondary" id="settings-cache-default">恢复默认</button>
+        <button type="button" class="danger" id="settings-cache-clear"><i class="ri-delete-bin-6-line"></i><span>清空缓存</span></button>
+        <button type="button" id="settings-save">保存</button>
+      </div>
+    </div>
+  </div>
   <script>
     const form = document.getElementById('translate-form');
     const submit = document.getElementById('submit');
@@ -2280,14 +3459,29 @@ INDEX_HTML = r"""<!doctype html>
     const targetLocale = document.getElementById('target_locale');
     const provider = document.getElementById('provider');
     const packFormat = document.getElementById('pack_format');
+    const inputKind = document.getElementById('input_kind');
     const jarsInput = document.getElementById('jars');
+    const ftbquestsInput = document.getElementById('ftbquests-files');
+    const ftbquestsDirectoryInput = document.getElementById('ftbquests-directory');
     const glossaryInput = document.querySelector('input[name="glossary"]');
     const sourceLocaleDisplay = document.getElementById('source-locale-display');
     const targetLocaleDisplay = document.getElementById('target-locale-display');
     const providerDisplay = document.getElementById('provider-display');
     const packFormatDisplay = document.getElementById('pack-format-display');
     const jarsDisplay = document.getElementById('jars-display');
+    const ftbquestsDisplay = document.getElementById('ftbquests-display');
+    const ftbquestsDirectoryDisplay = document.getElementById('ftbquests-directory-display');
     const glossaryDisplay = document.getElementById('glossary-display');
+    const cacheDirField = document.getElementById('cache_dir');
+    const settingsOpen = document.getElementById('settings-open');
+    const settingsDialog = document.getElementById('settings-dialog');
+    const settingsClose = document.getElementById('settings-close');
+    const settingsCacheDir = document.getElementById('settings-cache-dir');
+    const settingsCacheEffective = document.getElementById('settings-cache-effective');
+    const settingsStatus = document.getElementById('settings-status');
+    const settingsCacheDefault = document.getElementById('settings-cache-default');
+    const settingsCacheClear = document.getElementById('settings-cache-clear');
+    const settingsSave = document.getElementById('settings-save');
     let loadingTimer = null;
     let progressTimer = null;
     let activeJobId = '';
@@ -2330,21 +3524,65 @@ INDEX_HTML = r"""<!doctype html>
     let hardcodedReportSearchDebounce = 0;
     let apiLogSearchDebounce = 0;
     let hardcodedWorkbenchSearchDebounce = 0;
+    let modelFetchDebounce = 0;
+    let modelFetchSequence = 0;
+    let modelOptions = [];
+    const themePicker = document.getElementById('theme-picker');
     const themeToggle = document.getElementById('theme-toggle');
+    const themeMenu = document.getElementById('theme-menu');
+    const themeTriggerSwatches = document.querySelector('[data-theme-trigger-swatches]');
     const THEME_STORAGE_KEY = 'mc-mod-i18n-theme';
-    const themeModes = ['auto', 'dark', 'light'];
-    const themeMeta = {
-      auto: { label: '跟随系统', icon: 'ri-computer-line' },
-      dark: { label: '暗色', icon: 'ri-moon-clear-line' },
-      light: { label: '亮色', icon: 'ri-sun-line' }
-    };
+    const CACHE_DIR_STORAGE_KEY = 'mc-mod-i18n-cache-dir';
+    const themeCatalog = [
+      { id: 'auto', label: '跟随系统', group: '基础主题', icon: 'ri-computer-line', scheme: 'auto', colors: ['#2563eb', '#f8fafc', '#0f172a'] },
+      { id: 'light', label: '默认浅色', group: '基础主题', icon: 'ri-sun-line', scheme: 'light', colors: ['#004ac6', '#f8f9ff', '#0b1c30'] },
+      { id: 'dark', label: '默认深色', group: '基础主题', icon: 'ri-moon-clear-line', scheme: 'dark', colors: ['#60a5fa', '#020617', '#e5eefb'] },
+      { id: 'forest', label: '森林安全', group: '专注主题', icon: 'ri-leaf-line', scheme: 'light', colors: ['#2f6b3f', '#f3f7f0', '#172313'] },
+      { id: 'midnight', label: '午夜蓝', group: '专注主题', icon: 'ri-moon-foggy-line', scheme: 'dark', colors: ['#4f8cff', '#07111f', '#eaf2ff'] },
+      { id: 'dongbei-rain', label: '东北雨', group: '趣味主题', icon: 'ri-cloudy-2-line', scheme: 'dark', colors: ['#c9162f', '#4d2f1f', '#fffaf0'] },
+      { id: 'rainbow-rgb', label: '彩虹 RGB', group: '趣味主题', icon: 'ri-rainbow-line', scheme: 'dark', colors: ['#00d4ff', '#070711', '#f8fbff'] },
+      { id: 'bleach-tybw', label: '死神:千年血战', group: '联名主题', icon: 'ri-sword-line', scheme: 'dark', colors: ['#e6397c', '#1a1a1d', '#fff7fb'] },
+      { id: 'eva', label: 'EVA', group: '联名主题', icon: 'ri-robot-2-line', scheme: 'dark', colors: ['#b7ff2a', '#090812', '#f6ffe8'] },
+      { id: 'p-site', label: 'P站', group: '联名主题', icon: 'ri-copyright-line', scheme: 'dark', colors: ['#ff9900', '#050505', '#f7f7f7'] },
+      { id: 'starry-night', label: '梵高星空', group: '艺术主题', icon: 'ri-star-line', scheme: 'dark', colors: ['#f6c945', '#07142e', '#f8efcb'] },
+      { id: 'monet', label: '莫奈', group: '艺术主题', icon: 'ri-palette-line', scheme: 'light', colors: ['#6b9f8a', '#eef4f2', '#243a3a'] },
+      { id: 'qingming-scroll', label: '清明上河图', group: '艺术主题', icon: 'ri-landscape-line', scheme: 'light', colors: ['#2f6673', '#f3e8d2', '#2a241b'] },
+      { id: 'cezanne', label: '塞尚', group: '艺术主题', icon: 'ri-brush-line', scheme: 'light', colors: ['#8f4f2f', '#efe6d8', '#2f241d'] },
+      { id: 'sisley', label: '西斯莱', group: '艺术主题', icon: 'ri-brush-3-line', scheme: 'light', colors: ['#5f8fa8', '#eef4ef', '#24343a'] },
+      { id: 'pissarro', label: '毕沙罗', group: '艺术主题', icon: 'ri-image-line', scheme: 'light', colors: ['#7f8f4e', '#f1eddf', '#2d2a1e'] },
+      { id: 'morandi', label: '莫兰迪', group: '艺术主题', icon: 'ri-contrast-drop-line', scheme: 'light', colors: ['#8d8580', '#eeece8', '#2f2d2b'] },
+      { id: 'gauguin', label: '高更', group: '艺术主题', icon: 'ri-paint-brush-line', scheme: 'light', colors: ['#b65f2a', '#f1e0c2', '#2c2117'] },
+      { id: 'matisse', label: '马蒂斯', group: '艺术主题', icon: 'ri-shape-2-line', scheme: 'light', colors: ['#2468c9', '#f4efe5', '#18243a'] },
+      { id: 'qi-baishi', label: '齐白石', group: '艺术主题', icon: 'ri-quill-pen-line', scheme: 'light', colors: ['#b7352d', '#f6f0e3', '#211f1b'] },
+      { id: 'healing-sea-blue', label: '治愈海盐蓝', group: 'Stitch 配色', icon: 'ri-water-flash-line', scheme: 'light', colors: ['#0081ff', '#eef7ff', '#08204a'] },
+      { id: 'mint-tea-green', label: '薄荷茶青', group: 'Stitch 配色', icon: 'ri-seedling-line', scheme: 'light', colors: ['#178b85', '#eefaf7', '#173a36'] },
+      { id: 'neon-track', label: '荧光赛道绿', group: 'Stitch 配色', icon: 'ri-road-map-line', scheme: 'dark', colors: ['#00fd00', '#07180b', '#efffee'] },
+      { id: 'cream-berry-purple', label: '奶油莓紫', group: 'Stitch 配色', icon: 'ri-cake-3-line', scheme: 'light', colors: ['#652c97', '#fff0f2', '#2d183a'] },
+      { id: 'orange-slate', label: '橙灰机能', group: 'Stitch 配色', icon: 'ri-tools-line', scheme: 'dark', colors: ['#ff7400', '#172728', '#fff2e5'] },
+      { id: 'seafoam-apricot', label: '海风杏桃', group: 'Stitch 配色', icon: 'ri-water-percent-line', scheme: 'light', colors: ['#01847f', '#effaf7', '#123936'] },
+      { id: 'klein-gold', label: '克莱因金', group: 'Stitch 配色', icon: 'ri-vip-diamond-line', scheme: 'light', colors: ['#002fa7', '#ffcf14', '#061a4d'] },
+      { id: 'honey-sunset', label: '蜜糖落日', group: 'Stitch 配色', icon: 'ri-sunset-line', scheme: 'light', colors: ['#ff6067', '#fff7d6', '#3b2b19'] },
+      { id: 'crimson-ivory', label: '酒红象牙', group: 'Stitch 配色', icon: 'ri-goblet-line', scheme: 'light', colors: ['#990033', '#f4eee5', '#341019'] },
+      { id: 'sakura-mist', label: '樱雾灰紫', group: 'Stitch 配色', icon: 'ri-blur-off-line', scheme: 'light', colors: ['#535369', '#ffe3ee', '#272333'] }
+    ];
+    const themeMeta = Object.fromEntries(themeCatalog.map(theme => [theme.id, theme]));
+    const themeModes = themeCatalog.map(theme => theme.id);
     const systemThemeQuery = window.matchMedia('(prefers-color-scheme: dark)');
     const apiBox = document.getElementById('api-box');
     const providerHelp = document.getElementById('provider-help');
     const providerBadge = document.getElementById('provider-badge');
-    const apiUrl = document.getElementById('api_url');
+    const apiBaseUrl = document.getElementById('api_base_url');
+    const apiKey = document.getElementById('api_key');
+    const apiKeyToggle = document.getElementById('api-key-toggle');
     const apiKeyEnv = document.getElementById('api_key_env');
     const model = document.getElementById('model');
+    const modelSelectShell = document.getElementById('model-select');
+    const modelTrigger = document.querySelector('[data-model-trigger]');
+    const modelDisplay = document.getElementById('model-display');
+    const modelSearch = document.getElementById('model-search');
+    const modelMenu = document.getElementById('model-menu');
+    const modelRefresh = document.getElementById('model-refresh');
+    const modelStatus = document.getElementById('model-status');
     const apiConcurrency = document.getElementById('api_concurrency');
     const apiConcurrencyHelp = document.getElementById('api-concurrency-help');
     const sourceLocaleSelectShell = document.getElementById('source-locale-select');
@@ -2486,84 +3724,20 @@ INDEX_HTML = r"""<!doctype html>
     ];
     const providerPresets = {
       'openai-compatible': {
-        label: '自定义兼容',
-        url: 'https://api.openai.com/v1/chat/completions',
+        label: '兼容 OpenAI',
+        url: 'https://api.openai.com/v1',
         model: 'gpt-4o-mini',
         env: 'OPENAI_API_KEY',
         help: '适用于任何兼容 OpenAI Chat Completions 的服务。',
         keyUrl: ''
       },
-      openai: {
-        label: 'OpenAI',
-        url: 'https://api.openai.com/v1/chat/completions',
-        model: 'gpt-4o-mini',
-        env: 'OPENAI_API_KEY',
-        help: '使用 OpenAI 官方 Chat Completions 接口。',
-        keyUrl: 'https://platform.openai.com/api-keys'
-      },
-      deepseek: {
-        label: 'DeepSeek',
-        url: 'https://api.deepseek.com/chat/completions',
-        model: 'deepseek-chat',
-        env: 'DEEPSEEK_API_KEY',
-        help: 'DeepSeek 官方 OpenAI 兼容接口。',
-        keyUrl: 'https://platform.deepseek.com/api_keys'
-      },
-      moonshot: {
-        label: 'Moonshot',
-        url: 'https://api.moonshot.cn/v1/chat/completions',
-        model: 'moonshot-v1-8k',
-        env: 'MOONSHOT_API_KEY',
-        help: 'Moonshot / Kimi OpenAI 兼容接口。',
-        keyUrl: 'https://platform.moonshot.cn/console/api-keys'
-      },
-      dashscope: {
-        label: '通义千问',
-        url: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
-        model: 'qwen-plus',
-        env: 'DASHSCOPE_API_KEY',
-        help: '阿里云百炼 DashScope 兼容模式接口。',
-        keyUrl: 'https://bailian.console.aliyun.com/?apiKey=1'
-      },
-      zhipu: {
-        label: '智谱 AI',
-        url: 'https://open.bigmodel.cn/api/paas/v4/chat/completions',
-        model: 'glm-4-flash',
-        env: 'ZHIPUAI_API_KEY',
-        help: '智谱 AI OpenAI 兼容接口。glm-4-flash 完全免费。',
-        keyUrl: 'https://open.bigmodel.cn/usercenter/apikeys'
-      },
-      siliconflow: {
-        label: '硅基流动',
-        url: 'https://api.siliconflow.cn/v1/chat/completions',
-        model: 'deepseek-ai/DeepSeek-V3',
-        env: 'SILICONFLOW_API_KEY',
-        help: '硅基流动 OpenAI 兼容接口，可按需替换模型。',
-        keyUrl: 'https://cloud.siliconflow.cn/account/ak'
-      },
-      gemini: {
-        label: 'Gemini',
-        url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
-        model: 'gemini-2.0-flash',
-        env: 'GEMINI_API_KEY',
-        help: 'Google Gemini OpenAI 兼容接口，免费层每分钟 15 次请求。',
-        keyUrl: 'https://aistudio.google.com/apikey'
-      },
-      groq: {
-        label: 'Groq',
-        url: 'https://api.groq.com/openai/v1/chat/completions',
-        model: 'llama-3.3-70b-versatile',
-        env: 'GROQ_API_KEY',
-        help: 'Groq OpenAI 兼容接口，免费层每天 14400 次请求，速度极快。',
-        keyUrl: 'https://console.groq.com/keys'
-      },
-      mimo: {
-        label: '小米 MiMo',
-        url: 'https://token-plan-sgp.xiaomimimo.com/v1/chat/completions',
-        model: 'mimo-v2.5-pro',
-        env: 'MIMO_API_KEY',
-        help: '小米 MiMo OpenAI 兼容接口。',
-        keyUrl: 'https://platform.xiaomimimo.com/token-plan'
+      'anthropic-compatible': {
+        label: '兼容 Anthropic',
+        url: 'https://api.anthropic.com/v1',
+        model: 'claude-3-5-haiku-latest',
+        env: 'ANTHROPIC_API_KEY',
+        help: '适用于 Anthropic Messages API 或兼容该格式的服务。',
+        keyUrl: ''
       }
     };
     const hardcodedState = {
@@ -2577,54 +3751,114 @@ INDEX_HTML = r"""<!doctype html>
 
     function storedThemeMode() {
       try {
-        return localStorage.getItem(THEME_STORAGE_KEY) || document.documentElement.dataset.themeMode || 'auto';
+        const stored = localStorage.getItem(THEME_STORAGE_KEY) || document.documentElement.dataset.themeMode || 'auto';
+        return themeMeta[stored] ? stored : 'auto';
       } catch (error) {
-        return document.documentElement.dataset.themeMode || 'auto';
+        const stored = document.documentElement.dataset.themeMode || 'auto';
+        return themeMeta[stored] ? stored : 'auto';
       }
     }
 
     function resolveThemeMode(mode) {
-      if (mode === 'auto') {
+      const requested = themeMeta[mode] ? mode : 'auto';
+      if (requested === 'auto') {
         return systemThemeQuery.matches ? 'dark' : 'light';
       }
-      return mode === 'dark' ? 'dark' : 'light';
+      return requested;
     }
 
-    function applyThemeMode(mode) {
-      const resolved = resolveThemeMode(mode);
-      document.documentElement.dataset.themeMode = mode;
-      document.documentElement.dataset.theme = resolved;
-      document.documentElement.style.colorScheme = resolved;
-      if (!themeToggle) {
+    function themeColorScheme(themeId) {
+      const meta = themeMeta[themeId] || themeMeta.light;
+      return meta.scheme === 'dark' ? 'dark' : 'light';
+    }
+
+    function themeSwatchesHtml(colors, extraClass = '') {
+      return `<span class="theme-swatches ${escapeHtml(extraClass)}" aria-hidden="true">
+        ${(colors || []).map(color => `<span class="theme-swatch" style="background:${escapeHtml(color)}"></span>`).join('')}
+      </span>`;
+    }
+
+    function themeModeText(theme) {
+      if (!theme || theme.id === 'auto') {
+        const resolvedMeta = themeMeta[resolveThemeMode('auto')] || themeMeta.light;
+        return `当前解析为 ${resolvedMeta.label}`;
+      }
+      return theme.scheme === 'dark' ? '深色' : '浅色';
+    }
+
+    function renderThemeMenu(activeMode) {
+      if (!themeMenu) {
         return;
       }
-      const meta = themeMeta[mode] || themeMeta.auto;
-      const icon = themeToggle.querySelector('[data-theme-icon]');
-      const label = themeToggle.querySelector('[data-theme-label]');
-      if (icon) {
-        icon.className = meta.icon;
-      }
-      if (label) {
-        label.textContent = meta.label;
-      }
-      themeToggle.dataset.themeMode = mode;
-      themeToggle.title = `主题：${meta.label}，点击切换`;
+      const groups = [];
+      const groupMap = new Map();
+      themeCatalog.forEach(theme => {
+        if (!groupMap.has(theme.group)) {
+          const group = { label: theme.group, items: [] };
+          groupMap.set(theme.group, group);
+          groups.push(group);
+        }
+        groupMap.get(theme.group).items.push(theme);
+      });
+      themeMenu.innerHTML = groups.map(group => `
+        <div class="theme-group" role="group" aria-label="${escapeHtml(group.label)}">
+          <div class="theme-group-title">${escapeHtml(group.label)}</div>
+          ${group.items.map(theme => {
+            const active = activeMode === theme.id;
+            return `
+              <button type="button" class="theme-option ${active ? 'active' : ''}" data-theme-value="${escapeHtml(theme.id)}" role="option" aria-selected="${active ? 'true' : 'false'}">
+                <span class="theme-option-copy"><strong>${escapeHtml(theme.label)}</strong><span>${escapeHtml(theme.group)} · ${escapeHtml(themeModeText(theme))}</span></span>
+                ${themeSwatchesHtml(theme.colors || [])}
+              </button>
+            `;
+          }).join('')}
+        </div>
+      `).join('');
     }
 
-    function cycleThemeMode() {
-      const current = document.documentElement.dataset.themeMode || 'auto';
-      const currentIndex = themeModes.indexOf(current);
-      const next = themeModes[(currentIndex + 1) % themeModes.length];
-      try {
-        localStorage.setItem(THEME_STORAGE_KEY, next);
-      } catch (error) {}
-      applyThemeMode(next);
+    function setThemeMenuOpen(open) {
+      if (!themePicker || !themeMenu || !themeToggle) {
+        return;
+      }
+      themePicker.classList.toggle('open', open);
+      themeMenu.hidden = !open;
+      themeToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    }
+
+    function applyThemeMode(mode, persist = false) {
+      const requested = themeMeta[mode] ? mode : 'auto';
+      const resolved = resolveThemeMode(requested);
+      const scheme = themeColorScheme(resolved);
+      document.documentElement.dataset.themeMode = requested;
+      document.documentElement.dataset.theme = resolved;
+      document.documentElement.style.colorScheme = scheme;
+      if (persist) {
+        try {
+          localStorage.setItem(THEME_STORAGE_KEY, requested);
+        } catch (error) {}
+      }
+      if (themeToggle) {
+        const meta = themeMeta[requested] || themeMeta.auto;
+        const resolvedMeta = themeMeta[resolved] || themeMeta.light;
+        const icon = themeToggle.querySelector('[data-theme-icon]');
+        const label = themeToggle.querySelector('[data-theme-label]');
+        if (icon) {
+          icon.className = meta.icon;
+        }
+        if (label) {
+          label.textContent = meta.label;
+        }
+        if (themeTriggerSwatches) {
+          const colors = requested === 'auto' ? resolvedMeta.colors : meta.colors;
+          themeTriggerSwatches.innerHTML = (colors || []).map(color => `<span class="theme-swatch" style="background:${escapeHtml(color)}"></span>`).join('');
+        }
+        themeToggle.dataset.themeMode = requested;
+        themeToggle.title = `主题：${meta.label}`;
+      }
+      renderThemeMenu(requested);
     }
 
     applyThemeMode(storedThemeMode());
-    if (themeToggle) {
-      themeToggle.addEventListener('click', cycleThemeMode);
-    }
     const handleSystemThemeChange = () => {
       if ((document.documentElement.dataset.themeMode || 'auto') === 'auto') {
         applyThemeMode('auto');
@@ -2635,6 +3869,182 @@ INDEX_HTML = r"""<!doctype html>
     } else if (typeof systemThemeQuery.addListener === 'function') {
       systemThemeQuery.addListener(handleSystemThemeChange);
     }
+
+    function bindThemePicker() {
+      renderThemeMenu(document.documentElement.dataset.themeMode || storedThemeMode());
+      if (!themePicker || !themeToggle || !themeMenu) {
+        return;
+      }
+      themeToggle.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        setThemeMenuOpen(themeMenu.hidden);
+      });
+      themeMenu.addEventListener('click', event => {
+        const option = event.target.closest('[data-theme-value]');
+        if (!option) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        applyThemeMode(option.dataset.themeValue || 'auto', true);
+        setThemeMenuOpen(false);
+      });
+      themeMenu.addEventListener('keydown', event => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          setThemeMenuOpen(false);
+          themeToggle.focus();
+        }
+      });
+      document.addEventListener('click', event => {
+        if (!themePicker.contains(event.target)) {
+          setThemeMenuOpen(false);
+        }
+      });
+      document.addEventListener('keydown', event => {
+        if (event.key === 'Escape') {
+          setThemeMenuOpen(false);
+        }
+      });
+    }
+
+    bindThemePicker();
+
+    function normalizeCacheDirSetting(value) {
+      return String(value || '').trim();
+    }
+
+    function storedCacheDirSetting() {
+      try {
+        return normalizeCacheDirSetting(localStorage.getItem(CACHE_DIR_STORAGE_KEY) || '');
+      } catch (error) {
+        return '';
+      }
+    }
+
+    function cacheDirDisplayLabel(value) {
+      const normalized = normalizeCacheDirSetting(value);
+      return normalized || '默认：服务工作目录/.shared-cache';
+    }
+
+    function applyCacheDirSetting(value, persist = false) {
+      const normalized = normalizeCacheDirSetting(value);
+      if (cacheDirField) {
+        cacheDirField.value = normalized;
+      }
+      if (settingsCacheDir && settingsCacheDir.value !== normalized) {
+        settingsCacheDir.value = normalized;
+      }
+      if (settingsCacheEffective) {
+        settingsCacheEffective.textContent = cacheDirDisplayLabel(normalized);
+      }
+      if (persist) {
+        try {
+          if (normalized) {
+            localStorage.setItem(CACHE_DIR_STORAGE_KEY, normalized);
+          } else {
+            localStorage.removeItem(CACHE_DIR_STORAGE_KEY);
+          }
+        } catch (error) {}
+      }
+      return normalized;
+    }
+
+    function setSettingsStatus(message, isError = false) {
+      if (!settingsStatus) {
+        return;
+      }
+      settingsStatus.textContent = message || '';
+      settingsStatus.classList.toggle('error', Boolean(isError));
+    }
+
+    function openSettingsDialog() {
+      if (!settingsDialog) {
+        return;
+      }
+      applyThemeMode(document.documentElement.dataset.themeMode || storedThemeMode());
+      applyCacheDirSetting(cacheDirField ? cacheDirField.value : storedCacheDirSetting());
+      setSettingsStatus('');
+      settingsDialog.hidden = false;
+      window.setTimeout(() => {
+        if (settingsCacheDir) {
+          settingsCacheDir.focus();
+        }
+      }, 0);
+    }
+
+    function closeSettingsDialog() {
+      if (settingsDialog) {
+        settingsDialog.hidden = true;
+      }
+    }
+
+    function bindSettingsMenu() {
+      applyCacheDirSetting(storedCacheDirSetting());
+      if (!settingsDialog) {
+        return;
+      }
+      if (settingsOpen) {
+        settingsOpen.addEventListener('click', openSettingsDialog);
+      }
+      if (settingsClose) {
+        settingsClose.addEventListener('click', closeSettingsDialog);
+      }
+      settingsDialog.addEventListener('click', event => {
+        if (event.target === settingsDialog) {
+          closeSettingsDialog();
+        }
+      });
+      document.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && !settingsDialog.hidden) {
+          closeSettingsDialog();
+        }
+      });
+      if (settingsCacheDir) {
+        settingsCacheDir.addEventListener('input', () => {
+          applyCacheDirSetting(settingsCacheDir.value, false);
+          setSettingsStatus('');
+        });
+      }
+      if (settingsCacheDefault) {
+        settingsCacheDefault.addEventListener('click', () => {
+          applyCacheDirSetting('', true);
+          setSettingsStatus('已恢复默认缓存目录。');
+        });
+      }
+      if (settingsSave) {
+        settingsSave.addEventListener('click', () => {
+          applyCacheDirSetting(settingsCacheDir ? settingsCacheDir.value : '', true);
+          setSettingsStatus('设置已保存。');
+        });
+      }
+      if (settingsCacheClear) {
+        settingsCacheClear.addEventListener('click', async () => {
+          const cacheDir = applyCacheDirSetting(settingsCacheDir ? settingsCacheDir.value : '', true);
+          settingsCacheClear.disabled = true;
+          setSettingsStatus('正在清空缓存...');
+          try {
+            const response = await fetch('/api/cache/clear', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ cache_dir: cacheDir })
+            });
+            const payload = await response.json();
+            if (!response.ok || !payload.ok) {
+              throw new Error(payload.error || '清空缓存失败');
+            }
+            setSettingsStatus(`已清空 ${payload.removed || 0} 项：${payload.cache_dir || cacheDirDisplayLabel(cacheDir)}`);
+          } catch (error) {
+            setSettingsStatus(error.message || '清空缓存失败', true);
+          } finally {
+            settingsCacheClear.disabled = false;
+          }
+        });
+      }
+    }
+
+    bindSettingsMenu();
 
     function normalizeLocaleValue(value) {
       return String(value || '').trim().toLowerCase().replace(/-/g, '_');
@@ -2681,27 +4091,378 @@ INDEX_HTML = r"""<!doctype html>
       select.value = selectedValue;
     }
 
-    function buildLocaleSelectMenuOptions(select, name) {
+    function localeSearchLabel(name) {
+      if (name === 'source_locale') {
+        return '搜索源语言';
+      }
+      if (name === 'target_locale') {
+        return '搜索目标语言';
+      }
+      return '搜索语言';
+    }
+
+    function normalizeSearchValue(value) {
+      return String(value || '').trim().toLowerCase().replace(/-/g, '_');
+    }
+
+    function compactSearchValue(value) {
+      return normalizeSearchValue(value).replace(/[\s_()（）]+/g, '');
+    }
+
+    function localeOptionExists(select, value) {
+      const normalized = normalizeLocaleValue(value);
+      return Array.from(select.options).some(option => normalizeLocaleValue(option.value) === normalized);
+    }
+
+    function localeMatchesOption(option, query) {
+      const rawQuery = String(query || '').trim().toLowerCase();
+      if (!rawQuery) {
+        return true;
+      }
+      const value = normalizeLocaleValue(option.value);
+      const label = labelForLocale(value);
+      const text = String(option.textContent || '');
+      const haystack = `${value} ${value.replace(/_/g, ' ')} ${label} ${text}`.toLowerCase();
+      const normalizedQuery = normalizeSearchValue(rawQuery);
+      const compactQuery = compactSearchValue(rawQuery);
+      return normalizeSearchValue(haystack).includes(normalizedQuery)
+        || haystack.includes(rawQuery)
+        || Boolean(compactQuery && compactSearchValue(haystack).includes(compactQuery));
+    }
+
+    function buildLocaleOptionButtons(select, name, query = '') {
+      return Array.from(select.options)
+        .filter(option => localeMatchesOption(option, query))
+        .map(option => {
+          const value = normalizeLocaleValue(option.value);
+          const label = labelForLocale(value);
+          const selected = value === normalizeLocaleValue(select.value);
+          return `
+            <button type="button" class="ghost-option ${selected ? 'active' : ''}" data-select-value="${escapeHtml(name)}" data-value="${escapeHtml(value)}" role="option" aria-selected="${selected ? 'true' : 'false'}">
+              <strong>${escapeHtml(value)}</strong><span>${escapeHtml(label)}</span>
+            </button>
+          `;
+        }).join('');
+    }
+
+    function buildLocaleApplyOption(select, name, query = '') {
+      const normalized = normalizeLocaleValue(query);
+      const hidden = !isValidLocaleValue(normalized) || localeOptionExists(select, normalized) ? ' hidden' : '';
+      const label = normalized ? `使用 ${normalized}` : '使用输入值';
       return `
-        <input type="text" class="ghost-menu-input" data-locale-search="${escapeHtml(name)}" placeholder="输入语言代码，如 zh_tw">
-        <button type="button" class="ghost-option" data-select-value="${escapeHtml(name)}" data-value="" data-custom-locale="true" data-locale-apply hidden>
-          <strong>使用输入值</strong><span>自定义</span>
+        <button type="button" class="ghost-option locale-custom-option" data-select-value="${escapeHtml(name)}" data-value="${escapeHtml(normalized)}" data-custom-locale="true" data-locale-apply role="option" aria-selected="false"${hidden}>
+          <strong>${escapeHtml(label)}</strong><span>自定义语言代码</span>
         </button>
-        ${buildSelectMenuOptions(select, name)}
       `;
     }
 
-    function updateLocaleApply(menu, value) {
+    function buildLocaleSelectMenuOptions(select, name, query = '') {
+      const optionsHtml = buildLocaleOptionButtons(select, name, query);
+      const emptyHidden = optionsHtml.trim() ? ' hidden' : '';
+      return `
+        ${buildLocaleApplyOption(select, name, query)}
+        <div class="ghost-options" data-locale-options>
+          ${optionsHtml}
+        </div>
+        <div class="ghost-empty" data-locale-empty${emptyHidden}>没有匹配的内置语言。可输入有效 Minecraft 语言代码后使用自定义语言。</div>
+      `;
+    }
+
+    function updateLocaleApply(menu, select, value) {
       const apply = menu.querySelector('[data-locale-apply]');
       if (!apply) {
         return;
       }
       const normalized = normalizeLocaleValue(value);
-      apply.hidden = !isValidLocaleValue(normalized);
+      apply.hidden = !isValidLocaleValue(normalized) || localeOptionExists(select, normalized);
       apply.dataset.value = normalized;
       const label = apply.querySelector('strong');
       if (label) {
         label.textContent = normalized ? `使用 ${normalized}` : '使用输入值';
+      }
+    }
+
+    function refreshLocaleMenuSearch(menu, select, query) {
+      const options = menu.querySelector('[data-locale-options]');
+      if (options) {
+        options.innerHTML = buildLocaleOptionButtons(select, menu.dataset.localeName, query);
+      }
+      const empty = menu.querySelector('[data-locale-empty]');
+      if (empty) {
+        empty.hidden = Boolean(options && options.children.length);
+      }
+      updateLocaleApply(menu, select, query);
+      updateSelectMenuActive(menu, select.value);
+    }
+
+    function localeChoiceNodes(menu) {
+      const nodes = Array.from(menu.querySelectorAll('[data-locale-apply]:not([hidden]), [data-locale-options] [data-select-value]'));
+      return nodes.filter((node, index) => nodes.indexOf(node) === index);
+    }
+
+    function focusLocaleChoice(menu, current, direction, input = null) {
+      const choices = localeChoiceNodes(menu);
+      if (!choices.length) {
+        return;
+      }
+      if (current === input) {
+        choices[direction < 0 ? choices.length - 1 : 0].focus();
+        return;
+      }
+      const option = current.closest ? current.closest('[data-select-value]') : null;
+      const currentIndex = choices.indexOf(option);
+      const nextIndex = currentIndex + direction;
+      if (nextIndex < 0) {
+        if (input) {
+          input.focus();
+        }
+        return;
+      }
+      choices[nextIndex >= choices.length ? 0 : nextIndex].focus();
+    }
+
+    function selectLocaleFromInput(menu, input) {
+      const query = input ? input.value.trim() : '';
+      if (!query) {
+        return false;
+      }
+      const normalized = normalizeLocaleValue(query);
+      const exactOption = Array.from(menu.querySelectorAll('[data-locale-options] [data-select-value]'))
+        .find(option => option.dataset.value === normalized);
+      if (exactOption) {
+        exactOption.click();
+        return true;
+      }
+      const apply = menu.querySelector('[data-locale-apply]');
+      if (apply && !apply.hidden) {
+        apply.click();
+        return true;
+      }
+      const firstOption = menu.querySelector('[data-locale-options] [data-select-value]');
+      if (firstOption) {
+        firstOption.click();
+        return true;
+      }
+      return false;
+    }
+
+    function compactModelText(value) {
+      return String(value || '').trim().toLowerCase().replace(/[\s_./:-]+/g, '');
+    }
+
+    function modelMatchesOption(option, query) {
+      const rawQuery = String(query || '').trim().toLowerCase();
+      if (!rawQuery) {
+        return true;
+      }
+      const haystack = `${option.id || ''} ${option.label || ''}`.toLowerCase();
+      return haystack.includes(rawQuery) || compactModelText(haystack).includes(compactModelText(rawQuery));
+    }
+
+    function normalizeModelOptions(items) {
+      const seen = new Set();
+      return (Array.isArray(items) ? items : [])
+        .map(item => {
+          const id = String(item?.id || item?.value || item || '').trim();
+          const label = String(item?.label || item?.display_name || id).trim();
+          return id ? { id, label: label || id } : null;
+        })
+        .filter(item => {
+          if (!item || seen.has(item.id)) {
+            return false;
+          }
+          seen.add(item.id);
+          return true;
+        });
+    }
+
+    function setModelValue(value) {
+      const normalized = String(value || '').trim();
+      if (!normalized) {
+        return;
+      }
+      model.value = normalized;
+      syncModelDisplay();
+    }
+
+    function syncModelDisplay() {
+      const value = String(model.value || '').trim();
+      const option = modelOptions.find(item => item.id === value);
+      modelDisplay.textContent = option ? option.id : (value || '选择模型');
+      updateModelMenuActive();
+    }
+
+    function setModelStatus(message, isError = false) {
+      modelStatus.textContent = message || '';
+      modelStatus.classList.toggle('error', Boolean(isError));
+    }
+
+    function buildModelMenuOptions(query = '') {
+      const filtered = modelOptions.filter(option => modelMatchesOption(option, query));
+      const rows = filtered.map(option => {
+        const active = option.id === model.value;
+        const meta = option.label && option.label !== option.id ? `<span>${escapeHtml(option.label)}</span>` : '';
+        return `
+          <button type="button" class="ghost-option ${active ? 'active' : ''}" data-model-value="${escapeHtml(option.id)}" role="option" aria-selected="${active ? 'true' : 'false'}">
+            <strong>${escapeHtml(option.id)}</strong>${meta}
+          </button>
+        `;
+      }).join('');
+      const queryValue = String(query || '').trim();
+      const customHidden = !queryValue || modelOptions.some(option => option.id === queryValue) ? ' hidden' : '';
+      return `
+        <button type="button" class="ghost-option" data-model-value="${escapeHtml(queryValue)}" data-model-custom="true" role="option" aria-selected="false"${customHidden}>
+          <strong>使用 ${escapeHtml(queryValue)}</strong><span>自定义模型</span>
+        </button>
+        <div class="ghost-options" data-model-options>
+          ${rows}
+        </div>
+        <div class="ghost-empty" data-model-empty${rows.trim() ? ' hidden' : ''}>没有匹配的模型。可刷新模型列表，或输入自定义模型名。</div>
+      `;
+    }
+
+    function updateModelMenu(query = '') {
+      modelMenu.innerHTML = buildModelMenuOptions(query);
+      updateModelMenuActive();
+    }
+
+    function updateModelMenuActive() {
+      if (!modelMenu) {
+        return;
+      }
+      modelMenu.querySelectorAll('[data-model-value]').forEach(item => {
+        const isActive = item.dataset.modelValue === model.value;
+        item.classList.toggle('active', isActive);
+        item.setAttribute('aria-selected', isActive ? 'true' : 'false');
+      });
+    }
+
+    function openModelMenu(query = '') {
+      updateModelMenu(query);
+      modelSelectShell.classList.add('open');
+      modelMenu.hidden = false;
+      modelTrigger.setAttribute('aria-expanded', 'true');
+      window.setTimeout(() => modelSearch.focus(), 0);
+    }
+
+    function closeModelMenu() {
+      modelSelectShell.classList.remove('open');
+      modelMenu.hidden = true;
+      modelTrigger.setAttribute('aria-expanded', 'false');
+      modelSearch.value = '';
+    }
+
+    function modelChoiceNodes() {
+      return Array.from(modelMenu.querySelectorAll('[data-model-value]:not([hidden])'));
+    }
+
+    function focusModelChoice(current, direction) {
+      const choices = modelChoiceNodes();
+      if (!choices.length) {
+        return;
+      }
+      if (current === modelSearch) {
+        choices[direction < 0 ? choices.length - 1 : 0].focus();
+        return;
+      }
+      const option = current.closest ? current.closest('[data-model-value]') : null;
+      const currentIndex = choices.indexOf(option);
+      const nextIndex = currentIndex + direction;
+      if (nextIndex < 0) {
+        modelSearch.focus();
+        return;
+      }
+      choices[nextIndex >= choices.length ? 0 : nextIndex].focus();
+    }
+
+    function selectModelFromInput() {
+      const query = modelSearch.value.trim();
+      if (!query) {
+        return false;
+      }
+      const exactOption = modelOptions.find(option => option.id === query);
+      if (exactOption) {
+        setModelValue(exactOption.id);
+        closeModelMenu();
+        return true;
+      }
+      const firstOption = modelMenu.querySelector('[data-model-options] [data-model-value]');
+      if (firstOption) {
+        firstOption.click();
+        return true;
+      }
+      setModelValue(query);
+      closeModelMenu();
+      return true;
+    }
+
+    function syncModelPreset(value) {
+      const presetModel = String(value || '').trim();
+      modelOptions = normalizeModelOptions(presetModel ? [{ id: presetModel, label: '默认模型' }] : []);
+      setModelValue(presetModel);
+      updateModelMenu();
+      setModelStatus('');
+    }
+
+    function scheduleModelFetch(delay = 450) {
+      window.clearTimeout(modelFetchDebounce);
+      if (!providerPresets[provider.value]) {
+        return;
+      }
+      modelFetchDebounce = window.setTimeout(() => refreshModelList(true), delay);
+    }
+
+    async function refreshModelList(silent = false) {
+      const preset = providerPresets[provider.value];
+      if (!preset) {
+        return;
+      }
+      const sequence = ++modelFetchSequence;
+      modelRefresh.disabled = true;
+      modelRefresh.setAttribute('aria-busy', 'true');
+      if (!silent) {
+        setModelStatus('正在获取模型列表...');
+      }
+      try {
+        const response = await fetch('/api/models', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            provider: provider.value,
+            base_url: apiBaseUrl.value,
+            api_key: apiKey.value,
+            api_key_env: apiKeyEnv.value,
+            api_timeout: document.getElementById('api_timeout')?.value || '10'
+          })
+        });
+        const payload = await response.json();
+        if (!response.ok || !payload.ok) {
+          throw new Error(payload.error || '获取模型列表失败');
+        }
+        if (sequence !== modelFetchSequence) {
+          return;
+        }
+        const options = normalizeModelOptions(payload.models);
+        if (!options.length) {
+          throw new Error('接口没有返回可用模型');
+        }
+        modelOptions = options;
+        if (!modelOptions.some(option => option.id === model.value)) {
+          setModelValue(modelOptions[0].id);
+        } else {
+          syncModelDisplay();
+        }
+        updateModelMenu(modelSearch.value);
+        setModelStatus(`已获取 ${modelOptions.length} 个模型`);
+      } catch (error) {
+        if (sequence === modelFetchSequence) {
+          setModelStatus(error.message || '获取模型列表失败', true);
+        }
+      } finally {
+        if (sequence === modelFetchSequence) {
+          modelRefresh.disabled = false;
+          modelRefresh.removeAttribute('aria-busy');
+        }
       }
     }
 
@@ -2717,13 +4478,15 @@ INDEX_HTML = r"""<!doctype html>
       updateSelectMenuActive(providerMenu, provider.value);
       if (!preset) {
         keyLink.hidden = true;
+        setModelStatus('');
         return;
       }
       providerBadge.textContent = preset.label;
       providerHelp.textContent = preset.help;
-      apiUrl.value = preset.url;
+      apiBaseUrl.value = preset.url;
       apiKeyEnv.value = preset.env;
-      model.value = preset.model;
+      syncModelPreset(preset.model);
+      scheduleModelFetch(250);
       if (preset.keyUrl) {
         keyLink.href = preset.keyUrl;
         keyLink.hidden = false;
@@ -2749,20 +4512,170 @@ INDEX_HTML = r"""<!doctype html>
     }
     function syncFiles() {
       jarsDisplay.textContent = jarsInput.files.length ? `${jarsInput.files.length} 个 JAR` : '选择一个或多个 JAR';
+      ftbquestsDisplay.textContent = ftbquestsInput.files.length ? `${ftbquestsInput.files.length} 个 FTB Quests 输入` : '选择整合包 ZIP、quests ZIP 或 en_us.snbt';
+      const directoryFiles = Array.from(ftbquestsDirectoryInput.files || []);
+      const directoryRoots = [...new Set(directoryFiles.map(file => String(file.webkitRelativePath || file.name).split('/')[0]).filter(Boolean))];
+      ftbquestsDirectoryDisplay.textContent = directoryFiles.length
+        ? `${directoryRoots[0] || '目录'}（${directoryFiles.length} 个文件）`
+        : '选择 quests、lang 或 en_us 目录';
       glossaryDisplay.textContent = glossaryInput.files.length ? glossaryInput.files[0].name : '可选 .json 术语表';
     }
+    function syncInputKind() {
+      const mode = inputKind.value === 'ftbquests' ? 'ftbquests' : 'jar';
+      const isFtbquests = mode === 'ftbquests';
+      document.querySelectorAll('[data-input-kind]').forEach(button => {
+        const active = button.dataset.inputKind === mode;
+        button.classList.toggle('active', active);
+        button.setAttribute('aria-pressed', active ? 'true' : 'false');
+      });
+      document.getElementById('jar-file-wrap').hidden = isFtbquests;
+      document.getElementById('ftbquests-file-wrap').hidden = !isFtbquests;
+      document.getElementById('ftbquests-directory-wrap').hidden = !isFtbquests;
+      jarsInput.required = !isFtbquests;
+      ftbquestsInput.required = false;
+      ftbquestsDirectoryInput.required = false;
+      const packFormatShell = document.getElementById('pack-format-select');
+      if (packFormatShell) {
+        packFormatShell.hidden = isFtbquests;
+      }
+      const hardcodedLine = document.querySelector('input[name="scan_hardcoded"]')?.closest('.checkline');
+      if (hardcodedLine) {
+        hardcodedLine.hidden = isFtbquests;
+      }
+      statusBox.textContent = isFtbquests ? '等待选择 FTB Quests 输入。' : '等待选择 JAR。';
+    }
+    function syncApiKeyVisibility() {
+      if (!apiKey || !apiKeyToggle) {
+        return;
+      }
+      const visible = apiKey.type === 'text';
+      apiKeyToggle.setAttribute('aria-pressed', visible ? 'true' : 'false');
+      apiKeyToggle.setAttribute('aria-label', visible ? '隐藏 API Key' : '查看 API Key');
+      apiKeyToggle.title = visible ? '隐藏 API Key' : '查看 API Key';
+      const icon = apiKeyToggle.querySelector('i');
+      if (icon) {
+        icon.className = visible ? 'ri-eye-off-line' : 'ri-eye-line';
+      }
+    }
+    if (apiKeyToggle && apiKey) {
+      apiKeyToggle.addEventListener('click', () => {
+        const selectionStart = apiKey.selectionStart;
+        const selectionEnd = apiKey.selectionEnd;
+        apiKey.type = apiKey.type === 'password' ? 'text' : 'password';
+        syncApiKeyVisibility();
+        apiKey.focus();
+        if (selectionStart !== null && selectionEnd !== null) {
+          apiKey.setSelectionRange(selectionStart, selectionEnd);
+        }
+      });
+      syncApiKeyVisibility();
+    }
+    function bindModelSelect() {
+      modelTrigger.addEventListener('click', (event) => {
+        if (event.target === modelSearch && modelSelectShell.classList.contains('open')) {
+          event.stopPropagation();
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        if (modelSelectShell.classList.contains('open')) {
+          closeModelMenu();
+        } else {
+          modelSearch.value = '';
+          openModelMenu();
+        }
+      });
+      modelTrigger.addEventListener('keydown', (event) => {
+        if (event.key !== 'Enter' && event.key !== ' ' && event.key !== 'ArrowDown') {
+          return;
+        }
+        event.preventDefault();
+        if (!modelSelectShell.classList.contains('open')) {
+          openModelMenu();
+        }
+      });
+      modelSearch.addEventListener('input', () => {
+        if (!modelSelectShell.classList.contains('open')) {
+          openModelMenu(modelSearch.value);
+        } else {
+          updateModelMenu(modelSearch.value);
+        }
+      });
+      modelSearch.addEventListener('keydown', (event) => {
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          event.preventDefault();
+          event.stopPropagation();
+          focusModelChoice(modelSearch, event.key === 'ArrowDown' ? 1 : -1);
+          return;
+        }
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          event.stopPropagation();
+          selectModelFromInput();
+          return;
+        }
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          event.stopPropagation();
+          closeModelMenu();
+          modelTrigger.focus();
+        }
+      });
+      modelMenu.addEventListener('click', (event) => {
+        const option = event.target.closest('[data-model-value]');
+        if (!option) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        setModelValue(option.dataset.modelValue || '');
+        closeModelMenu();
+      });
+      modelMenu.addEventListener('keydown', (event) => {
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          event.preventDefault();
+          focusModelChoice(event.target, event.key === 'ArrowDown' ? 1 : -1);
+          return;
+        }
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          closeModelMenu();
+          modelTrigger.focus();
+        }
+      });
+      document.addEventListener('click', (event) => {
+        if (!modelSelectShell.contains(event.target)) {
+          closeModelMenu();
+        }
+      });
+      modelRefresh.addEventListener('click', () => refreshModelList(false));
+      [apiBaseUrl, apiKey, apiKeyEnv].forEach(input => {
+        input.addEventListener('input', () => scheduleModelFetch(650));
+      });
+    }
+    bindModelSelect();
     sourceLocale.addEventListener('change', syncSourceLocale);
     targetLocale.addEventListener('change', syncTargetLocale);
     provider.addEventListener('change', syncProvider);
     packFormat.addEventListener('change', syncPackFormat);
     jarsInput.addEventListener('change', syncFiles);
+    ftbquestsInput.addEventListener('change', syncFiles);
+    ftbquestsDirectoryInput.addEventListener('change', syncFiles);
     glossaryInput.addEventListener('change', syncFiles);
+    document.querySelectorAll('[data-input-kind]').forEach(button => {
+      button.addEventListener('click', () => {
+        inputKind.value = button.dataset.inputKind || 'jar';
+        syncInputKind();
+        syncFiles();
+      });
+    });
     populateLocaleSelect(sourceLocale, 'en_us');
     populateLocaleSelect(targetLocale, 'zh_cn');
     syncSourceLocale();
     syncTargetLocale();
     syncProvider();
     syncPackFormat();
+    syncInputKind();
     syncFiles();
     syncConcurrencyHint();
     buildSelectMenus();
@@ -2835,6 +4748,22 @@ INDEX_HTML = r"""<!doctype html>
     function closeAllSelectMenus() {
       document.querySelectorAll('.ghost-select.open').forEach(shell => {
         shell.classList.remove('open');
+        const trigger = shell.querySelector('[data-select-trigger]');
+        if (trigger) {
+          trigger.setAttribute('aria-expanded', 'false');
+        }
+        const modelTriggerNode = shell.querySelector('[data-model-trigger]');
+        if (modelTriggerNode) {
+          modelTriggerNode.setAttribute('aria-expanded', 'false');
+        }
+        const localeSearchInput = shell.querySelector('[data-locale-control-search]');
+        if (localeSearchInput) {
+          localeSearchInput.value = '';
+        }
+        const modelSearchInput = shell.querySelector('.model-control-input');
+        if (modelSearchInput) {
+          modelSearchInput.value = '';
+        }
         const menu = shell.querySelector('.ghost-menu');
         if (menu) {
           menu.hidden = true;
@@ -2847,34 +4776,56 @@ INDEX_HTML = r"""<!doctype html>
         return;
       }
       menu.querySelectorAll('.ghost-option').forEach(item => {
-        item.classList.toggle('active', item.dataset.value === value);
+        const isActive = item.dataset.value === value;
+        item.classList.toggle('active', isActive);
+        if (item.hasAttribute('role')) {
+          item.setAttribute('aria-selected', isActive ? 'true' : 'false');
+        }
       });
     }
 
     function bindSelectMenu(shell, menu, select, onChange) {
       const trigger = shell.querySelector('[data-select-trigger]');
+      const localeSearchInput = shell.querySelector('[data-locale-control-search]');
       const closeMenu = () => {
         shell.classList.remove('open');
         menu.hidden = true;
+        trigger.setAttribute('aria-expanded', 'false');
+        if (localeSearchInput) {
+          localeSearchInput.value = '';
+        }
       };
       const openMenu = () => {
+        const query = localeSearchInput ? localeSearchInput.value : '';
         if (menu.dataset.localeName) {
-          menu.innerHTML = buildLocaleSelectMenuOptions(select, menu.dataset.localeName);
+          menu.innerHTML = buildLocaleSelectMenuOptions(select, menu.dataset.localeName, query);
         }
         shell.classList.add('open');
         menu.hidden = false;
-        const localeInput = menu.querySelector('[data-locale-search]');
-        if (localeInput) {
-          window.setTimeout(() => localeInput.focus(), 0);
+        trigger.setAttribute('aria-expanded', 'true');
+        if (localeSearchInput) {
+          window.setTimeout(() => localeSearchInput.focus(), 0);
         }
       };
       trigger.addEventListener('click', (event) => {
+        if (localeSearchInput && event.target === localeSearchInput && shell.classList.contains('open')) {
+          event.stopPropagation();
+          return;
+        }
         event.preventDefault();
         event.stopPropagation();
         const isOpen = shell.classList.contains('open');
         document.querySelectorAll('.ghost-select.open').forEach(item => {
           if (item !== shell) {
             item.classList.remove('open');
+            const otherTrigger = item.querySelector('[data-select-trigger]');
+            if (otherTrigger) {
+              otherTrigger.setAttribute('aria-expanded', 'false');
+            }
+            const otherLocaleSearchInput = item.querySelector('[data-locale-control-search]');
+            if (otherLocaleSearchInput) {
+              otherLocaleSearchInput.value = '';
+            }
             const otherMenu = item.querySelector('.ghost-menu');
             if (otherMenu) {
               otherMenu.hidden = true;
@@ -2884,9 +4835,52 @@ INDEX_HTML = r"""<!doctype html>
         if (isOpen) {
           closeMenu();
         } else {
+          if (localeSearchInput) {
+            localeSearchInput.value = '';
+          }
           openMenu();
         }
       });
+      trigger.addEventListener('keydown', (event) => {
+        if (trigger.tagName === 'BUTTON') {
+          return;
+        }
+        if (event.key !== 'Enter' && event.key !== ' ' && event.key !== 'ArrowDown') {
+          return;
+        }
+        event.preventDefault();
+        if (!shell.classList.contains('open')) {
+          openMenu();
+        }
+      });
+      if (localeSearchInput) {
+        localeSearchInput.addEventListener('input', () => {
+          if (!shell.classList.contains('open')) {
+            openMenu();
+          }
+          refreshLocaleMenuSearch(menu, select, localeSearchInput.value);
+        });
+        localeSearchInput.addEventListener('keydown', (event) => {
+          if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+            event.preventDefault();
+            event.stopPropagation();
+            focusLocaleChoice(menu, localeSearchInput, event.key === 'ArrowDown' ? 1 : -1, localeSearchInput);
+            return;
+          }
+          if (event.key === 'Enter') {
+            event.preventDefault();
+            event.stopPropagation();
+            selectLocaleFromInput(menu, localeSearchInput);
+            return;
+          }
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            event.stopPropagation();
+            closeMenu();
+            trigger.focus();
+          }
+        });
+      }
       menu.addEventListener('click', (event) => {
         const option = event.target.closest('[data-select-value]');
         if (!option) {
@@ -2905,27 +4899,23 @@ INDEX_HTML = r"""<!doctype html>
         }
         select.value = value;
         onChange();
-        menu.querySelectorAll('.ghost-option').forEach(item => {
-          item.classList.toggle('active', item.dataset.value === value);
-        });
+        updateSelectMenuActive(menu, value);
         closeMenu();
       });
-      menu.addEventListener('input', (event) => {
-        const input = event.target.closest('[data-locale-search]');
-        if (!input) {
-          return;
-        }
-        updateLocaleApply(menu, input.value);
-      });
       menu.addEventListener('keydown', (event) => {
-        const input = event.target.closest('[data-locale-search]');
-        if (!input || event.key !== 'Enter') {
+        if (!menu.dataset.localeName) {
           return;
         }
-        event.preventDefault();
-        const apply = menu.querySelector('[data-locale-apply]');
-        if (apply && !apply.hidden) {
-          apply.click();
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          event.preventDefault();
+          focusLocaleChoice(menu, event.target, event.key === 'ArrowDown' ? 1 : -1, localeSearchInput);
+          return;
+        }
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          closeMenu();
+          trigger.focus();
+          return;
         }
       });
       document.addEventListener('click', (event) => {
@@ -2950,7 +4940,21 @@ INDEX_HTML = r"""<!doctype html>
       headerJob.textContent = '上传中';
 
       try {
+        applyCacheDirSetting(cacheDirField ? cacheDirField.value : storedCacheDirSetting());
         const data = new FormData(form);
+        if (inputKind.value === 'ftbquests') {
+          data.delete('ftbquests_files');
+          data.delete('ftbquests_directory_files');
+          Array.from(ftbquestsInput.files || []).forEach(file => {
+            data.append('ftbquests_files', file, file.name);
+          });
+          Array.from(ftbquestsDirectoryInput.files || []).forEach(file => {
+            data.append('ftbquests_files', file, file.webkitRelativePath || file.name);
+          });
+          if (!data.getAll('ftbquests_files').length) {
+            throw new Error('请上传 FTB Quests ZIP/SNBT，或选择 quests/lang/en_us 目录');
+          }
+        }
         const response = await fetch('/api/translate', { method: 'POST', body: data });
         const payload = await response.json();
         if (!response.ok || !payload.ok) {
@@ -3052,9 +5056,13 @@ INDEX_HTML = r"""<!doctype html>
             renderResult(payload.result);
             const providerNote = payload.result.provider === 'glossary' ? ' 离线术语表适合快速预览，完整整句汉化请使用 AI 翻译器。' : '';
             const failureNote = payload.result.api_failure_count ? ` 汉化翻译存在异常缺失 ${payload.result.api_failure_count} 条，可在结果区查看并重试。` : '';
-            const cacheNote = payload.result.cache_hits ? ` 其中复用了 ${payload.result.cache_hits} 个缓存 JAR。` : '';
+            const cacheNote = payload.result.cache_hits ? ` 其中复用了 ${payload.result.cache_hits} 个缓存。` : '';
             statusBox.className = payload.result.api_failure_count ? 'status error' : 'status success';
-            statusBox.textContent = `完成：处理 ${payload.result.processed_jars} 个 JAR，生成 ${payload.result.generated_files} 个语言文件，耗时 ${formatSeconds(payload.result.elapsed_seconds)}。${cacheNote}${providerNote}${failureNote}`;
+            if (payload.result.kind === 'ftbquests') {
+              statusBox.textContent = `完成：处理 ${payload.result.processed_sources || 1} 个 FTB Quests 输入，生成 ${payload.result.generated_files} 个任务书文件，耗时 ${formatSeconds(payload.result.elapsed_seconds)}。${cacheNote}${providerNote}${failureNote}`;
+            } else {
+              statusBox.textContent = `完成：处理 ${payload.result.processed_jars} 个 JAR，生成 ${payload.result.generated_files} 个语言文件，耗时 ${formatSeconds(payload.result.elapsed_seconds)}。${cacheNote}${providerNote}${failureNote}`;
+            }
             switchView('language');
           } else if (payload.status === 'error') {
             stopLoading();
@@ -3083,22 +5091,24 @@ INDEX_HTML = r"""<!doctype html>
       const elapsed = Math.max(0, Math.floor((Date.now() - loadingStartedAt) / 1000));
       const data = new FormData(form);
       const providerName = provider.options[provider.selectedIndex]?.textContent || '当前翻译器';
-      const jarCount = document.getElementById('jars').files.length;
+      const isFtbquests = inputKind.value === 'ftbquests';
+      const sourceCount = isFtbquests ? (ftbquestsInput.files.length || ftbquestsDirectoryInput.files.length) : jarsInput.files.length;
+      const sourceLabel = isFtbquests ? 'FTB Quests 输入' : 'JAR';
       const concurrency = Math.max(1, Number(data.get('api_concurrency') || '1'));
       const isAi = Boolean(providerPresets[provider.value]);
       const completed = loadingProgress.completed || 0;
       const total = loadingProgress.total || 0;
       const percent = total ? Math.round((completed / total) * 100) : 0;
       const filesCompleted = loadingProgress.filesCompleted || 0;
-      const filesTotal = loadingProgress.filesTotal || jarCount || 0;
+      const filesTotal = loadingProgress.filesTotal || sourceCount || 0;
       const filePercent = filesTotal ? Math.round((filesCompleted / filesTotal) * 100) : 0;
       const cacheHits = loadingProgress.cacheHits || 0;
       const cacheMisses = loadingProgress.cacheMisses || 0;
       const currentFile = loadingProgress.currentFile || '';
       const stageMap = {
         idle: '准备开始',
-        queued: '正在上传并解析 JAR',
-        processing_file: '正在分析语言文件',
+        queued: isFtbquests ? '正在上传并解析 FTB Quests' : '正在上传并解析 JAR',
+        processing_file: isFtbquests ? '正在分析任务书语言文件' : '正在分析语言文件',
         reusing_cache: '正在复用缓存结果',
         translating: isAi ? '正在分批调用 AI 翻译接口' : '正在生成语言文件',
         retrying: '正在等待重试',
@@ -3115,9 +5125,9 @@ INDEX_HTML = r"""<!doctype html>
         : '';
       const statusText = retryText
         || (loadingProgress.stage === 'reusing_cache'
-          ? `缓存命中 ${cacheHits}/${filesTotal || jarCount || cacheHits || 0}${currentFile ? `，当前：${currentFile}` : ''}`
+          ? `缓存命中 ${cacheHits}/${filesTotal || sourceCount || cacheHits || 0}${currentFile ? `，当前：${currentFile}` : ''}`
           : (loadingProgress.stage === 'processing_file'
-            ? (currentFile ? `正在处理：${currentFile}` : '正在分析语言文件')
+            ? (currentFile ? `正在处理：${currentFile}` : (isFtbquests ? '正在分析任务书语言文件' : '正在分析语言文件'))
             : (loadingProgress.stage === 'writing'
               ? '正在写入资源包、报告和缓存'
               : (isAi ? `翻译请求 ${progressText}` : '任务运行中'))));
@@ -3125,8 +5135,8 @@ INDEX_HTML = r"""<!doctype html>
         ? `缓存命中 ${cacheHits} 个，实际翻译 ${Math.max(0, cacheMisses)} 个。`
         : '';
       const detail = isAi
-        ? `翻译器：${providerName}，并发上限：${concurrency}，每次请求 ${loadingProgress.batchSize || 40} 条，JAR：${jarCount} 个。${cacheText}耗时 ${elapsed}s。`
-        : `翻译器：${providerName}，JAR：${jarCount} 个。${cacheText}耗时 ${elapsed}s。`;
+        ? `翻译器：${providerName}，并发上限：${concurrency}，每次请求 ${loadingProgress.batchSize || 40} 条，${sourceLabel}：${sourceCount} 个。${cacheText}耗时 ${elapsed}s。`
+        : `翻译器：${providerName}，${sourceLabel}：${sourceCount} 个。${cacheText}耗时 ${elapsed}s。`;
       const card = document.getElementById('loading-card');
       if (!card) {
         results.innerHTML = `
@@ -3207,17 +5217,19 @@ INDEX_HTML = r"""<!doctype html>
       const apiFailureCount = payload.api_failure_count || summary.api_failed || 0;
       const candidateCount = payload.hardcoded_count || 0;
       const reportEntryCount = summary ? Object.values(summary).reduce((a, b) => a + b, 0) : (Array.isArray(payload.entries) ? payload.entries.length : 0);
+      const isFtbquestsResult = payload.kind === 'ftbquests';
       headerJob.textContent = payload.job_id || '未开始';
-      const languageHeadTitle = resultState.activeTab === 'hardcoded' ? '硬编码映射' : '语言结果';
-      const languageHeadDesc = resultState.activeTab === 'hardcoded' ? '选择候选、AI 翻译或导出映射' : '可搜索并导出人工修改';
+      const languageHeadTitle = resultState.activeTab === 'hardcoded' ? '硬编码映射' : (isFtbquestsResult ? '任务书结果' : '语言结果');
+      const languageHeadDesc = resultState.activeTab === 'hardcoded' ? '选择候选、AI 翻译或导出映射' : (isFtbquestsResult ? '可搜索 FTB Quests 翻译条目并下载补丁' : '可搜索并导出人工修改');
       results.innerHTML = `
         <div class="actions">
           <button type="button" data-view="language"><i class="ri-folder-open-line"></i><span>工作区</span></button>
           ${payload.pack_url ? `<button type="button" id="download-pack" data-pack-url="${escapeHtml(payload.pack_url)}" data-pack-name="${escapeHtml(payload.pack_filename || defaultPackFilename(payload.pack_url))}"><i class="ri-download-2-line"></i><span>下载资源包</span></button>` : ''}
+          ${payload.ftbquests_patch_url ? `<button type="button" id="download-ftbquests" data-download-url="${escapeHtml(payload.ftbquests_patch_url)}"><i class="ri-download-2-line"></i><span>下载任务书补丁</span></button>` : ''}
           <button type="button" data-view="report"><i class="ri-file-list-3-line"></i><span>打开报告</span></button>
-          <button type="button" data-view="hardcoded"><i class="ri-file-search-line"></i><span>硬编码报告</span></button>
+          ${isFtbquestsResult ? '' : '<button type="button" data-view="hardcoded"><i class="ri-file-search-line"></i><span>硬编码报告</span></button>'}
           <button type="button" data-view="api-log"><i class="ri-bug-line"></i><span>API 调试日志</span></button>
-          ${apiFailureCount ? `<button type="button" id="retry-api-failures"><i class="ri-refresh-line"></i><span>重试失败项</span></button>` : ''}
+          ${apiFailureCount && !isFtbquestsResult ? `<button type="button" id="retry-api-failures"><i class="ri-refresh-line"></i><span>重试失败项</span></button>` : ''}
         </div>
         ${apiFailureCount ? `
           <div class="status error">
@@ -3228,9 +5240,9 @@ INDEX_HTML = r"""<!doctype html>
           <section class="summary-group">
             <h3>输出产物</h3>
             <div class="summary-group-grid">
-              <div class="metric"><strong>${payload.processed_jars}</strong><span>JAR</span></div>
-              <div class="metric"><strong>${payload.generated_files}</strong><span>语言文件</span></div>
-              <div class="metric"><strong>${hardcodedCount}</strong><span>硬编码映射</span></div>
+              <div class="metric"><strong>${isFtbquestsResult ? (payload.processed_sources || 1) : payload.processed_jars}</strong><span>${isFtbquestsResult ? '任务书输入' : 'JAR'}</span></div>
+              <div class="metric"><strong>${payload.generated_files}</strong><span>${isFtbquestsResult ? '任务书文件' : '语言文件'}</span></div>
+              <div class="metric"><strong>${isFtbquestsResult ? (payload.legacy_files || 0) : hardcodedCount}</strong><span>${isFtbquestsResult ? '旧版 SNBT' : '硬编码映射'}</span></div>
             </div>
           </section>
           <section class="summary-group">
@@ -3258,8 +5270,8 @@ INDEX_HTML = r"""<!doctype html>
               <div class="view-head"><strong>${languageHeadTitle}</strong><span class="muted">${languageHeadDesc}</span></div>
               <div class="view-body">
                 <div class="tabs">
-                  <button type="button" data-result-tab="language" class="${resultState.activeTab === 'language' ? 'active' : ''}"><i class="ri-language-line"></i><span>语言结果</span></button>
-                  <button type="button" data-result-tab="hardcoded" class="${resultState.activeTab === 'hardcoded' ? 'active' : ''}" ${hardcodedCount ? '' : 'disabled'}><i class="ri-draft-line"></i><span>硬编码映射</span></button>
+                  <button type="button" data-result-tab="language" class="${resultState.activeTab === 'language' ? 'active' : ''}"><i class="ri-language-line"></i><span>${isFtbquestsResult ? '任务书结果' : '语言结果'}</span></button>
+                  ${isFtbquestsResult ? '' : `<button type="button" data-result-tab="hardcoded" class="${resultState.activeTab === 'hardcoded' ? 'active' : ''}" ${hardcodedCount ? '' : 'disabled'}><i class="ri-draft-line"></i><span>硬编码映射</span></button>`}
                 </div>
                 <div id="result-tab-panel" class="tab-panel">
                   ${resultState.activeTab === 'hardcoded' ? renderHardcodedWorkbench() : renderLanguageResults(payload)}
@@ -3289,17 +5301,94 @@ INDEX_HTML = r"""<!doctype html>
       }
     }
 
+    function splitJarPath(value) {
+      return String(value || '').split('::').map(part => part.trim()).filter(Boolean);
+    }
+
+    function jarSegmentLabel(value) {
+      const pieces = String(value || '').replace(/\\/g, '/').split('/').filter(Boolean);
+      return pieces[pieces.length - 1] || String(value || '');
+    }
+
+    function jarFilterDisplayLabel(value) {
+      if (!value || value === '全部') {
+        return '全部';
+      }
+      return splitJarPath(value).map(jarSegmentLabel).join(' / ');
+    }
+
+    function buildJarFilterTree(jarNames) {
+      const roots = [];
+      const nodes = new Map();
+      jarNames.forEach(name => {
+        const parts = splitJarPath(name);
+        let siblings = roots;
+        let prefix = [];
+        parts.forEach(part => {
+          prefix.push(part);
+          const value = prefix.join('::');
+          let node = nodes.get(value);
+          if (!node) {
+            const label = jarSegmentLabel(part);
+            node = {
+              value,
+              label,
+              detail: label === part ? '' : part,
+              children: []
+            };
+            nodes.set(value, node);
+            siblings.push(node);
+          }
+          siblings = node.children;
+        });
+      });
+      return roots;
+    }
+
+    function renderJarTreeOptions(nodes, activeValue, depth = 0) {
+      return nodes.map(node => {
+        const active = activeValue === node.value;
+        const icon = node.children.length ? 'ri-folder-3-line' : 'ri-archive-line';
+        const branch = depth > 0 ? '<i class="ri-corner-down-right-line" aria-hidden="true"></i>' : '';
+        const option = `
+          <button type="button" class="ghost-option jar-tree-option ${active ? 'active' : ''}" data-select-value="${escapeHtml(node.value)}" data-jar-depth="${depth}" role="option" aria-selected="${active ? 'true' : 'false'}" title="${escapeHtml(node.value)}" style="padding-left: ${10 + depth * 18}px">
+            <span class="jar-tree-label">${branch}<i class="${icon}" aria-hidden="true"></i><strong>${escapeHtml(node.label)}</strong></span>
+            ${node.detail ? `<span class="jar-tree-path">${escapeHtml(node.detail)}</span>` : ''}
+          </button>
+        `;
+        return option + renderJarTreeOptions(node.children, activeValue, depth + 1);
+      }).join('');
+    }
+
+    function renderJarFilterOptions(jarNames, activeValue) {
+      const allActive = activeValue === '全部';
+      const roots = buildJarFilterTree(jarNames);
+      return `
+        <button type="button" class="ghost-option jar-tree-option ${allActive ? 'active' : ''}" data-select-value="全部" data-jar-depth="0" role="option" aria-selected="${allActive ? 'true' : 'false'}" title="全部">
+          <span class="jar-tree-label"><i class="ri-stack-line" aria-hidden="true"></i><strong>全部</strong></span>
+        </button>
+        ${renderJarTreeOptions(roots, activeValue)}
+      `;
+    }
+
+    function jarFilterMatchesEntry(entryJar, jarFilter) {
+      if (!jarFilter || jarFilter === '全部') {
+        return true;
+      }
+      const jar = String(entryJar || '');
+      return jar === jarFilter || jar.startsWith(`${jarFilter}::`);
+    }
+
     function renderLanguageResults(payload) {
       const jarNames = [...new Set((payload.entries || []).map(e => e.jar).filter(Boolean))];
       const activeLabel = resultState.languageJarFilter || '全部';
-      const jarMenuOptions = ['<div class="ghost-option' + (activeLabel === '全部' ? ' active' : '') + '" data-select-value="全部" title="全部"><strong>全部</strong></div>']
-        .concat(jarNames.map(name => '<div class="ghost-option' + (activeLabel === name ? ' active' : '') + '" data-select-value="' + escapeHtml(name) + '" title="' + escapeHtml(name) + '"><strong>' + escapeHtml(name) + '</strong></div>'))
-        .join('');
+      const activeDisplay = jarFilterDisplayLabel(activeLabel);
+      const jarMenuOptions = renderJarFilterOptions(jarNames, activeLabel);
       return `
         <div class="toolbar">
           <div class="ghost-select jar-filter" id="language-jar-filter-shell">
-            <button type="button" class="control" data-select-trigger="jar-filter"><span class="value" id="language-jar-filter-display" title="${escapeHtml(activeLabel)}">${escapeHtml(activeLabel)}</span><i class="ri-arrow-down-s-line chevron"></i></button>
-            <div class="ghost-menu" id="language-jar-filter-menu" hidden>${jarMenuOptions}</div>
+            <button type="button" class="control" data-select-trigger="jar-filter" aria-haspopup="listbox" aria-expanded="false" aria-controls="language-jar-filter-menu"><span class="value" id="language-jar-filter-display" title="${escapeHtml(activeLabel)}">${escapeHtml(activeDisplay)}</span><i class="ri-arrow-down-s-line chevron"></i></button>
+            <div class="ghost-menu" id="language-jar-filter-menu" role="listbox" hidden>${jarMenuOptions}</div>
           </div>
           <input id="language-search" value="${escapeHtml(resultState.languageSearch)}" placeholder="搜索状态、Mod ID、Key、原文或译文">
           <button type="button" id="export-language-edits"><i class="ri-download-2-line"></i><span>导出已修改译文</span></button>
@@ -3350,7 +5439,7 @@ INDEX_HTML = r"""<!doctype html>
         return resultState.languageFilteredEntries;
       }
       const entries = (payload.entries || []).filter(entry => {
-        if (jarFilter !== '全部' && entry.jar !== jarFilter) {
+        if (!jarFilterMatchesEntry(entry.jar, jarFilter)) {
           return false;
         }
         if (!query) {
@@ -3450,6 +5539,15 @@ INDEX_HTML = r"""<!doctype html>
       if (downloadPack) {
         downloadPack.addEventListener('click', () => downloadPackWithCustomName(downloadPack));
       }
+      const downloadFtbquests = document.getElementById('download-ftbquests');
+      if (downloadFtbquests) {
+        downloadFtbquests.addEventListener('click', () => {
+          const url = downloadFtbquests.dataset.downloadUrl || '';
+          if (url) {
+            window.location.href = url;
+          }
+        });
+      }
     }
 
     function renderReportContent() {
@@ -3546,7 +5644,7 @@ INDEX_HTML = r"""<!doctype html>
         const title = document.createElement('strong');
         title.textContent = '下载资源包';
         const desc = document.createElement('span');
-        desc.textContent = '输入本次下载的资源包文件名，未填写扩展名时会自动补全 .zip。';
+        desc.textContent = '输入本次下载的资源包名称，文件后缀固定为 .zip。';
         titleWrap.append(title, desc);
         const close = document.createElement('button');
         close.type = 'button';
@@ -3555,14 +5653,21 @@ INDEX_HTML = r"""<!doctype html>
         head.append(titleWrap, close);
 
         const label = document.createElement('label');
+        label.className = 'pack-name-field';
         label.textContent = '资源包名称';
+        const inputWrap = document.createElement('div');
+        inputWrap.className = 'pack-name-input-wrap';
         const input = document.createElement('input');
         input.className = 'ghost-input';
-        input.value = defaultName;
-        input.placeholder = '例如：my-mod-zh_cn.zip';
+        input.value = packNameStem(defaultName);
+        input.placeholder = '例如：my-mod-zh_cn';
+        const suffix = document.createElement('span');
+        suffix.className = 'pack-name-suffix';
+        suffix.textContent = '.zip';
+        inputWrap.append(input, suffix);
         const error = document.createElement('div');
-        error.className = 'field-help';
-        label.append(input, error);
+        error.className = 'pack-name-error';
+        label.append(inputWrap, error);
 
         const actions = document.createElement('div');
         actions.className = 'pack-name-actions';
@@ -3609,6 +5714,10 @@ INDEX_HTML = r"""<!doctype html>
         cancel.addEventListener('click', () => finish(''));
         confirm.addEventListener('click', submitName);
         input.addEventListener('input', () => {
+          const stem = packNameStem(input.value);
+          if (stem !== input.value) {
+            input.value = stem;
+          }
           error.textContent = '';
         });
         document.addEventListener('keydown', onKeyDown);
@@ -3629,14 +5738,18 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function normalizeZipName(value) {
-      const cleaned = String(value || '')
+      const cleaned = packNameStem(value)
         .trim()
         .replace(/[<>:"/\\|?*\x00-\x1f]+/g, '_')
         .replace(/^[ .]+|[ .]+$/g, '');
       if (!cleaned) {
         return '';
       }
-      return cleaned.toLowerCase().endsWith('.zip') ? cleaned : `${cleaned}.zip`;
+      return `${cleaned}.zip`;
+    }
+
+    function packNameStem(value) {
+      return String(value || '').trim().replace(/\.zip$/i, '');
     }
 
     async function retryApiFailures() {
@@ -3826,21 +5939,25 @@ INDEX_HTML = r"""<!doctype html>
         if (!query) {
           return true;
         }
-        const haystack = `${entry.category} ${entry.risk} ${entry.jar} ${entry.class} ${entry.source} ${entry.suggestion || ''}`.toLowerCase();
+        const categoryLabel = entry.category_label || entry.categoryLabel || entry.category;
+        const haystack = `${entry.category} ${categoryLabel} ${entry.risk} ${entry.jar} ${entry.class} ${entry.source} ${entry.suggestion || ''}`.toLowerCase();
         return haystack.includes(query);
       });
       const pageInfo = paginate(entries, resultState.hardcodedPage, 50);
       resultState.hardcodedPage = pageInfo.page;
-      const rows = pageInfo.rows.map(entry => `
-        <tr>
-          <td>${escapeHtml(entry.category)}</td>
-          <td>${escapeHtml(entry.risk)}</td>
-          <td>${escapeHtml(entry.jar)}</td>
-          <td>${escapeHtml(entry.class)}</td>
-          <td>${escapeHtml(entry.source)}</td>
-          <td>${escapeHtml(entry.suggestion || entry.translation || '')}</td>
-        </tr>
-      `).join('');
+      const rows = pageInfo.rows.map(entry => {
+        const categoryLabel = entry.category_label || entry.categoryLabel || entry.category;
+        return `
+          <tr>
+            <td>${escapeHtml(categoryLabel)}</td>
+            <td>${escapeHtml(entry.risk)}</td>
+            <td>${escapeHtml(entry.jar)}</td>
+            <td>${escapeHtml(entry.class)}</td>
+            <td>${escapeHtml(entry.source)}</td>
+            <td>${escapeHtml(entry.suggestion || entry.translation || '')}</td>
+          </tr>
+        `;
+      }).join('');
       return `
         <table>
           <thead><tr><th>分类</th><th>风险</th><th>JAR</th><th>Class</th><th>英文文本</th><th>建议 / 译文</th></tr></thead>
@@ -3960,10 +6077,12 @@ INDEX_HTML = r"""<!doctype html>
       const closeMenu = () => {
         shell.classList.remove('open');
         menu.hidden = true;
+        trigger.setAttribute('aria-expanded', 'false');
       };
       const openMenu = () => {
         shell.classList.add('open');
         menu.hidden = false;
+        trigger.setAttribute('aria-expanded', 'true');
       };
       trigger.addEventListener('click', (event) => {
         event.preventDefault();
@@ -3995,11 +6114,15 @@ INDEX_HTML = r"""<!doctype html>
         resultState.languageFilteredCacheKey = '';
         resultState.languagePage = 1;
         if (display) {
-          display.textContent = value;
+          display.textContent = jarFilterDisplayLabel(value);
           display.title = value;
         }
         menu.querySelectorAll('.ghost-option').forEach(item => {
-          item.classList.toggle('active', item.dataset.selectValue === value);
+          const isActive = item.dataset.selectValue === value;
+          item.classList.toggle('active', isActive);
+          if (item.hasAttribute('aria-selected')) {
+            item.setAttribute('aria-selected', isActive ? 'true' : 'false');
+          }
         });
         closeMenu();
         renderLanguageResultContent();
@@ -4097,6 +6220,8 @@ INDEX_HTML = r"""<!doctype html>
         source,
         translation: meta.translation || '',
         category: meta.category || 'unknown_literal',
+        categoryLabel: meta.category_label || meta.categoryLabel || meta.category || 'unknown_literal',
+        categoryOrder: Number(meta.category_order || meta.categoryOrder || 999),
         risk: meta.risk || '',
         class: meta.class || '',
         jar: meta.jar || ''
@@ -4107,17 +6232,44 @@ INDEX_HTML = r"""<!doctype html>
       hardcodedState.selected = new Set();
     }
 
+    function hardcodedCategoryFilters() {
+      const categories = new Map();
+      hardcodedState.entries.forEach(entry => {
+        const category = entry.category || 'unknown_literal';
+        const current = categories.get(category) || {
+          category,
+          label: entry.categoryLabel || category,
+          order: Number.isFinite(entry.categoryOrder) ? entry.categoryOrder : 999,
+          count: 0
+        };
+        current.count += 1;
+        categories.set(category, current);
+      });
+      return [{
+        category: 'all',
+        label: `全部 ${hardcodedState.entries.length}`
+      }].concat(Array.from(categories.values()).sort((left, right) =>
+        left.order - right.order || left.category.localeCompare(right.category)
+      ).map(item => ({
+        category: item.category,
+        label: `${item.label} ${item.count}`
+      })));
+    }
+
+    function hardcodedEntryCategoryLabel(entry) {
+      return entry.categoryLabel || entry.category || 'unknown_literal';
+    }
+
+    function hardcodedEntryHaystack(entry) {
+      return `${entry.source} ${entry.class} ${entry.jar} ${entry.category} ${hardcodedEntryCategoryLabel(entry)}`.toLowerCase();
+    }
+
     function renderHardcodedWorkbench() {
       if (!hardcodedState.entries.length) {
         return '<div class="empty">没有检测到可编辑的硬编码候选。</div>';
       }
-      const counts = hardcodedState.entries.reduce((acc, entry) => {
-        acc[entry.category] = (acc[entry.category] || 0) + 1;
-        return acc;
-      }, {});
-      const filters = ['all', 'ponder', 'config_comment', 'ui_literal', 'unknown_literal'].map(category => {
-        const label = category === 'all' ? `全部 ${hardcodedState.entries.length}` : `${category} ${counts[category] || 0}`;
-        return `<button type="button" data-hardcoded-filter="${category}" class="${category === hardcodedState.filter ? 'active' : ''}">${escapeHtml(label)}</button>`;
+      const filters = hardcodedCategoryFilters().map(option => {
+        return `<button type="button" data-hardcoded-filter="${escapeHtml(option.category)}" class="${option.category === hardcodedState.filter ? 'active' : ''}">${escapeHtml(option.label)}</button>`;
       }).join('');
       return `
         <div class="hardcoded-workbench">
@@ -4150,7 +6302,7 @@ INDEX_HTML = r"""<!doctype html>
       const query = hardcodedState.search.trim().toLowerCase();
       const filtered = hardcodedState.entries.filter(entry => {
         const categoryMatched = hardcodedState.filter === 'all' || entry.category === hardcodedState.filter;
-        const haystack = `${entry.source} ${entry.class} ${entry.jar}`.toLowerCase();
+        const haystack = hardcodedEntryHaystack(entry);
         return categoryMatched && (!query || haystack.includes(query));
       });
       const pageInfo = paginate(filtered, hardcodedState.page, 50);
@@ -4162,7 +6314,7 @@ INDEX_HTML = r"""<!doctype html>
         return `
           <tr class="hardcoded-row ${selected ? 'selected' : ''}" data-hardcoded-row="${index}">
             <td class="select-cell"><input type="checkbox" data-hardcoded-select="${index}" ${selected ? 'checked' : ''} aria-label="选择该硬编码候选"></td>
-            <td>${escapeHtml(entry.category)}<br><span class="muted">${escapeHtml(entry.risk)}</span></td>
+            <td>${escapeHtml(hardcodedEntryCategoryLabel(entry))}<br><span class="muted">${escapeHtml(entry.risk)}</span></td>
             <td>${escapeHtml(entry.source)}<br><span class="muted">${escapeHtml(entry.class)}</span></td>
             <td>
               <textarea data-hardcoded-index="${index}" class="${errors.length ? 'invalid' : ''}" placeholder="译文">${escapeHtml(entry.translation)}</textarea>
@@ -4277,7 +6429,7 @@ INDEX_HTML = r"""<!doctype html>
       const query = hardcodedState.search.trim().toLowerCase();
       const filtered = hardcodedState.entries.filter(entry => {
         const categoryMatched = hardcodedState.filter === 'all' || entry.category === hardcodedState.filter;
-        const haystack = `${entry.source} ${entry.class} ${entry.jar}`.toLowerCase();
+        const haystack = hardcodedEntryHaystack(entry);
         return categoryMatched && (!query || haystack.includes(query));
       });
       const pageInfo = paginate(filtered, hardcodedState.page, 50);
@@ -4618,6 +6770,20 @@ def make_handler(workdir: Path):
 
         def do_POST(self) -> None:
             parsed = urlparse(self.path)
+            if parsed.path == "/api/models":
+                try:
+                    payload = self._handle_models()
+                    self._send_json(payload)
+                except Exception as exc:
+                    self._send_json({"ok": False, "error": str(exc)}, status=500)
+                return
+            if parsed.path == "/api/cache/clear":
+                try:
+                    payload = self._handle_clear_cache()
+                    self._send_json(payload)
+                except Exception as exc:
+                    self._send_json({"ok": False, "error": str(exc)}, status=500)
+                return
             if parsed.path == "/api/translate":
                 try:
                     payload = self._handle_translate()
@@ -4660,11 +6826,40 @@ def make_handler(workdir: Path):
                 return
             self._send_json({"ok": True, **job})
 
+        def _handle_models(self) -> dict[str, Any]:
+            length = int(self.headers.get("Content-Length") or "0")
+            body = self.rfile.read(length)
+            payload = json.loads(body.decode("utf-8") or "{}")
+            provider = str(payload.get("provider", "openai-compatible") or "openai-compatible")
+            if not is_ai_provider(provider):
+                raise ValueError("当前翻译器不支持模型列表")
+            preset = get_provider_preset(provider)
+            api_key_env = str(payload.get("api_key_env", preset.api_key_env) or preset.api_key_env)
+            models = fetch_provider_models(
+                provider=provider,
+                base_url=str(payload.get("base_url") or payload.get("api_url") or preset.api_url),
+                api_key=str(payload.get("api_key", "")).strip(),
+                api_key_env=api_key_env,
+                timeout=max(1.0, min(60.0, float(payload.get("api_timeout", "10") or "10"))),
+            )
+            return {"ok": True, "models": models}
+
+        def _handle_clear_cache(self) -> dict[str, Any]:
+            length = int(self.headers.get("Content-Length") or "0")
+            body = self.rfile.read(length)
+            payload = json.loads(body.decode("utf-8") or "{}")
+            cache_root = resolve_cache_root(workdir, str(payload.get("cache_dir", "") or ""))
+            removed = clear_cache_directory(cache_root, workdir)
+            return {"ok": True, "cache_dir": str(cache_root), "removed": removed}
+
         def _handle_translate(self) -> dict[str, Any]:
             length = int(self.headers.get("Content-Length") or "0")
             body = self.rfile.read(length)
             parts = parse_multipart(self.headers.get("Content-Type", ""), body)
             fields = collect_fields(parts)
+
+            if fields.get("input_kind") == "ftbquests":
+                return self._handle_translate_ftbquests(parts, fields)
 
             uploaded_jars = [part for part in parts if part.name == "jars" and part.filename and part.data]
             if not uploaded_jars:
@@ -4775,7 +6970,7 @@ def make_handler(workdir: Path):
                 scan_hardcoded=fields.get("scan_hardcoded") == "on",
                 hardcoded_limit=5000,
                 pack_format=int(fields.get("pack_format", "15") or "15"),
-                api_url=fields.get("api_url", "https://api.openai.com/v1/chat/completions"),
+                api_url=fields.get("api_url", "https://api.openai.com/v1"),
                 api_key_env=fields.get("api_key_env", "OPENAI_API_KEY") or "OPENAI_API_KEY",
                 api_key=fields.get("api_key", "").strip(),
                 api_debug_log=str(api_debug_log_path) if fields.get("api_debug_log") == "on" else "",
@@ -4786,6 +6981,7 @@ def make_handler(workdir: Path):
                 model=fields.get("model", "gpt-4o-mini") or "gpt-4o-mini",
                 progress_callback=progress_callback,
             )
+            cache_root = resolve_cache_root(workdir, fields.get("cache_dir", ""))
             update_job(
                 job_id,
                 args={
@@ -4801,6 +6997,7 @@ def make_handler(workdir: Path):
                     "api_timeout": args.api_timeout,
                     "model": args.model,
                     "ignore_cache": args.ignore_cache,
+                    "cache_dir": str(cache_root),
                 },
             )
 
@@ -4809,7 +7006,179 @@ def make_handler(workdir: Path):
 
             Thread(
                 target=run_translate_job,
-                args=(job_id, jar_paths, out_dir, workdir / ".shared-cache", api_debug_log_path, args, update_job, cancel_evt),
+                args=(job_id, jar_paths, out_dir, cache_root, api_debug_log_path, args, update_job, cancel_evt),
+                daemon=True,
+            ).start()
+
+            return {
+                "ok": True,
+                "job_id": job_id,
+            }
+
+        def _handle_translate_ftbquests(self, parts: list[MultipartPart], fields: dict[str, str]) -> dict[str, Any]:
+            uploaded = [part for part in parts if part.name == "ftbquests_files" and part.filename and part.data]
+            if not uploaded:
+                raise ValueError("请上传整合包 ZIP、quests ZIP 或 lang/en_us.snbt")
+
+            job_id = token_hex(8)
+            run_dir = workdir / job_id
+            upload_dir = run_dir / "uploads"
+            out_dir = run_dir / "out"
+            upload_dir.mkdir(parents=True)
+            out_dir.mkdir(parents=True)
+            api_debug_log_path = out_dir / "api-debug.jsonl"
+
+            source_locale = (fields.get("source_locale", "en_us") or "en_us").strip().lower()
+            zip_paths: list[Path] = []
+            snbt_parts: list[MultipartPart] = []
+            for index, part in enumerate(uploaded, start=1):
+                filename = sanitize_filename(part.filename or f"ftbquests-{index}.bin")
+                lower = filename.lower()
+                if lower.endswith(".zip"):
+                    path = upload_dir / filename
+                    path.write_bytes(part.data)
+                    zip_paths.append(path)
+                elif lower.endswith(".snbt"):
+                    snbt_parts.append(part)
+
+            if zip_paths and (len(zip_paths) > 1 or snbt_parts):
+                raise ValueError("FTB Quests 模式一次只处理一个 ZIP，或上传一个/多个 SNBT 文件")
+
+            if zip_paths:
+                input_path = zip_paths[0]
+            else:
+                snbt_root = upload_dir / "ftbquests_input"
+                for index, part in enumerate(snbt_parts, start=1):
+                    relative = sanitize_relative_upload_path(part.filename or f"{source_locale}-{index}.snbt")
+                    if "/" not in relative and re.match(r"^[a-z]{2}_[a-z]{2}\.snbt$", relative, flags=re.IGNORECASE):
+                        relative = f"lang/{relative}"
+                    target = safe_run_path(snbt_root, relative)
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(part.data)
+                input_path = snbt_root
+
+            if not input_path.exists():
+                raise ValueError("上传内容里没有可处理的 FTB Quests 文件")
+
+            progress_total = max(1, int(fields.get("api_concurrency", "2") or "2"))
+            api_batch_size = max(5, min(200, int(fields.get("api_batch_size", "40") or "40")))
+            api_timeout = max(1.0, min(300.0, float(fields.get("api_timeout", "10") or "10")))
+            progress_state = {"completed": 0, "total": 0}
+
+            def progress_callback(*args: Any) -> None:
+                if cancel_evt.is_set():
+                    raise RuntimeError("cancelled")
+                if len(args) == 1 and isinstance(args[0], dict):
+                    event = args[0]
+                    if event.get("type") == "retry_wait":
+                        update_job(
+                            job_id,
+                            stage="retrying",
+                            retry_attempt=event.get("next_attempt", event.get("attempt", 0)),
+                            retry_max=event.get("max_retries", 0),
+                            retry_delay=event.get("delay_seconds", 0),
+                            retry_reason=event.get("reason", ""),
+                            request_timeout=event.get("timeout_seconds", api_timeout),
+                            batch_size=event.get("batch_size", api_batch_size),
+                        )
+                    elif event.get("type") == "request_attempt":
+                        update_job(
+                            job_id,
+                            stage="translating",
+                            retry_attempt=0,
+                            retry_max=event.get("max_retries", 0),
+                            retry_delay=0,
+                            retry_reason="",
+                            request_timeout=event.get("timeout_seconds", api_timeout),
+                            batch_size=event.get("batch_size", api_batch_size),
+                        )
+                    return
+                completed_delta = int(args[0] if args else 0)
+                total_delta = int(args[1] if len(args) > 1 else 0)
+                progress_state["completed"] += completed_delta
+                progress_state["total"] += total_delta
+                update_job(
+                    job_id,
+                    stage="translating",
+                    completed=progress_state["completed"],
+                    total=max(progress_state["total"], progress_state["completed"]),
+                )
+
+            update_job(
+                job_id,
+                status="running",
+                stage="queued",
+                completed=0,
+                total=0,
+                files_completed=0,
+                files_total=1,
+                cache_hits=0,
+                cache_misses=0,
+                current_file="",
+                retry_attempt=0,
+                retry_max=0,
+                retry_delay=0,
+                retry_reason="",
+                request_timeout=api_timeout,
+                batch_size=api_batch_size,
+                result=None,
+                error="",
+                args=None,
+                api_debug_log_path=str(api_debug_log_path),
+            )
+
+            glossary_path = None
+            for part in parts:
+                if part.name == "glossary" and part.filename and part.data:
+                    glossary_path = upload_dir / sanitize_filename(part.filename)
+                    glossary_path.write_bytes(part.data)
+                    break
+
+            args = argparse.Namespace(
+                source_locale=source_locale,
+                target_locale=fields.get("target_locale", "zh_cn") or "zh_cn",
+                provider=fields.get("provider", "glossary") or "glossary",
+                glossary=str(glossary_path) if glossary_path else None,
+                overwrite_existing=fields.get("overwrite_existing") == "on",
+                ignore_cache=fields.get("ignore_cache") == "on",
+                output_mode=fields.get("ftbquests_output_mode", "both") or "both",
+                api_url=fields.get("api_url", "https://api.openai.com/v1"),
+                api_key_env=fields.get("api_key_env", "OPENAI_API_KEY") or "OPENAI_API_KEY",
+                api_key=fields.get("api_key", "").strip(),
+                api_debug_log=str(api_debug_log_path) if fields.get("api_debug_log") == "on" else "",
+                api_concurrency=progress_total,
+                api_retries=max(1, min(10, int(fields.get("api_retries", "5") or "5"))),
+                api_batch_size=api_batch_size,
+                api_timeout=api_timeout,
+                model=fields.get("model", "gpt-4o-mini") or "gpt-4o-mini",
+                progress_callback=progress_callback,
+            )
+            cache_root = resolve_cache_root(workdir, fields.get("cache_dir", ""))
+            update_job(
+                job_id,
+                args={
+                    "provider": args.provider,
+                    "glossary": args.glossary,
+                    "api_url": args.api_url,
+                    "api_key_env": args.api_key_env,
+                    "api_key": args.api_key,
+                    "api_debug_log": args.api_debug_log,
+                    "api_concurrency": args.api_concurrency,
+                    "api_retries": args.api_retries,
+                    "api_batch_size": args.api_batch_size,
+                    "api_timeout": args.api_timeout,
+                    "model": args.model,
+                    "ignore_cache": args.ignore_cache,
+                    "cache_dir": str(cache_root),
+                },
+            )
+
+            cancel_evt = Event()
+            cancel_events[job_id] = cancel_evt
+
+            Thread(
+                target=run_ftbquests_job,
+                args=(job_id, input_path, out_dir, cache_root, api_debug_log_path, args, update_job, cancel_evt),
                 daemon=True,
             ).start()
 
@@ -4913,7 +7282,7 @@ def make_handler(workdir: Path):
             args = argparse.Namespace(
                 provider=provider_name,
                 glossary=None,
-                api_url=config.get("api_url", "https://api.openai.com/v1/chat/completions"),
+                api_url=config.get("api_url", "https://api.openai.com/v1"),
                 api_key_env=config.get("api_key_env", "OPENAI_API_KEY") or "OPENAI_API_KEY",
                 api_key=str(config.get("api_key", "")).strip(),
                 api_debug_log=str(api_debug_log_path) if api_debug_log_path else "",
@@ -4988,6 +7357,82 @@ def make_handler(workdir: Path):
     return WebHandler
 
 
+def normalize_models_url(base_url: str, provider: str) -> str:
+    preset = get_provider_preset(provider)
+    raw = str(base_url or preset.api_url).strip() or preset.api_url
+    parsed = urlparse(raw)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("BaseURL 必须是 http 或 https URL")
+    path = parsed.path.rstrip("/")
+    for suffix in ("/chat/completions", "/responses", "/messages"):
+        if path.endswith(suffix):
+            path = path[: -len(suffix)]
+            break
+    if path.endswith("/models"):
+        models_path = path
+    elif path in ("", "/"):
+        models_path = "/v1/models"
+    else:
+        models_path = f"{path}/models"
+    return parsed._replace(path=models_path, params="", query="", fragment="").geturl()
+
+
+def fetch_provider_models(provider: str, base_url: str, api_key: str, api_key_env: str, timeout: float) -> list[dict[str, str]]:
+    key = api_key or os.environ.get(api_key_env, "")
+    if not key:
+        raise RuntimeError(f"API Key 未填写，且环境变量 {api_key_env} 未设置")
+    models_url = normalize_models_url(base_url, provider)
+    headers = {"Content-Type": "application/json"}
+    if provider == "anthropic-compatible":
+        headers.update({"x-api-key": key, "anthropic-version": "2023-06-01"})
+    else:
+        headers["Authorization"] = f"Bearer {key}"
+    request = urllib.request.Request(models_url, headers=headers, method="GET")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            response_text = response.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"模型列表请求失败：HTTP {exc.code}: {body[:300]}") from exc
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        reason = getattr(exc, "reason", exc)
+        raise RuntimeError(f"模型列表连接失败：{reason}") from exc
+    return parse_models_response(response_text)
+
+
+def parse_models_response(response_text: str) -> list[dict[str, str]]:
+    try:
+        data = json.loads(response_text)
+    except json.JSONDecodeError as exc:
+        preview = response_text[:180].replace("\n", "\\n")
+        raise RuntimeError(f"模型列表返回格式无法识别：{preview}") from exc
+    raw_models: Any
+    if isinstance(data, dict) and isinstance(data.get("data"), list):
+        raw_models = data["data"]
+    elif isinstance(data, dict) and isinstance(data.get("models"), list):
+        raw_models = data["models"]
+    elif isinstance(data, list):
+        raw_models = data
+    else:
+        raise RuntimeError("模型列表返回格式无法识别")
+    models: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for item in raw_models:
+        if isinstance(item, str):
+            model_id = item
+            label = item
+        elif isinstance(item, dict):
+            model_id = str(item.get("id") or item.get("name") or "").strip()
+            label = str(item.get("display_name") or item.get("label") or model_id).strip()
+        else:
+            continue
+        if not model_id or model_id in seen:
+            continue
+        seen.add(model_id)
+        models.append({"id": model_id, "label": label or model_id})
+    return models
+
+
 def parse_multipart(content_type: str, body: bytes) -> list[MultipartPart]:
     match = re.search(r"boundary=(?P<boundary>[^;]+)", content_type)
     if not match:
@@ -5051,6 +7496,52 @@ def collect_fields(parts: list[MultipartPart]) -> dict[str, str]:
     return fields
 
 
+def resolve_cache_root(workdir: Path, raw_cache_dir: str | None) -> Path:
+    raw = (raw_cache_dir or "").strip()
+    if not raw:
+        return (workdir / ".shared-cache").resolve()
+    expanded = Path(os.path.expandvars(os.path.expanduser(raw)))
+    if not expanded.is_absolute():
+        expanded = workdir / expanded
+    target = expanded.resolve()
+    if target.exists() and not target.is_dir():
+        raise ValueError("缓存目录不能是文件")
+    return target
+
+
+def validate_cache_clear_target(cache_root: Path, workdir: Path) -> Path:
+    target = cache_root.resolve()
+    forbidden: list[Path] = []
+    if target.anchor:
+        forbidden.append(Path(target.anchor).resolve())
+    for base in (Path.home(), PROJECT_ROOT, workdir):
+        try:
+            forbidden.append(base.resolve())
+        except OSError:
+            continue
+    for base in forbidden:
+        if target == base or target in base.parents:
+            raise ValueError("缓存目录过于宽泛，已拒绝清空")
+    if target.exists() and not target.is_dir():
+        raise ValueError("缓存目录不能是文件")
+    return target
+
+
+def clear_cache_directory(cache_root: Path, workdir: Path) -> int:
+    target = validate_cache_clear_target(cache_root, workdir)
+    target.mkdir(parents=True, exist_ok=True)
+    removed = 0
+    for child in target.iterdir():
+        if child.is_symlink() or child.is_file():
+            child.unlink()
+        elif child.is_dir():
+            shutil.rmtree(child)
+        else:
+            child.unlink(missing_ok=True)
+        removed += 1
+    return removed
+
+
 def shared_cache_scope_dir(cache_root: Path, args: argparse.Namespace) -> Path:
     digest = compute_translation_config_hash(args)[:16]
     scope_dir = cache_root / digest
@@ -5061,6 +7552,112 @@ def shared_cache_scope_dir(cache_root: Path, args: argparse.Namespace) -> Path:
 def shared_cache_key(jar_path: Path) -> str:
     name_hash = hashlib.sha1(jar_path.name.encode("utf-8")).hexdigest()[:10]
     return f"{jar_path.stem}-{name_hash}"
+
+
+def run_ftbquests_job(
+    job_id: str,
+    input_path: Path,
+    out_dir: Path,
+    shared_cache_root: Path,
+    api_debug_log_path: Path,
+    args: argparse.Namespace,
+    update_job,
+    cancel_event: Event | None = None,
+) -> None:
+    try:
+        started_at = time.perf_counter()
+        update_job(job_id, stage="processing_file", files_completed=0, files_total=1, current_file=input_path.name)
+        source = load_ftbquests_source(input_path, args.source_locale)
+        source_hash = compute_ftbquests_source_hash(source)
+        config_hash = compute_ftbquests_config_hash(args)
+        cache_key = ftbquests_cache_key(input_path)
+        shared_cache_dir = shared_cache_root / config_hash[:16]
+        shared_cache_dir.mkdir(parents=True, exist_ok=True)
+        ignore_cache = bool(getattr(args, "ignore_cache", False))
+        cache_hit = False
+        result = None
+
+        if not ignore_cache:
+            cached_hash = load_ftbquests_checkpoint_source_hash(shared_cache_dir, cache_key)
+            cached_config_hash = load_ftbquests_checkpoint_config_hash(shared_cache_dir, cache_key)
+            if source_hash and cached_hash == source_hash and cached_config_hash == config_hash:
+                cached = load_ftbquests_checkpoint(shared_cache_dir, cache_key)
+                if cached is not None and not report_has_uncacheable_failures(cached.report_entries):
+                    update_job(job_id, stage="reusing_cache", current_file=f"{input_path.name}（命中缓存）")
+                    result = cached
+                    cache_hit = True
+
+        if result is None:
+            translator = create_translator(args)
+            if hasattr(translator, "task_id"):
+                translator.task_id = job_id
+            if args.provider in {"copy", "glossary"}:
+                update_job(job_id, stage="translating", completed=1, total=1)
+            result = process_ftbquests_source(source, args, translator)
+            if not report_has_uncacheable_failures(result.report_entries):
+                save_ftbquests_checkpoint(shared_cache_dir, cache_key, result, config_hash=config_hash)
+
+        if cancel_event and cancel_event.is_set():
+            update_job(job_id, status="cancelled", stage="cancelled", error="用户已中断")
+            return
+
+        update_job(
+            job_id,
+            stage="writing",
+            files_completed=1,
+            files_total=1,
+            cache_hits=1 if cache_hit else 0,
+            cache_misses=0 if cache_hit else 1,
+            current_file=input_path.name,
+        )
+        output_mode = getattr(args, "output_mode", "both")
+        directory_path = None
+        patch_path = None
+        if result.output_files:
+            directory_path, patch_path = write_ftbquests_outputs(out_dir, result, output_mode)
+        report_path = out_dir / "ftbquests-report.html"
+        json_report_path = out_dir / "ftbquests-report.json"
+        write_ftbquests_html_report(report_path, result)
+        write_ftbquests_json_report(json_report_path, result)
+
+        summary: dict[str, int] = {}
+        for entry in result.report_entries:
+            summary[entry.status] = summary.get(entry.status, 0) + 1
+        elapsed_seconds = time.perf_counter() - started_at
+        patch_url = f"/download/{job_id}/out/{patch_path.name}" if patch_path and patch_path.is_file() else ""
+        result_payload = {
+            "ok": True,
+            "kind": "ftbquests",
+            "job_id": job_id,
+            "processed_jars": 0,
+            "processed_sources": 1,
+            "generated_files": len(result.output_files),
+            "mode": result.mode,
+            "legacy_files": len(result.legacy_files),
+            "ftbquests_patch_url": patch_url,
+            "ftbquests_directory": str(directory_path) if directory_path else "",
+            "report_url": f"/report/{job_id}/out/ftbquests-report.html",
+            "ftbquests_json_report_url": f"/download/{job_id}/out/ftbquests-report.json",
+            "api_debug_log_url": f"/report/{job_id}/out/api-debug.jsonl" if api_debug_log_path.is_file() else "",
+            "hardcoded_count": 0,
+            "hardcoded_map": {},
+            "hardcoded_entries": [],
+            "summary": summary,
+            "provider": args.provider,
+            "elapsed_seconds": round(elapsed_seconds, 2),
+            "cache_hits": 1 if cache_hit else 0,
+            "cache_misses": 0 if cache_hit else 1,
+            "api_failure_count": summary.get("api_failed", 0),
+            "api_failed_entries": [entry.__dict__ for entry in result.report_entries if entry.status == "api_failed"],
+            "entries": [entry.__dict__ for entry in result.report_entries],
+            "api_debug_log_lines": read_jsonl(api_debug_log_path, limit=300),
+        }
+        update_job(job_id, status="done", stage="done", result=result_payload)
+    except Exception as exc:
+        if cancel_event and cancel_event.is_set():
+            update_job(job_id, status="cancelled", stage="cancelled", error="用户已中断")
+        else:
+            update_job(job_id, status="error", stage="error", error=str(exc))
 
 
 def run_translate_job(
@@ -5259,6 +7856,20 @@ def sanitize_filename(filename: str) -> str:
     return name or "upload.bin"
 
 
+def sanitize_relative_upload_path(filename: str) -> str:
+    raw = str(filename or "").replace("\\", "/")
+    segments: list[str] = []
+    for segment in raw.split("/"):
+        if not segment or segment in {".", ".."}:
+            continue
+        if ":" in segment:
+            segment = segment.split(":", 1)[-1]
+        cleaned = sanitize_filename(segment)
+        if cleaned:
+            segments.append(cleaned)
+    return "/".join(segments) or "upload.snbt"
+
+
 def sanitize_job_id(job_id: str) -> str:
     return re.sub(r"[^a-fA-F0-9]", "", job_id)[:32]
 
@@ -5294,6 +7905,8 @@ def hardcoded_entry_to_dict(entry: HardcodedEntry) -> dict[str, str]:
         "class": entry.class_path,
         "source": entry.text,
         "category": entry.category,
+        "category_label": hardcoded_category_label(entry.category),
+        "category_order": str(hardcoded_category_order(entry.category)),
         "risk": entry.risk,
         "suggestion": entry.suggestion,
     }

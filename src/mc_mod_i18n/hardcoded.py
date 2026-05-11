@@ -17,6 +17,34 @@ class HardcodedEntry:
     suggestion: str
 
 
+@dataclass(frozen=True)
+class HardcodedCategory:
+    label: str
+    order: int
+    map_eligible: bool
+
+
+HARDCODED_CATEGORIES: dict[str, HardcodedCategory] = {
+    "ponder": HardcodedCategory("Ponder 场景", 10, True),
+    "ui_literal": HardcodedCategory("界面硬编码", 20, True),
+    "config_comment": HardcodedCategory("配置注释", 30, True),
+    "unknown_literal": HardcodedCategory("待确认文本", 40, True),
+    "advancement_datagen": HardcodedCategory("进度数据生成", 80, False),
+    "unit_or_label": HardcodedCategory("单位或标签", 90, False),
+}
+HARDCODED_MAP_CATEGORIES = {
+    key for key, category in HARDCODED_CATEGORIES.items() if category.map_eligible
+}
+
+
+def hardcoded_category_label(category: str) -> str:
+    return HARDCODED_CATEGORIES.get(category, HardcodedCategory(category, 999, False)).label
+
+
+def hardcoded_category_order(category: str) -> int:
+    return HARDCODED_CATEGORIES.get(category, HardcodedCategory(category, 999, False)).order
+
+
 _NESTED_JAR_PREFIXES: tuple[str, ...] = (
     "META-INF/jarjar/",
     "META-INF/libraries/",

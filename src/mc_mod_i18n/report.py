@@ -5,9 +5,12 @@ from html import escape
 import json
 from pathlib import Path
 
-from .hardcoded import HardcodedEntry
-
-HARDCODED_MAP_CATEGORIES = {"ponder", "config_comment", "ui_literal", "unknown_literal"}
+from .hardcoded import (
+    HARDCODED_MAP_CATEGORIES,
+    HardcodedEntry,
+    hardcoded_category_label,
+    hardcoded_category_order,
+)
 
 
 @dataclass(frozen=True)
@@ -242,17 +245,21 @@ def write_hardcoded_report(path: Path, entries: list[HardcodedEntry]) -> None:
         totals[entry.category] = totals.get(entry.category, 0) + 1
         risks[entry.risk] = risks.get(entry.risk, 0) + 1
 
-    category_summary = "".join(f"<li>{escape(status)}: {count}</li>" for status, count in sorted(totals.items()))
+    sorted_categories = sorted(totals.keys(), key=lambda item: (hardcoded_category_order(item), item))
+    category_summary = "".join(
+        f"<li>{escape(hardcoded_category_label(category))}: {totals[category]}</li>"
+        for category in sorted_categories
+    )
     risk_summary = "".join(f"<li>{escape(status)}: {count}</li>" for status, count in sorted(risks.items()))
     filter_buttons = "\n".join(
-        f'<button type="button" data-category="{escape(category)}">{escape(category)}</button>'
-        for category in ("ponder", "config_comment", "ui_literal", "unknown_literal")
+        f'<button type="button" data-category="{escape(category)}">{escape(hardcoded_category_label(category))}</button>'
+        for category in sorted_categories
     )
     rows = "\n".join(
         "<tr "
         f'data-category="{escape(entry.category)}" '
         f'data-text="{escape((entry.text + " " + entry.class_path + " " + entry.jar).lower())}">'
-        f"<td>{escape(entry.category)}</td>"
+        f"<td>{escape(hardcoded_category_label(entry.category))}</td>"
         f"<td>{escape(entry.risk)}</td>"
         f"<td>{escape(entry.jar)}</td>"
         f"<td>{escape(entry.class_path)}</td>"
@@ -379,6 +386,8 @@ def build_hardcoded_map_template(entries: list[HardcodedEntry]) -> dict[str, dic
             {
                 "translation": "",
                 "category": entry.category,
+                "category_label": hardcoded_category_label(entry.category),
+                "category_order": str(hardcoded_category_order(entry.category)),
                 "risk": entry.risk,
                 "class": entry.class_path,
                 "jar": entry.jar,

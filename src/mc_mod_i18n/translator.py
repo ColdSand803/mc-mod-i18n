@@ -46,73 +46,16 @@ class ProviderPreset:
 
 AI_PROVIDER_PRESETS: dict[str, ProviderPreset] = {
     "openai-compatible": ProviderPreset(
-        label="自定义 OpenAI 兼容",
-        api_url="https://api.openai.com/v1/chat/completions",
+        label="兼容 OpenAI",
+        api_url="https://api.openai.com/v1",
         model="gpt-4o-mini",
         api_key_env="OPENAI_API_KEY",
     ),
-    "openai": ProviderPreset(
-        label="OpenAI",
-        api_url="https://api.openai.com/v1/chat/completions",
-        model="gpt-4o-mini",
-        api_key_env="OPENAI_API_KEY",
-        key_url="https://platform.openai.com/api-keys",
-    ),
-    "deepseek": ProviderPreset(
-        label="DeepSeek",
-        api_url="https://api.deepseek.com/chat/completions",
-        model="deepseek-chat",
-        api_key_env="DEEPSEEK_API_KEY",
-        key_url="https://platform.deepseek.com/api_keys",
-    ),
-    "moonshot": ProviderPreset(
-        label="Moonshot",
-        api_url="https://api.moonshot.cn/v1/chat/completions",
-        model="moonshot-v1-8k",
-        api_key_env="MOONSHOT_API_KEY",
-        key_url="https://platform.moonshot.cn/console/api-keys",
-    ),
-    "dashscope": ProviderPreset(
-        label="阿里云百炼 DashScope",
-        api_url="https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
-        model="qwen-plus",
-        api_key_env="DASHSCOPE_API_KEY",
-        key_url="https://bailian.console.aliyun.com/?apiKey=1",
-    ),
-    "zhipu": ProviderPreset(
-        label="智谱 AI",
-        api_url="https://open.bigmodel.cn/api/paas/v4/chat/completions",
-        model="glm-4-flash",
-        api_key_env="ZHIPUAI_API_KEY",
-        key_url="https://open.bigmodel.cn/usercenter/apikeys",
-    ),
-    "siliconflow": ProviderPreset(
-        label="硅基流动 SiliconFlow",
-        api_url="https://api.siliconflow.cn/v1/chat/completions",
-        model="deepseek-ai/DeepSeek-V3",
-        api_key_env="SILICONFLOW_API_KEY",
-        key_url="https://cloud.siliconflow.cn/account/ak",
-    ),
-    "gemini": ProviderPreset(
-        label="Google Gemini",
-        api_url="https://generativelanguage.googleapis.com/v1beta/openai/chat/completions",
-        model="gemini-2.0-flash",
-        api_key_env="GEMINI_API_KEY",
-        key_url="https://aistudio.google.com/apikey",
-    ),
-    "groq": ProviderPreset(
-        label="Groq",
-        api_url="https://api.groq.com/openai/v1/chat/completions",
-        model="llama-3.3-70b-versatile",
-        api_key_env="GROQ_API_KEY",
-        key_url="https://console.groq.com/keys",
-    ),
-    "mimo": ProviderPreset(
-        label="小米 MiMo",
-        api_url="https://token-plan-sgp.xiaomimimo.com/v1/chat/completions",
-        model="mimo-v2.5-pro",
-        api_key_env="MIMO_API_KEY",
-        key_url="https://platform.xiaomimimo.com/token-plan",
+    "anthropic-compatible": ProviderPreset(
+        label="兼容 Anthropic",
+        api_url="https://api.anthropic.com/v1",
+        model="claude-3-5-haiku-latest",
+        api_key_env="ANTHROPIC_API_KEY",
     ),
 }
 
@@ -169,6 +112,23 @@ def normalize_chat_completions_url(api_url: str) -> str:
         path = f"{path}/chat/completions"
     elif path in ("", "/"):
         path = "/v1/chat/completions"
+    else:
+        return url
+    return urlunparse(parsed._replace(path=path))
+
+
+def normalize_anthropic_messages_url(api_url: str) -> str:
+    url = api_url.strip()
+    if not url:
+        return url
+    parsed = urlparse(url)
+    path = parsed.path.rstrip("/")
+    if path.endswith("/messages"):
+        return url
+    if path.endswith("/v1"):
+        path = f"{path}/messages"
+    elif path in ("", "/"):
+        path = "/v1/messages"
     else:
         return url
     return urlunparse(parsed._replace(path=path))
@@ -759,6 +719,124 @@ class OpenAICompatibleTranslator(Translator):
                 file.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
+class AnthropicCompatibleTranslator(OpenAICompatibleTranslator):
+    def __init__(
+        self,
+        api_url: str,
+        api_key_env: str,
+        model: str,
+        api_key: str = "",
+        provider_label: str = "Anthropic 兼容",
+        debug_log_path: str = "",
+        concurrency: int = 1,
+        max_retries: int = 3,
+        batch_size: int = 40,
+        request_timeout: float = 10.0,
+        progress_callback: Callable[..., None] | None = None,
+        task_id: str = "",
+        source_locale: str = "en_us",
+        target_locale: str = "zh_cn",
+    ) -> None:
+        super().__init__(
+            api_url=normalize_anthropic_messages_url(api_url),
+            api_key_env=api_key_env,
+            model=model,
+            api_key=api_key,
+            provider_label=provider_label,
+            debug_log_path=debug_log_path,
+            concurrency=concurrency,
+            max_retries=max_retries,
+            batch_size=batch_size,
+            request_timeout=request_timeout,
+            progress_callback=progress_callback,
+            task_id=task_id,
+            source_locale=source_locale,
+            target_locale=target_locale,
+        )
+        self.api_url = normalize_anthropic_messages_url(api_url)
+
+    def _translate_chunk(self, items: list[TranslationItem], api_key: str) -> dict[str, str]:
+        start_time = time.monotonic()
+        source_language = locale_display_name(self.source_locale)
+        target_language = locale_display_name(self.target_locale)
+        system_prompt = (
+            f"你是 Minecraft Mod 本地化助手。将 {source_language}（{self.source_locale}）游戏文本翻译成 {target_language}（{self.target_locale}）。"
+            "必须保留所有 printf 占位符、花括号占位符、Minecraft § 格式代码、换行和专有 ID。"
+            "只输出 JSON 数组，数组项包含 id 和 text。"
+        )
+        payload = {
+            "model": self.model,
+            "max_tokens": 4096,
+            "temperature": 0.2,
+            "system": system_prompt,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        [{"id": item.id, "key": item.key, "text": item.text, "mod_id": item.mod_id} for item in items],
+                        ensure_ascii=False,
+                    ),
+                }
+            ],
+        }
+
+        request = urllib.request.Request(
+            self.api_url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+
+        response_status, response_headers, response_text = self._open_with_retries(request, items, start_time)
+        elapsed_ms = round((time.monotonic() - start_time) * 1000)
+
+        self._write_debug_log(
+            {
+                "type": "api_call",
+                "provider": self.provider_label,
+                "elapsed_ms": elapsed_ms,
+                "api_url": self.api_url,
+                "model": self.model,
+                "api_key_env": self.api_key_env,
+                "has_inline_api_key": bool(self.api_key),
+                "request_headers": {
+                    "x-api-key": "***",
+                    "anthropic-version": "2023-06-01",
+                    "Content-Type": "application/json",
+                },
+                "request_body": payload,
+                "status": response_status,
+                "response_headers": response_headers,
+                "body_preview": response_text[:2000],
+            }
+        )
+
+        content = _extract_anthropic_content(response_text, self.provider_label)
+        try:
+            parsed = json.loads(_strip_json_fence(content))
+        except json.JSONDecodeError as exc:
+            preview = content[:180].replace("\n", "\\n")
+            raise RuntimeError(f"{self.provider_label} API 返回的译文不是 JSON 数组：{preview}") from exc
+        if not isinstance(parsed, list):
+            raise RuntimeError("translation API returned non-list JSON")
+
+        translations: dict[str, str] = {}
+        source_ids = {item.id for item in items}
+        for row in parsed:
+            if isinstance(row, dict) and row.get("id") in source_ids and isinstance(row.get("text"), str):
+                translations[str(row["id"])] = row["text"]
+
+        missing = source_ids - translations.keys()
+        if missing:
+            raise RuntimeError(f"translation API missed {len(missing)} entries")
+
+        return translations
+
+
 def split_evenly(items: list[TranslationItem], parts: int) -> list[list[TranslationItem]]:
     if not items:
         return []
@@ -797,6 +875,26 @@ def _extract_chat_content(response_text: str, provider_label: str) -> str:
         if isinstance(data, dict) and isinstance(data.get("content"), str):
             return data["content"]
         raise RuntimeError(f"{provider_label} API 返回格式无法识别") from exc
+
+
+def _extract_anthropic_content(response_text: str, provider_label: str) -> str:
+    try:
+        data = json.loads(response_text)
+    except json.JSONDecodeError as exc:
+        preview = response_text[:180].replace("\n", "\\n")
+        raise RuntimeError(f"{provider_label} API 返回格式无法识别：{preview}") from exc
+
+    if isinstance(data, dict) and isinstance(data.get("content"), str):
+        return data["content"]
+    content = data.get("content") if isinstance(data, dict) else None
+    if isinstance(content, list):
+        chunks: list[str] = []
+        for block in content:
+            if isinstance(block, dict) and isinstance(block.get("text"), str):
+                chunks.append(block["text"])
+        if chunks:
+            return "".join(chunks)
+    raise RuntimeError(f"{provider_label} API 返回格式无法识别")
 
 
 def _extract_stream_content(response_text: str, provider_label: str) -> str:
