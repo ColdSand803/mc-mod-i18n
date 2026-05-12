@@ -7,7 +7,7 @@ from pathlib import Path
 import unittest
 
 from mc_mod_i18n.translator import CopyTranslator
-from mc_mod_i18n.web import json_target_filename, process_json_language_file
+from mc_mod_i18n.web import json_output_metadata_preview, json_target_filename, process_json_language_file
 
 
 class JsonLanguageModeTest(unittest.TestCase):
@@ -94,6 +94,29 @@ class JsonLanguageModeTest(unittest.TestCase):
     def test_json_target_filename_replaces_source_locale(self) -> None:
         self.assertEqual("fr_fr.json", json_target_filename("en_us.json", "en_us", "fr_fr", "flat"))
         self.assertEqual("foo.fr_fr.json", json_target_filename("foo.json", "en_us", "fr_fr", "flat"))
+
+    def test_ui_locale_output_exposes_metadata_preview(self) -> None:
+        preview = json_output_metadata_preview(
+            "mc-mod-i18n-ui-ja_jp.json",
+            {
+                "schema_version": 1,
+                "locale": "ja_jp",
+                "name": "日本語",
+                "native_name": "日本語",
+                "source_locale": "en_us",
+                "messages": {"app.title": "Title"},
+            },
+        )
+
+        self.assertIsNotNone(preview)
+        self.assertEqual("mc-mod-i18n-ui-ja_jp.json", preview["file"])
+        self.assertEqual("UI 语言包 JSON", preview["schema"])
+        self.assertEqual("ja_jp", preview["locale"])
+        self.assertEqual("日本語", preview["name"])
+        self.assertEqual("en_us", preview["source_locale"])
+
+    def test_flat_json_has_no_metadata_preview(self) -> None:
+        self.assertIsNone(json_output_metadata_preview("fr_fr.json", {"menu.start": "Start"}))
 
 
 if __name__ == "__main__":

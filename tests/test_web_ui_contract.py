@@ -11,6 +11,27 @@ from mc_mod_i18n.web import INDEX_HTML, normalize_models_url, parse_models_respo
 
 
 class WebUiContractTest(unittest.TestCase):
+    def test_browser_smoke_script_covers_core_ui_interactions(self) -> None:
+        script_path = Path(__file__).resolve().parents[1] / "scripts" / "ui_smoke_test.mjs"
+        self.assertTrue(script_path.is_file(), "scripts/ui_smoke_test.mjs should exist")
+        script = script_path.read_text(encoding="utf-8")
+        for selector in (
+            "[data-select-trigger=\"source_locale\"]",
+            "[data-select-trigger=\"target_locale\"]",
+            "[data-model-trigger]",
+            "#theme-toggle",
+            "[data-select-trigger=\"ui_locale\"]",
+            "#settings-open",
+            "#settings-page",
+            "#settings-cache-clear",
+            "#settings-ui-locale-download",
+            "#provider-test",
+        ):
+            self.assertIn(selector, script)
+        self.assertIn("pageerror", script)
+        self.assertIn("console", script)
+        self.assertIn("aria-expanded", script)
+
     def test_sidebar_brand_uses_translation_workbench_name(self) -> None:
         self.assertIn('alt="翻译工作台"', INDEX_HTML)
         self.assertIn('data-i18n="app.brand.name">翻译工作台</strong>', INDEX_HTML)
@@ -76,6 +97,15 @@ class WebUiContractTest(unittest.TestCase):
         self.assertIn('type="hidden" name="model" id="model"', INDEX_HTML)
         self.assertNotIn("<label>API URL", INDEX_HTML)
 
+    def test_advanced_api_settings_expose_provider_connection_test(self) -> None:
+        self.assertIn('id="provider-test"', INDEX_HTML)
+        self.assertIn('id="provider-test-status"', INDEX_HTML)
+        self.assertIn("testProviderConnection", INDEX_HTML)
+        self.assertIn("fetch('/api/test-provider'", INDEX_HTML)
+        self.assertIn("advanced.test_provider", INDEX_HTML)
+        self.assertIn("advanced.test_provider_success", INDEX_HTML)
+        self.assertIn("advanced.test_provider_failed", INDEX_HTML)
+
     def test_pack_download_name_keeps_zip_suffix_fixed(self) -> None:
         self.assertIn("pack-name-input-wrap", INDEX_HTML)
         self.assertIn("pack-name-suffix", INDEX_HTML)
@@ -104,6 +134,54 @@ class WebUiContractTest(unittest.TestCase):
         self.assertIn('name="cache_dir" id="cache_dir"', INDEX_HTML)
         self.assertIn("CACHE_DIR_STORAGE_KEY", INDEX_HTML)
         self.assertIn("fetch('/api/cache/clear'", INDEX_HTML)
+
+    def test_settings_menu_exposes_glossary_management(self) -> None:
+        self.assertIn('id="settings-glossary-section"', INDEX_HTML)
+        self.assertIn('id="settings-glossary-editor"', INDEX_HTML)
+        self.assertIn('id="settings-glossary-save"', INDEX_HTML)
+        self.assertIn('id="glossary-import-file"', INDEX_HTML)
+        self.assertIn("loadGlossarySettings", INDEX_HTML)
+        self.assertIn("saveGlossarySettings", INDEX_HTML)
+        self.assertIn("fetch('/api/glossary'", INDEX_HTML)
+        self.assertIn("settings.glossary_section", INDEX_HTML)
+
+    def test_task_history_view_is_exposed(self) -> None:
+        self.assertIn('data-view="history"', INDEX_HTML)
+        self.assertIn('id="history-panel"', INDEX_HTML)
+        self.assertIn('id="history-status-filter"', INDEX_HTML)
+        self.assertIn('id="history-kind-filter"', INDEX_HTML)
+        self.assertIn("loadJobHistory", INDEX_HTML)
+        self.assertIn("renderJobHistory", INDEX_HTML)
+        self.assertIn("fetch('/api/jobs'", INDEX_HTML)
+        self.assertIn("nav.history", INDEX_HTML)
+
+    def test_failed_retry_controls_and_status_trace_are_exposed(self) -> None:
+        self.assertIn('id="retry-api-failures"', INDEX_HTML)
+        self.assertIn("retryApiFailures", INDEX_HTML)
+        self.assertIn("fetch(`/api/retry/${encodeURIComponent", INDEX_HTML)
+        self.assertIn("retryStatusDetail", INDEX_HTML)
+        self.assertIn("retry_previous_status", INDEX_HTML)
+        self.assertIn("result.retry_status_detail", INDEX_HTML)
+
+    def test_hardcoded_workbench_explains_runtime_patch_requirement(self) -> None:
+        self.assertIn("result.hardcoded_runtime_note", INDEX_HTML)
+        self.assertIn("运行时补丁 Mod", INDEX_HTML)
+
+    def test_output_preview_exposes_status_filter_diff_summary_and_json_metadata(self) -> None:
+        self.assertIn('id="language-status-filter"', INDEX_HTML)
+        self.assertIn("data-language-status", INDEX_HTML)
+        self.assertIn("languageStatusFilter", INDEX_HTML)
+        self.assertIn("renderLanguageStatusFilters", INDEX_HTML)
+        self.assertIn('id="language-preview-summary"', INDEX_HTML)
+        self.assertIn("renderLanguagePreviewSummary", INDEX_HTML)
+        self.assertIn("diff-badge", INDEX_HTML)
+        self.assertIn("json_metadata_preview", INDEX_HTML)
+        self.assertIn('id="json-metadata-preview"', INDEX_HTML)
+
+    def test_result_performance_summary_exposes_translation_memory_hits(self) -> None:
+        self.assertIn("payload.memory_hits", INDEX_HTML)
+        self.assertIn("result.memory_hits", INDEX_HTML)
+        self.assertIn("记忆命中", INDEX_HTML)
 
     def test_safevault_theme_dropdown_is_exposed_in_header(self) -> None:
         self.assertIn('id="theme-picker"', INDEX_HTML)
@@ -208,6 +286,11 @@ class WebUiContractTest(unittest.TestCase):
         self.assertIn("fetch(`/api/ui-locales", INDEX_HTML)
         self.assertIn("/api/ui-locales/import", INDEX_HTML)
         self.assertIn("/api/ui-locales/export/", INDEX_HTML)
+        self.assertIn("/api/ui-locales/check", INDEX_HTML)
+        self.assertIn("/api/ui-locales/missing-template/", INDEX_HTML)
+        self.assertIn('id="settings-ui-locale-check-summary"', INDEX_HTML)
+        self.assertIn('id="settings-ui-locale-check"', INDEX_HTML)
+        self.assertIn('id="settings-ui-locale-missing-template"', INDEX_HTML)
 
     def test_ui_locale_switch_refreshes_dynamic_selects_and_settings_defaults(self) -> None:
         self.assertIn("function refreshSelectMenusForCurrentLocale()", INDEX_HTML)
@@ -224,6 +307,15 @@ class WebUiContractTest(unittest.TestCase):
         self.assertIn("inputKind.value === 'json'", INDEX_HTML)
         self.assertIn("data.append('json_files'", INDEX_HTML)
         self.assertIn("payload.kind === 'json'", INDEX_HTML)
+
+    def test_preflight_summary_is_exposed_before_translation(self) -> None:
+        self.assertIn('id="preflight-panel"', INDEX_HTML)
+        self.assertIn('id="preflight-run"', INDEX_HTML)
+        self.assertIn("runPreflight", INDEX_HTML)
+        self.assertIn("renderPreflight", INDEX_HTML)
+        self.assertIn("fetch('/api/preflight'", INDEX_HTML)
+        self.assertIn("preflight.blocked", INDEX_HTML)
+        self.assertIn("preflight.summary", INDEX_HTML)
 
     def test_advanced_api_help_uses_focus_popover_motion(self) -> None:
         self.assertIn(".api-box label:focus-within .field-help", INDEX_HTML)
