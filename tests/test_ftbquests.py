@@ -107,6 +107,26 @@ class FTBQuestsTest(unittest.TestCase):
         self.assertEqual("translated", statuses["quest.description"])
         self.assertEqual("skipped", statuses["item.id"])
 
+    def test_process_single_locale_file_infers_source_locale_when_selected_source_is_missing(self) -> None:
+        source = FTBQuestsSource(
+            label="zh_cn.snbt",
+            root_prefix="config/ftbquests/quests",
+            files={
+                "lang/zh_cn.snbt": """
+                {
+                  "quest.title": "欢迎来到任务书"
+                }
+                """,
+            },
+        )
+
+        result = process_ftbquests_source(source, args(source_locale="en_us", target_locale="ja_jp"), PrefixTranslator())
+
+        self.assertEqual("zh_cn", result.source_locale)
+        self.assertEqual("lang", result.mode)
+        self.assertEqual("config/ftbquests/quests/lang/ja_jp.snbt", result.output_files[0].path)
+        self.assertEqual("ZH 欢迎来到任务书", result.report_entries[0].target)
+
     def test_process_split_lang_directory_generates_matching_target_tree(self) -> None:
         source = FTBQuestsSource(
             label="atm10",

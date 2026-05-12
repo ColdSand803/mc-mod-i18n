@@ -65,6 +65,7 @@ LOCALE_DISPLAY_NAMES: dict[str, str] = {
     "en_gb": "English (UK)",
     "en_ca": "English (Canada)",
     "en_au": "English (Australia)",
+    "ar_sa": "العربية",
     "zh_cn": "简体中文",
     "zh_tw": "繁體中文",
     "zh_hk": "繁體中文（香港）",

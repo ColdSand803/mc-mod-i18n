@@ -85,9 +85,10 @@ def process_ftbquests(input_path: Path, args: Any, translator: Any) -> FTBQuests
 
 
 def process_ftbquests_source(source: FTBQuestsSource, args: Any, translator: Any) -> FTBQuestsResult:
-    source_locale = normalize_locale(getattr(args, "source_locale", "en_us"))
+    requested_source_locale = normalize_locale(getattr(args, "source_locale", "en_us"))
     target_locale = normalize_locale(getattr(args, "target_locale", "zh_cn"))
     source_hash = compute_ftbquests_source_hash(source)
+    source_locale = infer_source_locale_from_files(source.files, requested_source_locale, target_locale)
     lang_pairs = find_lang_file_pairs(source.files, source_locale, target_locale)
     legacy_files = detect_legacy_snbt_files(source.files)
 
@@ -437,6 +438,35 @@ def find_lang_file_pairs(files: dict[str, str], source_locale: str, target_local
     if split_pairs:
         return split_pairs
     return pairs
+
+
+def infer_source_locale_from_files(files: dict[str, str], requested_locale: str, target_locale: str) -> str:
+    requested_locale = normalize_locale(requested_locale)
+    target_locale = normalize_locale(target_locale)
+    locales = available_lang_locales(files)
+    if requested_locale in locales:
+        return requested_locale
+    candidates = sorted(locale for locale in locales if locale != target_locale)
+    if len(candidates) == 1:
+        return candidates[0]
+    return requested_locale
+
+
+def available_lang_locales(files: dict[str, str]) -> set[str]:
+    locales: set[str] = set()
+    for path in files:
+        normalized = normalize_rel_path(path).lower()
+        for pattern in (
+            r"^lang/([a-z]{2}_[a-z]{2})\.snbt$",
+            r"^([a-z]{2}_[a-z]{2})\.snbt$",
+            r"^lang/([a-z]{2}_[a-z]{2})/",
+            r"^([a-z]{2}_[a-z]{2})/",
+        ):
+            match = re.match(pattern, normalized, flags=re.IGNORECASE)
+            if match:
+                locales.add(normalize_locale(match.group(1)))
+                break
+    return locales
 
 
 def find_single_lang_file(files: dict[str, str], locale: str) -> str:

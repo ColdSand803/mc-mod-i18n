@@ -19,6 +19,7 @@ dist-test-exe/
 
 # Local test mods and generated packs
 测试mod/
+测试ftb任务/
 *.jar
 *.zip
 

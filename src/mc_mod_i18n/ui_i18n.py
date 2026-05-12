@@ -1,0 +1,940 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+import json
+import os
+from pathlib import Path
+import re
+from typing import Any
+
+
+UI_LOCALE_SCHEMA_VERSION = 1
+DEFAULT_UI_LOCALE = "zh_cn"
+FALLBACK_UI_LOCALE = "en_us"
+
+
+BUILTIN_UI_LOCALES: dict[str, dict[str, str]] = {
+    "zh_cn": {
+        "name": "简体中文",
+        "native_name": "简体中文",
+        "messages": {
+            "app.brand.alt": "翻译工作台",
+            "app.brand.name": "翻译工作台",
+            "app.brand.subtitle": "mc-mod-i18n 本地版",
+            "nav.workspace": "工作区",
+            "nav.report": "翻译报告",
+            "nav.hardcoded": "硬编码",
+            "nav.api_log": "API 日志",
+            "nav.settings": "设置",
+            "nav.docs": "文档",
+            "nav.help": "帮助",
+            "header.current_task": "当前任务",
+            "header.not_started": "未开始",
+            "header.uploading": "上传中",
+            "header.local": "本地处理",
+            "header.create_by": "作者: co1dsand",
+            "ui_locale.title": "界面语言",
+            "ui_locale.download": "下载所选语言包",
+            "ui_locale.import": "导入语言包",
+            "ui_locale.refresh": "刷新语言包",
+            "panel.title": "生成汉化资源包",
+            "panel.copy": "上传 JAR，配置翻译器和资源包版本，直接生成资源包、报告和硬编码映射。",
+            "input.title": "输入类型",
+            "input.jar": "Mod JAR 语言文件",
+            "input.ftbquests": "FTB Quests 任务书",
+            "input.json": "语言 JSON 文件",
+            "file.jar": "Mod JAR",
+            "file.jar.placeholder": "选择一个或多个 JAR",
+            "file.ftbquests": "FTB Quests / 整合包 ZIP",
+            "file.ftbquests.placeholder": "选择整合包 ZIP、quests ZIP 或 en_us.snbt",
+            "file.ftbquests_dir": "FTB Quests 目录",
+            "file.ftbquests_dir.placeholder": "选择 quests、lang 或 en_us 目录",
+            "file.json": "语言 JSON",
+            "file.json.placeholder": "选择 en_us.json 或界面语言包 JSON",
+            "file.jar.count": "{count} 个 JAR",
+            "file.ftbquests.count": "{count} 个 FTB Quests 输入",
+            "file.json.count": "{count} 个语言 JSON",
+            "file.directory": "目录",
+            "file.directory.count": "{root}（{count} 个文件）",
+            "language.title": "Language Settings",
+            "language.source": "源语言",
+            "language.target": "目标语言",
+            "language.search_source": "搜索源语言",
+            "language.search_target": "搜索目标语言",
+            "language.use_locale": "使用 {locale}",
+            "language.use_input": "使用输入值",
+            "language.custom_code": "自定义语言代码",
+            "language.custom": "自定义语言",
+            "language.no_builtin_match": "没有匹配的内置语言。可输入有效 Minecraft 语言代码后使用自定义语言。",
+            "translator.title": "Translator & Resource Pack",
+            "translator.provider": "翻译器",
+            "translator.pack_format": "资源包格式",
+            "translator.glossary": "术语表 JSON",
+            "translator.glossary.placeholder": "可选 .json 术语表",
+            "provider.glossary": "离线术语表（有限）",
+            "provider.copy": "复制原文",
+            "provider.openai-compatible": "兼容 OpenAI",
+            "provider.openai-compatible.help": "适用于任何兼容 OpenAI Chat Completions 的服务。",
+            "provider.anthropic-compatible": "兼容 Anthropic",
+            "provider.anthropic-compatible.help": "适用于 Anthropic Messages API 或兼容该格式的服务。",
+            "advanced.title": "高级 API 设置",
+            "advanced.api_title": "AI 接口配置",
+            "advanced.provider_help": "选择翻译器后会自动填入推荐 BaseURL 和模型。",
+            "advanced.model": "模型",
+            "advanced.model_search": "搜索模型",
+            "advanced.model_refresh": "获取模型列表",
+            "advanced.use_model": "使用 {model}",
+            "advanced.custom_model": "自定义模型",
+            "advanced.no_model_match": "没有匹配的模型。可刷新模型列表，或输入自定义模型名。",
+            "advanced.models_loaded": "已获取 {count} 个模型",
+            "advanced.models_load_failed": "获取模型列表失败",
+            "advanced.api_key": "API Key",
+            "advanced.api_key_placeholder": "可直接粘贴 Key",
+            "advanced.api_key_reveal": "查看 API Key",
+            "advanced.base_url": "BaseURL",
+            "advanced.base_url_help": "填写接口 BaseURL，例如 https://api.openai.com/v1；完整 /chat/completions 或 /messages 也兼容。",
+            "advanced.api_key_env": "API Key 环境变量",
+            "advanced.api_key_env_help": "API Key 留空时使用该环境变量；直接填写 Key 可避免本地 UI 读不到环境变量导致报错。",
+            "advanced.concurrency": "并发请求数",
+            "advanced.concurrency_help": "内容很多时可并发翻译多个批次；中转站限流时调低到 1。",
+            "advanced.concurrency_placeholder": "推荐 {recommended}，当前 CPU 线程 {cpu}",
+            "advanced.concurrency_dynamic_help": "根据当前浏览器可见 CPU 线程 {cpu}，推荐并发 {recommended}。服务商限流或 503 较多时调低。",
+            "advanced.retries": "断线重试次数",
+            "advanced.retries_help": "单个批次遇到断线、超时、429 或 5xx 时自动重试。",
+            "advanced.batch_size": "每次请求条数",
+            "advanced.batch_size_help": "控制一个 API 请求包含多少条文本；不稳定中转站建议 20。",
+            "advanced.timeout": "请求超时秒数",
+            "advanced.timeout_help": "连接或读取响应超过该秒数，会进入下一次重试。",
+            "advanced.debug_log": "记录 API 调试日志",
+            "advanced.debug_log_help": "会记录请求体、响应头和原始响应到本次任务目录；Authorization/API Key 会被隐藏。",
+            "output.title": "输出策略",
+            "output.overwrite": "覆盖 JAR 内已有中文",
+            "output.skip_translated": "跳过已包含目标语言的 JAR",
+            "output.ignore_cache": "忽略缓存并重新翻译",
+            "output.scan_hardcoded": "扫描 Ponder / 配置硬编码英文",
+            "action.start": "开始生成",
+            "action.cancel": "中断",
+            "status.waiting_jar": "等待选择 JAR。",
+            "status.waiting_ftbquests": "等待选择 FTB Quests 输入。",
+            "status.waiting_json": "等待选择语言 JSON。",
+            "status.uploading": "正在上传并处理...",
+            "status.failed": "生成失败。",
+            "status.progress_read_failed": "进度读取失败",
+            "status.cancel_failed": "中断请求失败：{message}",
+            "results.title": "结果",
+            "results.copy": "处理完成后可直接下载资源包，或切换到硬编码映射继续补全译文。",
+            "results.empty": "还没有生成结果。",
+            "settings.title": "设置",
+            "settings.subtitle": "缓存、语言包与本地维护",
+            "settings.cache_section": "缓存设置",
+            "settings.cache_dir": "缓存目录",
+            "settings.cache_placeholder": "默认：服务工作目录/.shared-cache",
+            "settings.language_section": "界面语言",
+            "settings.ui_locale_dir": "语言拓展包目录",
+            "settings.ui_locale_placeholder": "默认：服务工作目录/.ui-locales",
+            "settings.current": "当前",
+            "settings.default": "恢复默认",
+            "settings.clear_cache": "清空缓存",
+            "settings.save": "保存",
+            "settings.close": "关闭设置",
+            "settings.language_tools": "界面语言包",
+            "settings.ui_locale_builtin_summary": "内置 2 个语言",
+            "settings.ui_locale_default": "语言目录默认",
+            "settings.ui_locale_summary": "可用 {total} 个语言，扩展 {extension} 个",
+            "settings.ui_locale_refreshed": "语言包列表已刷新。",
+            "settings.ui_locale_read_failed": "语言包列表读取失败",
+            "settings.cache_default_done": "已恢复默认缓存目录。",
+            "settings.ui_locale_default_done": "已恢复默认语言拓展包目录。",
+            "settings.saved": "设置已保存。",
+            "settings.ui_locale_importing": "正在导入语言包...",
+            "settings.ui_locale_import_failed": "语言包导入失败",
+            "settings.ui_locale_imported": "已导入 {locale}，缺失 {missing} 个 key。",
+            "settings.cache_clearing": "正在清空缓存...",
+            "settings.cache_clear_failed": "清空缓存失败",
+            "settings.cache_cleared": "已清空 {removed} 项：{path}",
+            "error.jar_missing_input": "请至少选择一个 JAR 文件",
+            "error.jar_no_file": "上传内容里没有 .jar 文件",
+            "error.ftbquests_missing_input": "请上传整合包 ZIP、quests ZIP 或 lang/en_us.snbt",
+            "error.json_missing_input": "请上传语言 JSON 文件",
+            "error.json_no_file": "上传内容里没有 .json 文件",
+            "ui_locale.zh_cn": "简体中文",
+            "ui_locale.builtin": "内置",
+            "ui_locale.extension": "扩展",
+            "ui_locale.missing_suffix": "（缺 {count}）",
+            "theme.title_plain": "主题",
+            "theme.title": "主题：{theme}",
+            "theme.mode.auto_resolved": "当前解析为 {theme}",
+            "theme.mode.dark": "深色",
+            "theme.mode.light": "浅色",
+            "theme.group.basic": "基础主题",
+            "theme.group.focus": "专注主题",
+            "theme.group.playful": "趣味主题",
+            "theme.group.crossover": "联名主题",
+            "theme.group.art": "艺术主题",
+            "theme.group.stitch": "Stitch 配色",
+            "theme.auto": "跟随系统",
+            "theme.light": "默认浅色",
+            "theme.dark": "默认深色",
+            "theme.forest": "森林安全",
+            "theme.midnight": "午夜蓝",
+            "theme.dongbei-rain": "东北雨",
+            "theme.rainbow-rgb": "彩虹 RGB",
+            "theme.bleach-tybw": "死神:千年血战",
+            "theme.eva": "EVA",
+            "theme.p-site": "P站",
+            "theme.starry-night": "梵高星空",
+            "theme.monet": "莫奈",
+            "theme.qingming-scroll": "清明上河图",
+            "theme.cezanne": "塞尚",
+            "theme.sisley": "西斯莱",
+            "theme.pissarro": "毕沙罗",
+            "theme.morandi": "莫兰迪",
+            "theme.gauguin": "高更",
+            "theme.matisse": "马蒂斯",
+            "theme.qi-baishi": "齐白石",
+            "theme.healing-sea-blue": "治愈海盐蓝",
+            "theme.mint-tea-green": "薄荷茶青",
+            "theme.neon-track": "荧光赛道绿",
+            "theme.cream-berry-purple": "奶油莓紫",
+            "theme.orange-slate": "橙灰机能",
+            "theme.seafoam-apricot": "海风杏桃",
+            "theme.klein-gold": "克莱因金",
+            "theme.honey-sunset": "蜜糖落日",
+            "theme.crimson-ivory": "酒红象牙",
+            "theme.sakura-mist": "樱雾灰紫",
+            "status.process_failed": "处理失败",
+            "status.cancelled_short": "已中断。",
+            "status.cancelled_task": "任务已中断。",
+            "status.cache_note": " 其中复用了 {count} 个缓存。",
+            "status.provider_glossary": " 离线术语表适合快速预览，完整整句汉化请使用 AI 翻译器。",
+            "status.api_failure_note": " 汉化翻译存在异常缺失 {count} 条，可在结果区查看并重试。",
+            "status.done_ftbquests": "完成：处理 {sources} 个 FTB Quests 输入，生成 {files} 个任务书文件，耗时 {elapsed}。",
+            "status.done_json": "完成：处理 {sources} 个语言 JSON，生成 {files} 个 JSON 文件，耗时 {elapsed}。",
+            "status.done_jar": "完成：处理 {jars} 个 JAR，生成 {files} 个语言文件，耗时 {elapsed}。",
+            "loading.stage.idle": "准备开始",
+            "loading.stage.queued_ftbquests": "正在上传并解析 FTB Quests",
+            "loading.stage.queued_jar": "正在上传并解析 JAR",
+            "loading.stage.processing_ftbquests": "正在分析任务书语言文件",
+            "loading.stage.processing_language": "正在分析语言文件",
+            "loading.stage.reusing_cache": "正在复用缓存结果",
+            "loading.stage.translating_ai": "正在分批调用 AI 翻译接口",
+            "loading.stage.translating": "正在生成语言文件",
+            "loading.stage.retrying": "正在等待重试",
+            "loading.stage.writing": "正在写入资源包和报告",
+            "loading.stage.done": "处理完成",
+            "loading.stage.cancelled": "任务已中断",
+            "loading.stage.error": "处理失败",
+            "loading.stage.processing_ai": "正在处理翻译任务",
+            "loading.stage.processing": "正在处理任务",
+            "loading.request_counting": "正在统计请求总量",
+            "loading.file_counting": "正在统计文件数量",
+            "loading.retrying": "当前重试 {attempt}/{max}，原因：{reason}，等待 {delay}s，连接/读取超时 {timeout}s。",
+            "loading.request_failed": "请求失败",
+            "loading.cache_reuse": "缓存命中 {hits}/{total}{current}",
+            "loading.current_file": "，当前：{file}",
+            "loading.processing_current": "正在处理：{file}",
+            "loading.writing": "正在写入资源包、报告和缓存",
+            "loading.running": "任务运行中",
+            "loading.request_progress": "翻译请求 {progress}",
+            "loading.cache_stats": "缓存命中 {hits} 个，实际翻译 {misses} 个。",
+            "loading.detail_ai": "翻译器：{provider}，并发上限：{concurrency}，每次请求 {batch} 条，{sourceLabel}：{sourceCount} 个。{cacheText}耗时 {elapsed}s。",
+            "loading.detail": "翻译器：{provider}，{sourceLabel}：{sourceCount} 个。{cacheText}耗时 {elapsed}s。",
+            "loading.file_progress": "文件进度",
+            "loading.request_lane": "翻译请求",
+            "loading.meta_tail": "文件进度和翻译请求进度分开统计；请求总数会随着解析到新的语言文件逐步增加。",
+            "result.outputs": "输出产物",
+            "result.quality": "质量概览",
+            "result.performance": "性能概览",
+            "result.status": "状态",
+            "result.jar": "JAR",
+            "result.mod_id": "Mod ID",
+            "result.file": "文件",
+            "result.key": "Key",
+            "result.source": "原文",
+            "result.target": "译文",
+            "result.message": "信息",
+            "result.language": "语言结果",
+            "result.ftbquests": "任务书结果",
+            "result.json": "JSON 结果",
+            "result.hardcoded": "硬编码映射",
+            "result.download_pack": "下载资源包",
+            "result.download_ftbquests": "下载任务书补丁",
+            "result.download_json": "下载 JSON",
+            "result.open_report": "打开报告",
+            "result.retry_failed": "重试失败项",
+            "result.report": "翻译报告",
+            "result.api_log": "API 调试日志",
+            "result.hardcoded_report": "硬编码报告",
+            "result.new_translation": "新增翻译",
+            "result.existing_translation": "已有译文",
+            "result.to_process": "需处理",
+            "result.report_entries": "报告条目",
+            "result.elapsed": "耗时",
+            "result.cache_hits": "缓存命中",
+            "result.actual_translation": "实际翻译",
+            "result.candidate_text": "候选文本",
+            "result.jar_input": "JAR",
+            "result.ftbquests_input": "任务书输入",
+            "result.json_input": "JSON 输入",
+            "result.legacy_snbt": "旧版 SNBT",
+            "result.hardcoded_mapping": "硬编码映射",
+            "result.skipped_items": "跳过项",
+            "result.files": "文件",
+            "result.language_files": "语言文件",
+            "result.json_files": "JSON 文件",
+            "result.tasks": "任务书文件",
+            "result.search_language": "搜索状态、Mod ID、Key、原文或译文",
+            "result.export_edits": "导出已修改译文",
+            "result.report_subtitle": "当前任务内嵌报告视图",
+            "result.search_report": "搜索状态、JAR、Mod ID、文件、Key、原文或译文",
+            "result.hardcoded_report_subtitle": "扫描候选与映射状态",
+            "result.search_hardcoded": "搜索分类、风险、JAR、Class 或英文文本",
+            "result.api_log_cached": "本次结果全部来自缓存，未实际发起 API 请求，所以这里没有调试日志。",
+            "result.api_log_empty": "没有 API 调试日志。勾选“记录 API 调试日志”后，实际发起 API 请求时会在这里显示。",
+            "result.api_log_subtitle": "请求、响应和重试记录，密钥已脱敏",
+            "result.export_json": "导出 JSON",
+            "result.search_api_log": "搜索 provider、状态码、错误、请求或响应内容",
+            "result.status_translated": "已翻译",
+            "result.status_existing": "已有翻译",
+            "result.status_skipped": "已跳过",
+            "result.status_failed": "校验失败",
+            "result.status_api_failed": "API 失败",
+            "result.status_jar_failed": "JAR 错误",
+            "result.status_incomplete": "不完整",
+            "result.workspace": "工作区",
+            "result.language_desc": "可搜索并导出人工修改",
+            "result.ftbquests_desc": "可搜索 FTB Quests 翻译条目并下载补丁",
+            "result.json_desc": "可搜索 JSON 语言文件翻译条目并下载结果",
+            "result.hardcoded_desc": "选择候选、AI 翻译或导出映射",
+            "result.api_failure_notice": "汉化翻译存在异常缺失 {count} 条。可打开 API 调试日志查看报错记录，或手动重试失败项。",
+            "result.no_rows": "无条目",
+            "result.no_report": "还没有生成报告。",
+            "result.no_hardcoded_report": "没有硬编码扫描结果。",
+            "result.no_editable_hardcoded": "没有检测到可编辑的硬编码候选。",
+            "result.no_matching_candidates": "没有匹配的候选。",
+            "result.no_matching_logs": "没有匹配的日志。",
+            "result.all": "全部",
+            "result.all_count": "全部 {count}",
+            "result.category_count": "{label} {count}",
+            "result.category": "分类",
+            "result.risk": "风险",
+            "result.class": "Class",
+            "result.english_text": "英文文本",
+            "result.suggestion_translation": "建议 / 译文",
+            "result.time": "时间",
+            "result.provider": "Provider",
+            "result.input": "入参",
+            "result.output_response": "出参 / 响应",
+            "result.pager_range": "显示 {range} / {total} 条",
+            "result.pager_info": "显示 {range} / {total} 条，每页 {pageSize} 条",
+            "result.first_page": "首页",
+            "result.prev_page": "上一页",
+            "result.next_page": "下一页",
+            "result.last_page": "末页",
+            "result.no_manual_edits": "没有需要导出的人工修改。",
+            "result.exported_manual_edits": "已导出 {total} 条人工修改译文。",
+            "result.retrying": "正在重试...",
+            "result.retrying_failed": "正在重试失败的翻译项...",
+            "result.retry_failed_error": "重试失败",
+            "result.retry_remaining": "已重试 {retried} 条，仍有 {remaining} 条异常。耗时 {elapsed}。",
+            "result.retry_success": "失败项已重试成功，更新 {retried} 条。耗时 {elapsed}。",
+            "result.hardcoded_workbench": "硬编码映射工作台",
+            "result.hardcoded_workbench_desc": "填写 translation 后可导出 hardcoded-map.json。",
+            "result.import_map": "导入 map",
+            "result.ai_translate_selected": "AI 翻译所选",
+            "result.export_filled": "导出已填写",
+            "result.select_page": "全选当前页",
+            "result.selected_count": "已选 {count} 条",
+            "result.search_hardcoded_workbench": "搜索英文、Class 或 JAR",
+            "result.select_hardcoded_candidate": "选择该硬编码候选",
+            "result.select": "选择",
+            "result.need_ai_provider": "请选择 AI 翻译器后再翻译硬编码映射。",
+            "result.need_hardcoded_selection": "请先选择需要 AI 翻译的硬编码候选。",
+            "result.translating": "正在翻译...",
+            "result.translating_hardcoded": "正在用当前 API 配置翻译 {count} 条硬编码候选...",
+            "result.hardcoded_ai_failed": "硬编码 AI 翻译失败",
+            "result.hardcoded_translated_partial": "已翻译 {updated} 条，{failed} 条失败，可查看 API 日志。",
+            "result.hardcoded_translated": "已翻译 {updated} 条硬编码候选。",
+            "result.imported_file": "已导入 {file}。",
+            "result.import_failed": "导入失败：{message}",
+            "result.hardcoded_validation_failed": "硬编码映射未通过校验：{errors}",
+            "result.exported_hardcoded": "已导出 {count} 条硬编码译文。",
+            "result.missing_token": "缺少 {label}: {tokens}",
+            "pack_dialog.title": "下载资源包",
+            "pack_dialog.desc": "输入本次下载的资源包名称，文件后缀固定为 .zip。",
+            "pack_dialog.name": "资源包名称",
+            "pack_dialog.placeholder": "例如：my-mod-zh_cn",
+            "pack_dialog.cancel": "取消",
+            "pack_dialog.download": "下载",
+            "pack_dialog.required": "请输入资源包名称",
+        },
+    },
+    "en_us": {
+        "name": "English",
+        "native_name": "English",
+        "messages": {
+            "app.brand.alt": "Translation Workbench",
+            "app.brand.name": "Translation Workbench",
+            "app.brand.subtitle": "mc-mod-i18n local",
+            "nav.workspace": "Workspace",
+            "nav.report": "Translation Report",
+            "nav.hardcoded": "Hardcoded",
+            "nav.api_log": "API Log",
+            "nav.settings": "Settings",
+            "nav.docs": "Docs",
+            "nav.help": "Help",
+            "header.current_task": "Current Task",
+            "header.not_started": "Not started",
+            "header.uploading": "Uploading",
+            "header.local": "Local",
+            "header.create_by": "Author: co1dsand",
+            "ui_locale.title": "Interface Language",
+            "ui_locale.download": "Download Selected Language",
+            "ui_locale.import": "Import Language Pack",
+            "ui_locale.refresh": "Refresh Languages",
+            "panel.title": "Generate Localization Pack",
+            "panel.copy": "Upload JARs, configure the translator and resource-pack version, then generate the pack, reports, and hardcoded mappings.",
+            "input.title": "Input Type",
+            "input.jar": "Mod JAR Language Files",
+            "input.ftbquests": "FTB Quests Book",
+            "input.json": "Language JSON File",
+            "file.jar": "Mod JAR",
+            "file.jar.placeholder": "Choose one or more JARs",
+            "file.ftbquests": "FTB Quests / Modpack ZIP",
+            "file.ftbquests.placeholder": "Choose a modpack ZIP, quests ZIP, or en_us.snbt",
+            "file.ftbquests_dir": "FTB Quests Directory",
+            "file.ftbquests_dir.placeholder": "Choose a quests, lang, or en_us directory",
+            "file.json": "Language JSON",
+            "file.json.placeholder": "Choose en_us.json or a UI language-pack JSON",
+            "file.jar.count": "{count} JARs",
+            "file.ftbquests.count": "{count} FTB Quests inputs",
+            "file.json.count": "{count} language JSON files",
+            "file.directory": "Directory",
+            "file.directory.count": "{root} ({count} files)",
+            "language.title": "Language Settings",
+            "language.source": "Source Language",
+            "language.target": "Target Language",
+            "language.search_source": "Search source language",
+            "language.search_target": "Search target language",
+            "language.use_locale": "Use {locale}",
+            "language.use_input": "Use typed value",
+            "language.custom_code": "Custom language code",
+            "language.custom": "Custom language",
+            "language.no_builtin_match": "No built-in language matches. Enter a valid Minecraft language code to use a custom language.",
+            "translator.title": "Translator & Resource Pack",
+            "translator.provider": "Translator",
+            "translator.pack_format": "Resource Pack Format",
+            "translator.glossary": "Glossary JSON",
+            "translator.glossary.placeholder": "Optional .json glossary",
+            "provider.glossary": "Offline Glossary (Limited)",
+            "provider.copy": "Copy Source",
+            "provider.openai-compatible": "OpenAI Compatible",
+            "provider.openai-compatible.help": "Works with any OpenAI Chat Completions compatible service.",
+            "provider.anthropic-compatible": "Anthropic Compatible",
+            "provider.anthropic-compatible.help": "Works with Anthropic Messages API or services compatible with that format.",
+            "advanced.title": "Advanced API Settings",
+            "advanced.api_title": "AI API Configuration",
+            "advanced.provider_help": "Selecting a translator fills the recommended BaseURL and model.",
+            "advanced.model": "Model",
+            "advanced.model_search": "Search models",
+            "advanced.model_refresh": "Fetch model list",
+            "advanced.use_model": "Use {model}",
+            "advanced.custom_model": "Custom model",
+            "advanced.no_model_match": "No matching model. Refresh the model list or enter a custom model name.",
+            "advanced.models_loaded": "Loaded {count} models",
+            "advanced.models_load_failed": "Failed to fetch model list",
+            "advanced.api_key": "API Key",
+            "advanced.api_key_placeholder": "Paste a key directly",
+            "advanced.api_key_reveal": "Reveal API Key",
+            "advanced.base_url": "BaseURL",
+            "advanced.base_url_help": "Enter an API BaseURL, for example https://api.openai.com/v1. Full /chat/completions or /messages URLs are also accepted.",
+            "advanced.api_key_env": "API Key Environment Variable",
+            "advanced.api_key_env_help": "Used when API Key is empty. Pasting a key directly avoids local environment lookup issues.",
+            "advanced.concurrency": "Concurrent Requests",
+            "advanced.concurrency_help": "Translate multiple batches in parallel for large inputs. Lower this to 1 when a relay is rate limited.",
+            "advanced.concurrency_placeholder": "Recommended {recommended}, current CPU threads {cpu}",
+            "advanced.concurrency_dynamic_help": "Based on {cpu} visible browser CPU threads, recommended concurrency is {recommended}. Lower it when rate limits or 503 errors are frequent.",
+            "advanced.retries": "Retry Attempts",
+            "advanced.retries_help": "Automatically retry a batch after disconnects, timeouts, 429, or 5xx responses.",
+            "advanced.batch_size": "Items Per Request",
+            "advanced.batch_size_help": "Controls how many text entries one API request contains. Use 20 for unstable relays.",
+            "advanced.timeout": "Request Timeout Seconds",
+            "advanced.timeout_help": "If connection or response reading exceeds this many seconds, the next retry starts.",
+            "advanced.debug_log": "Record API debug log",
+            "advanced.debug_log_help": "Records request bodies, response headers, and raw responses in this job directory. Authorization/API Key values are redacted.",
+            "output.title": "Output Strategy",
+            "output.overwrite": "Overwrite existing Chinese in JARs",
+            "output.skip_translated": "Skip JARs that already contain target language",
+            "output.ignore_cache": "Ignore cache and retranslate",
+            "output.scan_hardcoded": "Scan Ponder / config hardcoded English",
+            "action.start": "Start",
+            "action.cancel": "Cancel",
+            "status.waiting_jar": "Waiting for JAR files.",
+            "status.waiting_ftbquests": "Waiting for FTB Quests input.",
+            "status.waiting_json": "Waiting for language JSON.",
+            "status.uploading": "Uploading and processing...",
+            "status.failed": "Generation failed.",
+            "status.progress_read_failed": "Failed to read progress",
+            "status.cancel_failed": "Cancel request failed: {message}",
+            "results.title": "Results",
+            "results.copy": "After processing, download the resource pack or switch to hardcoded mappings to complete translations.",
+            "results.empty": "No results yet.",
+            "settings.title": "Settings",
+            "settings.subtitle": "Cache, language packs, and local maintenance",
+            "settings.cache_section": "Cache Settings",
+            "settings.cache_dir": "Cache Directory",
+            "settings.cache_placeholder": "Default: service workdir/.shared-cache",
+            "settings.language_section": "Interface Language",
+            "settings.ui_locale_dir": "Language Extension Pack Directory",
+            "settings.ui_locale_placeholder": "Default: service workdir/.ui-locales",
+            "settings.current": "Current",
+            "settings.default": "Restore Default",
+            "settings.clear_cache": "Clear Cache",
+            "settings.save": "Save",
+            "settings.close": "Close settings",
+            "settings.language_tools": "Interface Language Packs",
+            "settings.ui_locale_builtin_summary": "2 built-in languages",
+            "settings.ui_locale_default": "Default Language Dir",
+            "settings.ui_locale_summary": "{total} languages available, {extension} extensions",
+            "settings.ui_locale_refreshed": "Language pack list refreshed.",
+            "settings.ui_locale_read_failed": "Failed to read language pack list",
+            "settings.cache_default_done": "Default cache directory restored.",
+            "settings.ui_locale_default_done": "Default language extension directory restored.",
+            "settings.saved": "Settings saved.",
+            "settings.ui_locale_importing": "Importing language pack...",
+            "settings.ui_locale_import_failed": "Language pack import failed",
+            "settings.ui_locale_imported": "Imported {locale}; {missing} keys missing.",
+            "settings.cache_clearing": "Clearing cache...",
+            "settings.cache_clear_failed": "Failed to clear cache",
+            "settings.cache_cleared": "Cleared {removed} items: {path}",
+            "error.jar_missing_input": "Select at least one JAR file",
+            "error.jar_no_file": "The upload did not contain any .jar files",
+            "error.ftbquests_missing_input": "Upload a modpack ZIP, quests ZIP, or lang/en_us.snbt",
+            "error.json_missing_input": "Upload a language JSON file",
+            "error.json_no_file": "The upload did not contain any .json files",
+            "ui_locale.zh_cn": "Simplified Chinese",
+            "ui_locale.builtin": "Built-in",
+            "ui_locale.extension": "Extension",
+            "ui_locale.missing_suffix": " ({count} missing)",
+            "theme.title_plain": "Theme",
+            "theme.title": "Theme: {theme}",
+            "theme.mode.auto_resolved": "Resolves to {theme}",
+            "theme.mode.dark": "Dark",
+            "theme.mode.light": "Light",
+            "theme.group.basic": "Basic Themes",
+            "theme.group.focus": "Focus Themes",
+            "theme.group.playful": "Playful Themes",
+            "theme.group.crossover": "Crossover Themes",
+            "theme.group.art": "Art Themes",
+            "theme.group.stitch": "Stitch Palettes",
+            "theme.auto": "Follow System",
+            "theme.light": "Default Light",
+            "theme.dark": "Default Dark",
+            "theme.forest": "Forest Safe",
+            "theme.midnight": "Midnight Blue",
+            "theme.dongbei-rain": "Dongbei Rain",
+            "theme.rainbow-rgb": "Rainbow RGB",
+            "theme.bleach-tybw": "Bleach: Thousand-Year Blood War",
+            "theme.eva": "EVA",
+            "theme.p-site": "P-Site",
+            "theme.starry-night": "Van Gogh Starry Night",
+            "theme.monet": "Monet",
+            "theme.qingming-scroll": "Along the River During Qingming",
+            "theme.cezanne": "Cezanne",
+            "theme.sisley": "Sisley",
+            "theme.pissarro": "Pissarro",
+            "theme.morandi": "Morandi",
+            "theme.gauguin": "Gauguin",
+            "theme.matisse": "Matisse",
+            "theme.qi-baishi": "Qi Baishi",
+            "theme.healing-sea-blue": "Healing Sea Salt Blue",
+            "theme.mint-tea-green": "Mint Tea Green",
+            "theme.neon-track": "Neon Track Green",
+            "theme.cream-berry-purple": "Cream Berry Purple",
+            "theme.orange-slate": "Orange Slate Utility",
+            "theme.seafoam-apricot": "Seafoam Apricot",
+            "theme.klein-gold": "Klein Gold",
+            "theme.honey-sunset": "Honey Sunset",
+            "theme.crimson-ivory": "Crimson Ivory",
+            "theme.sakura-mist": "Sakura Mist Gray",
+            "status.process_failed": "Processing failed",
+            "status.cancelled_short": "Cancelled.",
+            "status.cancelled_task": "Task cancelled.",
+            "status.cache_note": " Reused {count} cached items.",
+            "status.provider_glossary": " Offline glossary is suitable for quick previews. Use an AI translator for full sentence localization.",
+            "status.api_failure_note": " {count} localization entries are missing due to errors; review and retry them in the result area.",
+            "status.done_ftbquests": "Done: processed {sources} FTB Quests inputs, generated {files} quest files, elapsed {elapsed}.",
+            "status.done_json": "Done: processed {sources} language JSON files, generated {files} JSON files, elapsed {elapsed}.",
+            "status.done_jar": "Done: processed {jars} JARs, generated {files} language files, elapsed {elapsed}.",
+            "loading.stage.idle": "Preparing",
+            "loading.stage.queued_ftbquests": "Uploading and parsing FTB Quests",
+            "loading.stage.queued_jar": "Uploading and parsing JARs",
+            "loading.stage.processing_ftbquests": "Analyzing quest language files",
+            "loading.stage.processing_language": "Analyzing language files",
+            "loading.stage.reusing_cache": "Reusing cached results",
+            "loading.stage.translating_ai": "Calling the AI translator in batches",
+            "loading.stage.translating": "Generating language files",
+            "loading.stage.retrying": "Waiting to retry",
+            "loading.stage.writing": "Writing resource pack and reports",
+            "loading.stage.done": "Processing complete",
+            "loading.stage.cancelled": "Task cancelled",
+            "loading.stage.error": "Processing failed",
+            "loading.stage.processing_ai": "Processing translation task",
+            "loading.stage.processing": "Processing task",
+            "loading.request_counting": "Counting requests",
+            "loading.file_counting": "Counting files",
+            "loading.retrying": "Retry {attempt}/{max}; reason: {reason}; waiting {delay}s; connection/read timeout {timeout}s.",
+            "loading.request_failed": "request failed",
+            "loading.cache_reuse": "Cache hits {hits}/{total}{current}",
+            "loading.current_file": ", current: {file}",
+            "loading.processing_current": "Processing: {file}",
+            "loading.writing": "Writing pack, reports, and cache",
+            "loading.running": "Task running",
+            "loading.request_progress": "Translation requests {progress}",
+            "loading.cache_stats": "Cache hits {hits}; actual translations {misses}.",
+            "loading.detail_ai": "Translator: {provider}; concurrency limit: {concurrency}; {batch} items per request; {sourceLabel}: {sourceCount}. {cacheText}Elapsed {elapsed}s.",
+            "loading.detail": "Translator: {provider}; {sourceLabel}: {sourceCount}. {cacheText}Elapsed {elapsed}s.",
+            "loading.file_progress": "File Progress",
+            "loading.request_lane": "Translation Requests",
+            "loading.meta_tail": "File progress and translation request progress are tracked separately. Request totals grow as more language files are parsed.",
+            "result.outputs": "Outputs",
+            "result.quality": "Quality Overview",
+            "result.performance": "Performance Overview",
+            "result.status": "Status",
+            "result.jar": "JAR",
+            "result.mod_id": "Mod ID",
+            "result.file": "File",
+            "result.key": "Key",
+            "result.source": "Source",
+            "result.target": "Translation",
+            "result.message": "Message",
+            "result.language": "Language Results",
+            "result.ftbquests": "FTB Quests Results",
+            "result.json": "JSON Results",
+            "result.hardcoded": "Hardcoded Mappings",
+            "result.download_pack": "Download Pack",
+            "result.download_ftbquests": "Download Quest Patch",
+            "result.download_json": "Download JSON",
+            "result.open_report": "Open Report",
+            "result.retry_failed": "Retry Failed",
+            "result.report": "Translation Report",
+            "result.api_log": "API Debug Log",
+            "result.hardcoded_report": "Hardcoded Report",
+            "result.new_translation": "New Translations",
+            "result.existing_translation": "Existing Translations",
+            "result.to_process": "To Process",
+            "result.report_entries": "Report Entries",
+            "result.elapsed": "Elapsed",
+            "result.cache_hits": "Cache Hits",
+            "result.actual_translation": "Actual Translations",
+            "result.candidate_text": "Candidate Texts",
+            "result.jar_input": "JAR",
+            "result.ftbquests_input": "Quest Inputs",
+            "result.json_input": "JSON Inputs",
+            "result.legacy_snbt": "Legacy SNBT",
+            "result.hardcoded_mapping": "Hardcoded Mappings",
+            "result.skipped_items": "Skipped Items",
+            "result.files": "Files",
+            "result.language_files": "Language Files",
+            "result.json_files": "JSON Files",
+            "result.tasks": "Quest Files",
+            "result.search_language": "Search status, Mod ID, key, source, or translation",
+            "result.export_edits": "Export Edited Translations",
+            "result.report_subtitle": "Embedded report view for the current job",
+            "result.search_report": "Search status, JAR, Mod ID, file, key, source, or translation",
+            "result.hardcoded_report_subtitle": "Scanned candidates and mapping status",
+            "result.search_hardcoded": "Search category, risk, JAR, class, or English text",
+            "result.api_log_cached": "This result came entirely from cache, so no API requests were made and no debug log is available.",
+            "result.api_log_empty": "No API debug log. Enable \"Record API debug log\" to show actual API requests here.",
+            "result.api_log_subtitle": "Requests, responses, and retry records with secrets redacted",
+            "result.export_json": "Export JSON",
+            "result.search_api_log": "Search provider, status code, error, request, or response",
+            "result.status_translated": "Translated",
+            "result.status_existing": "Existing",
+            "result.status_skipped": "Skipped",
+            "result.status_failed": "Validation Failed",
+            "result.status_api_failed": "API Failed",
+            "result.status_jar_failed": "JAR Error",
+            "result.status_incomplete": "Incomplete",
+            "result.workspace": "Workspace",
+            "result.language_desc": "Search and export manual edits",
+            "result.ftbquests_desc": "Search FTB Quests translation entries and download patches",
+            "result.json_desc": "Search JSON language-file entries and download results",
+            "result.hardcoded_desc": "Select candidates, translate with AI, or export mappings",
+            "result.api_failure_notice": "{count} localization entries are missing due to errors. Open the API debug log or retry failed entries.",
+            "result.no_rows": "No rows",
+            "result.no_report": "No report has been generated yet.",
+            "result.no_hardcoded_report": "No hardcoded scan results.",
+            "result.no_editable_hardcoded": "No editable hardcoded candidates detected.",
+            "result.no_matching_candidates": "No matching candidates.",
+            "result.no_matching_logs": "No matching logs.",
+            "result.all": "All",
+            "result.all_count": "All {count}",
+            "result.category_count": "{label} {count}",
+            "result.category": "Category",
+            "result.risk": "Risk",
+            "result.class": "Class",
+            "result.english_text": "English Text",
+            "result.suggestion_translation": "Suggestion / Translation",
+            "result.time": "Time",
+            "result.provider": "Provider",
+            "result.input": "Input",
+            "result.output_response": "Output / Response",
+            "result.pager_range": "Showing {range} / {total}",
+            "result.pager_info": "Showing {range} / {total}, {pageSize} per page",
+            "result.first_page": "First",
+            "result.prev_page": "Previous",
+            "result.next_page": "Next",
+            "result.last_page": "Last",
+            "result.no_manual_edits": "No manual edits to export.",
+            "result.exported_manual_edits": "Exported {total} manual translation edits.",
+            "result.retrying": "Retrying...",
+            "result.retrying_failed": "Retrying failed translation entries...",
+            "result.retry_failed_error": "Retry failed",
+            "result.retry_remaining": "Retried {retried} entries; {remaining} still failed. Elapsed {elapsed}.",
+            "result.retry_success": "Failed entries retried successfully; updated {retried}. Elapsed {elapsed}.",
+            "result.hardcoded_workbench": "Hardcoded Mapping Workbench",
+            "result.hardcoded_workbench_desc": "Fill in translation values, then export hardcoded-map.json.",
+            "result.import_map": "Import map",
+            "result.ai_translate_selected": "AI Translate Selected",
+            "result.export_filled": "Export Filled",
+            "result.select_page": "Select Current Page",
+            "result.selected_count": "{count} selected",
+            "result.search_hardcoded_workbench": "Search English, class, or JAR",
+            "result.select_hardcoded_candidate": "Select this hardcoded candidate",
+            "result.select": "Select",
+            "result.need_ai_provider": "Choose an AI translator before translating hardcoded mappings.",
+            "result.need_hardcoded_selection": "Select hardcoded candidates to translate first.",
+            "result.translating": "Translating...",
+            "result.translating_hardcoded": "Translating {count} hardcoded candidates with the current API configuration...",
+            "result.hardcoded_ai_failed": "Hardcoded AI translation failed",
+            "result.hardcoded_translated_partial": "Translated {updated}; {failed} failed. Check the API log.",
+            "result.hardcoded_translated": "Translated {updated} hardcoded candidates.",
+            "result.imported_file": "Imported {file}.",
+            "result.import_failed": "Import failed: {message}",
+            "result.hardcoded_validation_failed": "Hardcoded mapping validation failed: {errors}",
+            "result.exported_hardcoded": "Exported {count} hardcoded translations.",
+            "result.missing_token": "Missing {label}: {tokens}",
+            "pack_dialog.title": "Download Resource Pack",
+            "pack_dialog.desc": "Enter the resource-pack name for this download. The .zip suffix is fixed.",
+            "pack_dialog.name": "Resource Pack Name",
+            "pack_dialog.placeholder": "Example: my-mod-zh_cn",
+            "pack_dialog.cancel": "Cancel",
+            "pack_dialog.download": "Download",
+            "pack_dialog.required": "Enter a resource-pack name",
+        },
+    },
+}
+
+
+@dataclass(frozen=True)
+class UiLocaleOption:
+    code: str
+    name: str
+    native_name: str
+    builtin: bool
+    complete: bool
+    message_count: int
+    missing_count: int
+
+
+def normalize_ui_locale(value: str | None) -> str:
+    normalized = str(value or "").strip().lower().replace("-", "_")
+    normalized = re.sub(r"[^a-z0-9_]", "", normalized)
+    return normalized
+
+
+def is_valid_ui_locale(value: str | None) -> bool:
+    normalized = normalize_ui_locale(value)
+    return bool(re.fullmatch(r"[a-z0-9_]{2,24}", normalized))
+
+
+def resolve_ui_locale(value: str | None) -> str:
+    normalized = normalize_ui_locale(value)
+    return normalized if is_valid_ui_locale(normalized) else DEFAULT_UI_LOCALE
+
+
+def resolve_ui_locale_root(workdir: Path, raw_dir: str | None) -> Path:
+    raw = str(raw_dir or "").strip()
+    if not raw:
+        return (workdir / ".ui-locales").resolve()
+    expanded = Path(os.path.expandvars(os.path.expanduser(raw)))
+    if not expanded.is_absolute():
+        expanded = workdir / expanded
+    target = expanded.resolve()
+    if target.exists() and not target.is_dir():
+        raise ValueError("语言拓展包目录不能是文件")
+    return target
+
+
+def _builtin_messages(locale: str) -> dict[str, str]:
+    entry = BUILTIN_UI_LOCALES.get(locale, BUILTIN_UI_LOCALES[DEFAULT_UI_LOCALE])
+    return dict(entry["messages"])
+
+
+def base_message_keys() -> set[str]:
+    return set(_builtin_messages(FALLBACK_UI_LOCALE)) | set(_builtin_messages(DEFAULT_UI_LOCALE))
+
+
+def parse_ui_locale_package(data: Any, filename: str = "") -> dict[str, Any]:
+    if not isinstance(data, dict):
+        raise ValueError("语言包必须是 JSON 对象")
+    raw_stem = Path(filename).stem.strip().lower() if filename else ""
+    for prefix in ("mc-mod-i18n-ui-", "mc_mod_i18n_ui_"):
+        if raw_stem.startswith(prefix):
+            raw_stem = raw_stem.removeprefix(prefix)
+            break
+    inferred_locale = normalize_ui_locale(raw_stem)
+    if isinstance(data.get("messages"), dict):
+        locale = normalize_ui_locale(str(data.get("locale") or inferred_locale))
+        messages_raw = data["messages"]
+        name = str(data.get("name") or locale or "Custom")
+        native_name = str(data.get("native_name") or name)
+        source_locale = normalize_ui_locale(str(data.get("source_locale") or FALLBACK_UI_LOCALE))
+        source_version = str(data.get("source_version") or "")
+    else:
+        locale = normalize_ui_locale(str(data.get("locale") or inferred_locale))
+        metadata_keys = {"schema_version", "locale", "name", "native_name", "source_locale", "source_version"}
+        messages_raw = {key: value for key, value in data.items() if key not in metadata_keys}
+        name = str(data.get("name") or locale or "Custom")
+        native_name = str(data.get("native_name") or name)
+        source_locale = FALLBACK_UI_LOCALE
+        source_version = ""
+    if not is_valid_ui_locale(locale):
+        raise ValueError("语言包 locale 无效，文件名或 locale 字段应类似 en_us、fr_fr")
+    messages: dict[str, str] = {}
+    for key, value in messages_raw.items():
+        if not isinstance(key, str) or not key.strip():
+            continue
+        if isinstance(value, str):
+            messages[key] = value
+    return {
+        "schema_version": UI_LOCALE_SCHEMA_VERSION,
+        "locale": locale,
+        "name": name,
+        "native_name": native_name,
+        "source_locale": source_locale,
+        "source_version": source_version,
+        "messages": messages,
+    }
+
+
+def load_extension_package(path: Path) -> dict[str, Any] | None:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+        return parse_ui_locale_package(data, path.name)
+    except (OSError, json.JSONDecodeError, ValueError):
+        return None
+
+
+def load_extension_packages(root: Path) -> dict[str, dict[str, Any]]:
+    packages: dict[str, dict[str, Any]] = {}
+    if not root.is_dir():
+        return packages
+    for path in sorted(root.glob("*.json")):
+        package = load_extension_package(path)
+        if not package:
+            continue
+        locale = str(package["locale"])
+        if locale in {DEFAULT_UI_LOCALE, FALLBACK_UI_LOCALE}:
+            continue
+        packages[locale] = package
+    return packages
+
+
+def merged_catalog(locale: str, extension_root: Path | None = None) -> dict[str, str]:
+    normalized = resolve_ui_locale(locale)
+    messages = _builtin_messages(FALLBACK_UI_LOCALE)
+    messages.update(_builtin_messages(DEFAULT_UI_LOCALE))
+    if normalized != DEFAULT_UI_LOCALE:
+        if normalized in BUILTIN_UI_LOCALES:
+            messages.update(_builtin_messages(normalized))
+        if extension_root is not None:
+            package = load_extension_packages(extension_root).get(normalized)
+            if package:
+                messages.update(package["messages"])
+    return messages
+
+
+def translate_ui(key: str, locale: str | None = None, extension_root: Path | None = None, **params: Any) -> str:
+    catalog = merged_catalog(resolve_ui_locale(locale), extension_root)
+    template = catalog.get(key) or merged_catalog(DEFAULT_UI_LOCALE, extension_root).get(key) or key
+    return re.sub(
+        r"\{([a-zA-Z0-9_]+)\}",
+        lambda match: str(params.get(match.group(1), match.group(0))),
+        str(template),
+    )
+
+
+def list_ui_locales(extension_root: Path | None = None) -> list[UiLocaleOption]:
+    base_keys = base_message_keys()
+    options: dict[str, UiLocaleOption] = {}
+    for code, entry in BUILTIN_UI_LOCALES.items():
+        messages = dict(entry["messages"])
+        missing = base_keys - set(messages)
+        options[code] = UiLocaleOption(
+            code=code,
+            name=entry["name"],
+            native_name=entry["native_name"],
+            builtin=True,
+            complete=not missing,
+            message_count=len(messages),
+            missing_count=len(missing),
+        )
+    if extension_root is not None:
+        for code, package in load_extension_packages(extension_root).items():
+            messages = package["messages"]
+            missing = base_keys - set(messages)
+            options[code] = UiLocaleOption(
+                code=code,
+                name=str(package.get("name") or code),
+                native_name=str(package.get("native_name") or package.get("name") or code),
+                builtin=False,
+                complete=not missing,
+                message_count=len(messages),
+                missing_count=len(missing),
+            )
+    return sorted(options.values(), key=lambda item: (not item.builtin, item.code))
+
+
+def export_ui_locale_package(locale: str, extension_root: Path | None = None) -> dict[str, Any]:
+    normalized = resolve_ui_locale(locale)
+    options = {option.code: option for option in list_ui_locales(extension_root)}
+    option = options.get(normalized)
+    messages = merged_catalog(normalized, extension_root)
+    return {
+        "schema_version": UI_LOCALE_SCHEMA_VERSION,
+        "locale": normalized,
+        "name": option.name if option else normalized,
+        "native_name": option.native_name if option else normalized,
+        "source_locale": FALLBACK_UI_LOCALE if normalized != FALLBACK_UI_LOCALE else "",
+        "source_version": "",
+        "messages": messages,
+    }
+
+
+def write_extension_package(extension_root: Path, package: dict[str, Any]) -> dict[str, Any]:
+    locale = resolve_ui_locale(str(package.get("locale") or ""))
+    if locale in {DEFAULT_UI_LOCALE, FALLBACK_UI_LOCALE}:
+        raise ValueError("内置语言 zh_cn / en_us 不能被扩展语言包覆盖")
+    extension_root.mkdir(parents=True, exist_ok=True)
+    target = extension_root / f"{locale}.json"
+    normalized_package = {
+        "schema_version": UI_LOCALE_SCHEMA_VERSION,
+        "locale": locale,
+        "name": str(package.get("name") or locale),
+        "native_name": str(package.get("native_name") or package.get("name") or locale),
+        "source_locale": str(package.get("source_locale") or FALLBACK_UI_LOCALE),
+        "source_version": str(package.get("source_version") or ""),
+        "messages": dict(package.get("messages") or {}),
+    }
+    target.write_text(json.dumps(normalized_package, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    base_keys = base_message_keys()
+    missing = sorted(base_keys - set(normalized_package["messages"]))
+    return {
+        "locale": locale,
+        "path": str(target),
+        "message_count": len(normalized_package["messages"]),
+        "missing_count": len(missing),
+        "missing_keys": missing,
+    }

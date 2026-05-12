@@ -1,11 +1,21 @@
 from __future__ import annotations
 
+import re
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
 import unittest
 
 from mc_mod_i18n.web import INDEX_HTML, normalize_models_url, parse_models_response
 
 
 class WebUiContractTest(unittest.TestCase):
+    def test_sidebar_brand_uses_translation_workbench_name(self) -> None:
+        self.assertIn('alt="翻译工作台"', INDEX_HTML)
+        self.assertIn('data-i18n="app.brand.name">翻译工作台</strong>', INDEX_HTML)
+        self.assertNotIn('alt="汉化工作台"', INDEX_HTML)
+
     def test_workspace_uses_progressive_disclosure_for_advanced_settings(self) -> None:
         self.assertIn("高级 API 设置", INDEX_HTML)
         self.assertIn("输出策略", INDEX_HTML)
@@ -53,9 +63,10 @@ class WebUiContractTest(unittest.TestCase):
         self.assertIn('name="api_key" id="api_key" type="password"', INDEX_HTML)
         self.assertIn('id="api-key-toggle"', INDEX_HTML)
         self.assertIn("syncApiKeyVisibility", INDEX_HTML)
+        self.assertIn(".secret-input input::-ms-reveal", INDEX_HTML)
 
     def test_api_base_url_fetches_searchable_model_dropdown(self) -> None:
-        self.assertIn("<label>BaseURL", INDEX_HTML)
+        self.assertIn('<span data-i18n="advanced.base_url">BaseURL</span>', INDEX_HTML)
         self.assertIn('name="api_url" id="api_base_url"', INDEX_HTML)
         self.assertIn('id="model-select"', INDEX_HTML)
         self.assertIn('id="model-refresh"', INDEX_HTML)
@@ -79,7 +90,14 @@ class WebUiContractTest(unittest.TestCase):
 
     def test_settings_menu_exposes_cache_management(self) -> None:
         self.assertIn('id="settings-open"', INDEX_HTML)
-        self.assertIn('id="settings-dialog"', INDEX_HTML)
+        self.assertIn('id="settings-page"', INDEX_HTML)
+        self.assertIn('data-main-view="settings"', INDEX_HTML)
+        self.assertIn('class="settings-layout"', INDEX_HTML)
+        self.assertIn('id="settings-cache-section"', INDEX_HTML)
+        self.assertIn('id="settings-locale-section"', INDEX_HTML)
+        self.assertIn('class="settings-footer"', INDEX_HTML)
+        self.assertIn(".settings-layout", INDEX_HTML)
+        self.assertIn(".settings-section-actions", INDEX_HTML)
         self.assertIn('id="settings-cache-dir"', INDEX_HTML)
         self.assertIn('id="settings-cache-clear"', INDEX_HTML)
         self.assertIn('id="settings-cache-default"', INDEX_HTML)
@@ -149,7 +167,7 @@ class WebUiContractTest(unittest.TestCase):
         self.assertIn("ri-corner-down-right-line", INDEX_HTML)
 
     def test_results_actions_include_workspace_before_pack_download(self) -> None:
-        workspace_index = INDEX_HTML.index('<button type="button" data-view="language"><i class="ri-folder-open-line"></i><span>工作区</span></button>')
+        workspace_index = INDEX_HTML.index("<button type=\"button\" data-view=\"language\"><i class=\"ri-folder-open-line\"></i><span>${escapeHtml(ui('result.workspace', '工作区'))}</span></button>")
         download_index = INDEX_HTML.index('id="download-pack"')
         self.assertLess(workspace_index, download_index)
 
@@ -163,6 +181,84 @@ class WebUiContractTest(unittest.TestCase):
         self.assertIn('id="download-ftbquests"', INDEX_HTML)
         self.assertIn("payload.kind === 'ftbquests'", INDEX_HTML)
         self.assertIn("下载任务书补丁", INDEX_HTML)
+
+    def test_ftbquests_snbt_upload_infers_source_locale_in_ui(self) -> None:
+        self.assertIn('name="source_locale" id="source_locale"', INDEX_HTML)
+        self.assertIn('<option value="en_us" selected>en_us - English (US)</option>', INDEX_HTML)
+        self.assertIn("inferLocaleFromFtbquestsUploadPath", INDEX_HTML)
+        self.assertIn("syncFtbquestsSourceLocaleFromInput", INDEX_HTML)
+        self.assertIn("ftbquestsInput.addEventListener('change', handleFtbquestsInputChange)", INDEX_HTML)
+        self.assertIn("ftbquestsDirectoryInput.addEventListener('change', handleFtbquestsInputChange)", INDEX_HTML)
+        self.assertIn("const localePattern = /^[a-z]{2,3}_[a-z0-9]{2,8}$/", INDEX_HTML)
+
+    def test_ui_locale_switching_and_extension_pack_controls_are_exposed(self) -> None:
+        self.assertIn('id="ui_locale"', INDEX_HTML)
+        self.assertIn('name="ui_locale" id="ui_locale_field"', INDEX_HTML)
+        self.assertNotIn('select name="ui_locale" id="ui_locale"', INDEX_HTML)
+        self.assertIn("mc-mod-i18n-ui-locale", INDEX_HTML)
+        self.assertIn("mc-mod-i18n-ui-locale-dir", INDEX_HTML)
+        self.assertIn("urlUiLocaleSetting", INDEX_HTML)
+        self.assertIn("browserUiLocaleSetting", INDEX_HTML)
+        self.assertIn("preferredUiLocaleSetting", INDEX_HTML)
+        self.assertIn("navigator.languages", INDEX_HTML)
+        self.assertIn('id="settings-ui-locale-dir"', INDEX_HTML)
+        self.assertIn('id="settings-ui-locale-default"', INDEX_HTML)
+        self.assertIn('id="settings-ui-locale-download"', INDEX_HTML)
+        self.assertIn('id="settings-ui-locale-import"', INDEX_HTML)
+        self.assertIn("fetch(`/api/ui-locales", INDEX_HTML)
+        self.assertIn("/api/ui-locales/import", INDEX_HTML)
+        self.assertIn("/api/ui-locales/export/", INDEX_HTML)
+
+    def test_ui_locale_switch_refreshes_dynamic_selects_and_settings_defaults(self) -> None:
+        self.assertIn("function refreshSelectMenusForCurrentLocale()", INDEX_HTML)
+        self.assertIn("refreshSelectMenusForCurrentLocale();", INDEX_HTML)
+        self.assertIn("providerMenu.innerHTML = Array.from(provider.options).map", INDEX_HTML)
+        self.assertIn("buildUiLocaleMenu();", INDEX_HTML)
+        self.assertIn("function refreshSettingsDirectoryLabels()", INDEX_HTML)
+        self.assertIn("refreshSettingsDirectoryLabels();", INDEX_HTML)
+
+    def test_direct_json_language_file_mode_is_exposed(self) -> None:
+        self.assertIn('data-input-kind="json"', INDEX_HTML)
+        self.assertIn('name="json_files"', INDEX_HTML)
+        self.assertIn('id="json-file-wrap"', INDEX_HTML)
+        self.assertIn("inputKind.value === 'json'", INDEX_HTML)
+        self.assertIn("data.append('json_files'", INDEX_HTML)
+        self.assertIn("payload.kind === 'json'", INDEX_HTML)
+
+    def test_advanced_api_help_uses_focus_popover_motion(self) -> None:
+        self.assertIn(".api-box label:focus-within .field-help", INDEX_HTML)
+        self.assertIn("transform: translateY(-6px) scale(.98)", INDEX_HTML)
+        self.assertIn("transition: opacity var(--motion-base) ease", INDEX_HTML)
+
+    def test_api_debug_log_help_is_attached_to_checkbox_label(self) -> None:
+        self.assertIn('<label class="checkline api-debug-log-line">', INDEX_HTML)
+        self.assertIn('<span data-i18n="advanced.debug_log">记录 API 调试日志</span>', INDEX_HTML)
+        self.assertIn('<span class="field-help" data-i18n="advanced.debug_log_help">会记录请求体、响应头和原始响应到本次任务目录；Authorization/API Key 会被隐藏。</span>', INDEX_HTML)
+        self.assertNotIn('</label>\n          <div class="field-help" data-i18n="advanced.debug_log_help"', INDEX_HTML)
+
+    def test_inline_scripts_are_syntax_valid_when_node_is_available(self) -> None:
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node is not available")
+        scripts = re.findall(r"<script>([\s\S]*?)</script>", INDEX_HTML)
+        self.assertGreaterEqual(len(scripts), 2)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            for index, script in enumerate(scripts):
+                path = Path(temp_dir) / f"inline-{index}.js"
+                path.write_text(script, encoding="utf-8")
+                result = subprocess.run(
+                    [node, "--check", str(path)],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    check=False,
+                )
+                self.assertEqual(
+                    0,
+                    result.returncode,
+                    msg=f"inline script {index} is not valid JavaScript:\n{result.stderr}",
+                )
 
     def test_model_list_helpers_accept_base_url_and_provider_responses(self) -> None:
         self.assertEqual(
