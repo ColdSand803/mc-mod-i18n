@@ -17,6 +17,16 @@ python -m mc_mod_i18n serve
 http://127.0.0.1:8765
 ```
 
+浏览器级 UI 自检（需要先安装 Playwright）：
+
+```powershell
+npm install --save-dev playwright
+npx playwright install chromium
+$env:PYTHONPATH="src"
+python -m mc_mod_i18n serve --port 8765
+node scripts/ui_smoke_test.mjs http://127.0.0.1:8765
+```
+
 开发模式直接运行：
 
 ```bash
@@ -137,3 +147,5 @@ Web UI 处理完成后会显示“硬编码映射工作台”：
 - 可导入已有 `hardcoded-map.json` / `hardcoded-map.template.json` 继续编辑
 - 导出时只写入已填写译文的条目，文件名为 `hardcoded-map.json`
 - 导出前会校验 `%s`、`%1$s`、`{0}`、`§a` 和换行等占位符
+
+`hardcoded-map.json` 不是资源包文件，单独放进资源包不会让 Java 代码里写死的英文生效。它的用途是作为运行时补丁 Mod / Mixin / 配置模板生成器的输入：补丁在游戏显示文本的入口处按原文查表替换，或把可配置的注释/模板写成目标模组能读取的格式。当前工具负责扫描、分类、翻译和导出映射；真正运行时替换需要配套补丁读取该 JSON。

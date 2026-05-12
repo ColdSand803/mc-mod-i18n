@@ -7,6 +7,8 @@ import unittest
 from mc_mod_i18n.ui_i18n import (
     BUILTIN_UI_LOCALES,
     base_message_keys,
+    build_ui_locale_missing_template,
+    check_ui_locale_package,
     export_ui_locale_package,
     list_ui_locales,
     parse_ui_locale_package,
@@ -76,6 +78,38 @@ class UiI18nTest(unittest.TestCase):
         self.assertEqual("Upload a language JSON file", translate_ui("error.json_missing_input", "en_us"))
         self.assertEqual("缺少 Name: {bad}", translate_ui("result.missing_token", "zh_cn", label="Name", tokens="{bad}"))
         self.assertEqual("missing.key", translate_ui("missing.key", "en_us"))
+
+    def test_ui_locale_checker_reports_missing_extra_and_placeholder_mismatches(self) -> None:
+        package = parse_ui_locale_package(
+            {
+                "locale": "fr_fr",
+                "messages": {
+                    "app.brand.name": "Atelier",
+                    "result.missing_token": "Il manque {label}",
+                    "custom.extra": "Extra",
+                },
+            },
+            "fr_fr.json",
+        )
+
+        check = check_ui_locale_package(package)
+
+        self.assertGreater(check["missing_count"], 0)
+        self.assertIn("nav.workspace", check["missing_keys"])
+        self.assertEqual(["custom.extra"], check["extra_keys"])
+        mismatch = next(item for item in check["placeholder_mismatches"] if item["key"] == "result.missing_token")
+        self.assertEqual(["{label}", "{tokens}"], mismatch["expected"])
+        self.assertEqual(["{label}"], mismatch["actual"])
+        self.assertFalse(check["complete"])
+
+    def test_ui_locale_missing_template_contains_only_missing_base_keys(self) -> None:
+        package = parse_ui_locale_package({"locale": "fr_fr", "messages": {"app.brand.name": "Atelier"}}, "fr_fr.json")
+
+        template = build_ui_locale_missing_template(package)
+
+        self.assertEqual("fr_fr", template["locale"])
+        self.assertIn("nav.workspace", template["messages"])
+        self.assertNotIn("app.brand.name", template["messages"])
 
 
 if __name__ == "__main__":

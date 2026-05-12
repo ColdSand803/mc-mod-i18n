@@ -11,9 +11,11 @@ from pathlib import Path
 import re
 import shutil
 from secrets import token_hex
+import tempfile
 from threading import Event, Lock, Thread
 import time
 from typing import Any
+from datetime import datetime, timezone
 from urllib.parse import parse_qs, unquote, urlparse
 import urllib.error
 import urllib.request
@@ -25,7 +27,10 @@ from .core import compute_translation_config_hash, compute_zip_source_hash, crea
 from .ftbquests import (
     compute_ftbquests_config_hash,
     compute_ftbquests_source_hash,
+    detect_legacy_snbt_files,
+    find_lang_file_pairs,
     ftbquests_cache_key,
+    infer_source_locale_from_files,
     load_ftbquests_checkpoint,
     load_ftbquests_checkpoint_config_hash,
     load_ftbquests_checkpoint_source_hash,
@@ -38,6 +43,7 @@ from .ftbquests import (
 )
 from .hardcoded import HardcodedEntry, hardcoded_category_label, hardcoded_category_order
 from .hardcoded import scan_jar_for_hardcoded
+from .lang import collect_lang_documents, target_path_for
 from .pack import OutputLangDocument, load_checkpoint, load_checkpoint_config_hash, load_checkpoint_source_hash, read_pack_icon, resolve_pack_format, resource_pack_filename, save_checkpoint, update_resource_pack_entries, write_resource_pack
 from .report import (
     ReportEntry,
@@ -46,8 +52,10 @@ from .report import (
     write_hardcoded_report,
     write_report,
 )
-from .translator import LOCALE_DISPLAY_NAMES, TranslationItem, get_provider_preset, is_ai_provider
+from .translator import GlossaryTranslator, LOCALE_DISPLAY_NAMES, TranslationItem, get_provider_preset, is_ai_provider
 from .ui_i18n import (
+    build_ui_locale_missing_template,
+    check_ui_locale_package,
     export_ui_locale_package,
     list_ui_locales,
     parse_ui_locale_package,
@@ -1757,6 +1765,52 @@ INDEX_HTML = r"""<!doctype html>
       color: var(--status-error-text);
       border-color: var(--status-error-border);
     }
+    .preflight-card {
+      display: grid;
+      gap: 12px;
+    }
+    .preflight-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .preflight-summary {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+      gap: 8px;
+    }
+    .preflight-metric,
+    .preflight-list li {
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius-sm);
+      background: var(--card-surface-soft);
+      padding: 8px 10px;
+    }
+    .preflight-metric strong {
+      display: block;
+      font-size: 18px;
+    }
+    .preflight-list {
+      display: grid;
+      gap: 6px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+    .preflight-list li {
+      color: var(--muted);
+      font-weight: 600;
+    }
+    .preflight-list li.blocking {
+      border-color: var(--status-error-border);
+      color: var(--status-error-text);
+      background: var(--status-error-bg);
+    }
+    .preflight-list li.warning {
+      color: var(--warning);
+    }
     .loading-card {
       min-height: 260px;
       display: grid;
@@ -1912,13 +1966,15 @@ INDEX_HTML = r"""<!doctype html>
       background: var(--panel);
       box-shadow: 0 24px 64px rgba(15, 23, 42, .24);
     }
-    .settings-page {
+    .settings-page,
+    .history-page {
       grid-column: 1 / -1;
       height: calc(100vh - 104px);
       max-height: calc(100vh - 104px);
       overflow: hidden;
     }
-    .settings-page[hidden] {
+    .settings-page[hidden],
+    .history-page[hidden] {
       display: none;
     }
     .settings-card {
@@ -2249,15 +2305,31 @@ INDEX_HTML = r"""<!doctype html>
     .model-refresh[aria-busy="true"] i {
       animation: spin 900ms linear infinite;
     }
-    .model-status {
+    .provider-test-row {
+      display: grid;
+      gap: 8px;
+    }
+    .provider-test-row button {
+      justify-self: start;
+      min-width: 128px;
+    }
+    .provider-test-row button[aria-busy="true"] i {
+      animation: spin 900ms linear infinite;
+    }
+    .model-status,
+    .provider-test-status {
       min-height: 18px;
       color: var(--muted);
       font-size: 12px;
       font-weight: 600;
       line-height: 1.45;
     }
-    .model-status.error {
+    .model-status.error,
+    .provider-test-status.error {
       color: var(--danger);
+    }
+    .provider-test-status.success {
+      color: var(--success);
     }
     #retry-api-failures {
       min-width: 132px;
@@ -2478,6 +2550,52 @@ INDEX_HTML = r"""<!doctype html>
       white-space: normal;
       overflow-wrap: anywhere;
       line-height: 1.4;
+    }
+    .glossary-editor {
+      min-height: 180px;
+      resize: vertical;
+      font-family: "Fira Code", Consolas, monospace;
+      line-height: 1.5;
+    }
+    .status-filter {
+      display: inline-flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+    }
+    .status-filter button {
+      min-width: 0;
+      padding: 0 10px;
+    }
+    .preview-summary,
+    .metadata-preview {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      margin: 10px 0;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .preview-chip,
+    .diff-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 28px;
+      padding: 4px 9px;
+      border: 1px solid var(--accent-soft-line);
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--text);
+      white-space: nowrap;
+    }
+    .diff-badge {
+      margin-top: 6px;
+      border-color: var(--line);
+      background: var(--field-bg-soft);
+      color: var(--muted);
     }
     .pager {
       display: flex;
@@ -3349,6 +3467,7 @@ INDEX_HTML = r"""<!doctype html>
       </div>
       <nav class="nav-list">
         <button type="button" class="nav-item active" data-view="language"><i class="ri-folder-open-line"></i><span data-i18n="nav.workspace">工作区</span></button>
+        <button type="button" class="nav-item" data-view="history"><i class="ri-time-line"></i><span data-i18n="nav.history">任务历史</span></button>
         <button type="button" class="nav-item" data-view="report"><i class="ri-history-line"></i><span data-i18n="nav.report">翻译报告</span></button>
         <button type="button" class="nav-item" data-view="hardcoded"><i class="ri-tools-line"></i><span data-i18n="nav.hardcoded">硬编码</span></button>
         <button type="button" class="nav-item" data-view="api-log"><i class="ri-bug-line"></i><span data-i18n="nav.api_log">API 日志</span></button>
@@ -3514,6 +3633,17 @@ INDEX_HTML = r"""<!doctype html>
           <input name="glossary" type="file" accept=".json">
         </label>
         </div>
+        <div class="form-card preflight-card" id="preflight-panel">
+          <div class="preflight-head">
+            <div>
+              <h3><i class="ri-shield-check-line"></i><span data-i18n="preflight.title">翻译前预检</span></h3>
+              <div class="muted" data-i18n="preflight.copy">先扫描输入，不创建最终输出。</div>
+            </div>
+            <button type="button" class="secondary" id="preflight-run"><i class="ri-scan-2-line"></i><span data-i18n="preflight.run">运行预检</span></button>
+          </div>
+          <div id="preflight-summary" class="preflight-summary" hidden></div>
+          <ul id="preflight-messages" class="preflight-list"></ul>
+        </div>
         <details class="form-card" data-advanced-panel>
           <summary><span><i class="ri-flashlight-line"></i><span data-i18n="advanced.title">高级 API 设置</span></span></summary>
         <div id="api-box" class="api-box" hidden>
@@ -3550,6 +3680,10 @@ INDEX_HTML = r"""<!doctype html>
             <input name="api_key_env" id="api_key_env" value="OPENAI_API_KEY">
             <span class="field-help" data-i18n="advanced.api_key_env_help">API Key 留空时使用该环境变量；直接填写 Key 可避免本地 UI 读不到环境变量导致报错。</span>
           </label>
+          <div class="provider-test-row">
+            <button type="button" class="secondary" id="provider-test"><i class="ri-plug-2-line"></i><span data-i18n="advanced.test_provider">测试连接</span></button>
+            <span id="provider-test-status" class="provider-test-status" aria-live="polite"></span>
+          </div>
           <label><span data-i18n="advanced.concurrency">并发请求数</span>
             <input name="api_concurrency" id="api_concurrency" type="number" value="2" min="1" placeholder="正在计算推荐并发...">
             <span class="field-help" id="api-concurrency-help" data-i18n="advanced.concurrency_help">内容很多时可并发翻译多个批次；中转站限流时调低到 1。</span>
@@ -3616,6 +3750,50 @@ INDEX_HTML = r"""<!doctype html>
         <div class="empty" data-i18n="results.empty">还没有生成结果。</div>
       </div>
     </section>
+    <section class="history-page" id="history-panel" data-main-view="history" hidden>
+      <div class="settings-card">
+        <div class="settings-head">
+          <div>
+            <strong data-i18n="history.title">任务历史</strong>
+            <span data-i18n="history.subtitle">找回最近任务的下载、报告和日志。</span>
+          </div>
+          <div class="settings-actions">
+            <button type="button" class="secondary" id="history-refresh"><i class="ri-refresh-line"></i><span data-i18n="history.refresh">刷新</span></button>
+          </div>
+        </div>
+        <div class="settings-layout">
+          <section class="settings-section">
+            <div class="settings-section-head">
+              <div><strong data-i18n="history.filters">筛选</strong><span data-i18n="history.filters_desc">按状态和输入类型缩小范围。</span></div>
+            </div>
+            <div class="grid-2">
+              <label><span data-i18n="history.status">状态</span>
+                <select id="history-status-filter">
+                  <option value="all" data-i18n="history.all">全部</option>
+                  <option value="done" data-i18n="history.done">完成</option>
+                  <option value="error" data-i18n="history.error">失败</option>
+                  <option value="cancelled" data-i18n="history.cancelled">已中断</option>
+                </select>
+              </label>
+              <label><span data-i18n="history.kind">输入类型</span>
+                <select id="history-kind-filter">
+                  <option value="all" data-i18n="history.all">全部</option>
+                  <option value="jar" data-i18n="input.jar">Mod JAR 语言文件</option>
+                  <option value="ftbquests" data-i18n="input.ftbquests">FTB Quests 任务书</option>
+                  <option value="json" data-i18n="input.json">语言 JSON 文件</option>
+                </select>
+              </label>
+            </div>
+          </section>
+          <section class="settings-section">
+            <div class="settings-section-head">
+              <div><strong data-i18n="history.recent">最近任务</strong><span id="history-count" data-i18n="history.loading">正在读取...</span></div>
+            </div>
+            <div id="history-list" class="results"></div>
+          </section>
+        </div>
+      </div>
+    </section>
     <section class="settings-page" id="settings-page" data-main-view="settings" hidden>
       <div class="settings-card">
         <div class="settings-head">
@@ -3653,15 +3831,38 @@ INDEX_HTML = r"""<!doctype html>
               <span data-i18n="settings.language_tools">界面语言包</span>
               <strong id="settings-ui-locale-summary" data-i18n="settings.ui_locale_builtin_summary">内置 2 个语言</strong>
             </div>
+            <div class="settings-current">
+              <span data-i18n="settings.ui_locale_check">检查结果</span>
+              <strong id="settings-ui-locale-check-summary" data-i18n="settings.ui_locale_check_empty">尚未检查语言包</strong>
+            </div>
             <div class="settings-section-actions">
               <button type="button" class="secondary" id="settings-ui-locale-default" data-i18n="settings.ui_locale_default">语言目录默认</button>
               <button type="button" class="secondary" id="settings-ui-locale-refresh"><i class="ri-refresh-line"></i><span data-i18n="ui_locale.refresh">刷新语言包</span></button>
               <button type="button" class="secondary" id="settings-ui-locale-import"><i class="ri-upload-2-line"></i><span data-i18n="ui_locale.import">导入语言包</span></button>
               <button type="button" class="secondary" id="settings-ui-locale-download"><i class="ri-download-2-line"></i><span data-i18n="ui_locale.download">下载所选语言包</span></button>
+              <button type="button" class="secondary" id="settings-ui-locale-check"><i class="ri-shield-check-line"></i><span data-i18n="settings.ui_locale_check_button">检查语言包</span></button>
+              <button type="button" class="secondary" id="settings-ui-locale-missing-template"><i class="ri-file-add-line"></i><span data-i18n="settings.ui_locale_missing_template">导出缺失模板</span></button>
+            </div>
+          </section>
+          <section class="settings-section" id="settings-glossary-section" aria-labelledby="settings-glossary-title">
+            <div class="settings-section-title" id="settings-glossary-title"><i class="ri-book-2-line"></i><span data-i18n="settings.glossary_section">术语表管理</span></div>
+            <label class="settings-field"><span data-i18n="settings.glossary_terms">用户术语 JSON</span>
+              <textarea class="ghost-input glossary-editor" id="settings-glossary-editor" spellcheck="false" placeholder="{&#10;  &quot;Copper&quot;: &quot;铜&quot;&#10;}" data-i18n-placeholder="settings.glossary_placeholder"></textarea>
+            </label>
+            <div class="settings-current">
+              <span data-i18n="settings.current">当前</span>
+              <strong id="settings-glossary-summary" data-i18n="settings.glossary_empty">未保存用户术语</strong>
+            </div>
+            <div class="settings-section-actions">
+              <button type="button" class="secondary" id="settings-glossary-refresh"><i class="ri-refresh-line"></i><span data-i18n="settings.glossary_refresh">刷新术语</span></button>
+              <button type="button" class="secondary" id="settings-glossary-import"><i class="ri-upload-2-line"></i><span data-i18n="settings.glossary_import">导入术语</span></button>
+              <button type="button" class="secondary" id="settings-glossary-export"><i class="ri-download-2-line"></i><span data-i18n="settings.glossary_export">导出术语</span></button>
+              <button type="button" id="settings-glossary-save"><i class="ri-save-3-line"></i><span data-i18n="settings.glossary_save">保存术语</span></button>
             </div>
           </section>
         </div>
         <input id="ui-locale-import-file" type="file" accept=".json,application/json" hidden>
+        <input id="glossary-import-file" type="file" accept=".json,application/json" hidden>
         <div class="settings-footer">
           <div class="settings-status" id="settings-status"></div>
           <div class="settings-actions">
@@ -3689,6 +3890,9 @@ INDEX_HTML = r"""<!doctype html>
     const uiLocale = document.getElementById('ui_locale');
     const uiLocaleField = document.getElementById('ui_locale_field');
     const uiLocaleDirField = document.getElementById('ui_locale_dir');
+    const glossaryEditor = document.getElementById('settings-glossary-editor');
+    const glossarySummary = document.getElementById('settings-glossary-summary');
+    const glossaryImportFile = document.getElementById('glossary-import-file');
     const jarsInput = document.getElementById('jars');
     const ftbquestsInput = document.getElementById('ftbquests-files');
     const ftbquestsDirectoryInput = document.getElementById('ftbquests-directory');
@@ -3706,12 +3910,19 @@ INDEX_HTML = r"""<!doctype html>
     const cacheDirField = document.getElementById('cache_dir');
     const settingsOpen = document.getElementById('settings-open');
     const settingsDialog = document.getElementById('settings-page');
+    const historyPanel = document.getElementById('history-panel');
+    const historyList = document.getElementById('history-list');
+    const historyCount = document.getElementById('history-count');
+    const historyRefresh = document.getElementById('history-refresh');
+    const historyStatusFilter = document.getElementById('history-status-filter');
+    const historyKindFilter = document.getElementById('history-kind-filter');
     const settingsClose = document.getElementById('settings-close');
     const settingsCacheDir = document.getElementById('settings-cache-dir');
     const settingsCacheEffective = document.getElementById('settings-cache-effective');
     const settingsUiLocaleDir = document.getElementById('settings-ui-locale-dir');
     const settingsUiLocaleEffective = document.getElementById('settings-ui-locale-effective');
     const settingsUiLocaleSummary = document.getElementById('settings-ui-locale-summary');
+    const settingsUiLocaleCheckSummary = document.getElementById('settings-ui-locale-check-summary');
     const settingsStatus = document.getElementById('settings-status');
     const settingsCacheDefault = document.getElementById('settings-cache-default');
     const settingsCacheClear = document.getElementById('settings-cache-clear');
@@ -3719,6 +3930,12 @@ INDEX_HTML = r"""<!doctype html>
     const settingsUiLocaleDefault = document.getElementById('settings-ui-locale-default');
     const settingsUiLocaleImport = document.getElementById('settings-ui-locale-import');
     const settingsUiLocaleDownload = document.getElementById('settings-ui-locale-download');
+    const settingsUiLocaleCheck = document.getElementById('settings-ui-locale-check');
+    const settingsUiLocaleMissingTemplate = document.getElementById('settings-ui-locale-missing-template');
+    const settingsGlossaryRefresh = document.getElementById('settings-glossary-refresh');
+    const settingsGlossaryImport = document.getElementById('settings-glossary-import');
+    const settingsGlossaryExport = document.getElementById('settings-glossary-export');
+    const settingsGlossarySave = document.getElementById('settings-glossary-save');
     const uiLocaleImportFile = document.getElementById('ui-locale-import-file');
     const settingsSave = document.getElementById('settings-save');
     let loadingTimer = null;
@@ -3746,6 +3963,7 @@ INDEX_HTML = r"""<!doctype html>
       activeTab: 'language',
       languageSearch: '',
       languageJarFilter: '全部',
+      languageStatusFilter: 'all',
       languageFilteredCacheKey: '',
       languageFilteredEntries: [],
       languageEdits: {},
@@ -3758,6 +3976,7 @@ INDEX_HTML = r"""<!doctype html>
       hardcodedPage: 1,
       apiLogPage: 1
     };
+    let historyRecords = [];
     let languageSearchDebounce = 0;
     let reportSearchDebounce = 0;
     let hardcodedReportSearchDebounce = 0;
@@ -3864,6 +4083,11 @@ INDEX_HTML = r"""<!doctype html>
     const modelMenu = document.getElementById('model-menu');
     const modelRefresh = document.getElementById('model-refresh');
     const modelStatus = document.getElementById('model-status');
+    const providerTest = document.getElementById('provider-test');
+    const providerTestStatus = document.getElementById('provider-test-status');
+    const preflightRun = document.getElementById('preflight-run');
+    const preflightSummary = document.getElementById('preflight-summary');
+    const preflightMessages = document.getElementById('preflight-messages');
     const apiConcurrency = document.getElementById('api_concurrency');
     const apiConcurrencyHelp = document.getElementById('api-concurrency-help');
     const uiLocaleSelectShell = document.getElementById('ui-locale-select');
@@ -4528,6 +4752,9 @@ INDEX_HTML = r"""<!doctype html>
       applyCacheDirSetting(cacheDirField ? cacheDirField.value : storedCacheDirSetting());
       applyUiLocaleDirSetting(uiLocaleDirField ? uiLocaleDirField.value : storedUiLocaleDirSetting());
       setSettingsStatus('');
+      loadGlossarySettings().catch(error => {
+        setSettingsStatus(error.message || ui('settings.glossary_load_failed', '术语表读取失败'), true);
+      });
       switchView('settings');
       window.setTimeout(() => {
         if (settingsCacheDir) {
@@ -4538,6 +4765,54 @@ INDEX_HTML = r"""<!doctype html>
 
     function closeSettingsDialog() {
       switchView('language');
+    }
+
+    function updateGlossarySummary(count, conflicts) {
+      if (!glossarySummary) {
+        return;
+      }
+      const conflictCount = conflicts ? Object.keys(conflicts).length : 0;
+      glossarySummary.textContent = count
+        ? formatUi('settings.glossary_summary', '已保存 {count} 条术语，{conflicts} 条与内置冲突', { count, conflicts: conflictCount })
+        : ui('settings.glossary_empty', '未保存用户术语');
+    }
+
+    async function loadGlossarySettings() {
+      if (!glossaryEditor) {
+        return;
+      }
+      const response = await fetch('/api/glossary');
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error || ui('settings.glossary_load_failed', '术语表读取失败'));
+      }
+      glossaryEditor.value = JSON.stringify(payload.terms || {}, null, 2);
+      updateGlossarySummary(payload.count || 0, payload.conflicts || {});
+    }
+
+    async function saveGlossarySettings() {
+      if (!glossaryEditor) {
+        return;
+      }
+      let terms = {};
+      try {
+        terms = JSON.parse(glossaryEditor.value || '{}');
+      } catch (error) {
+        throw new Error(formatUi('settings.glossary_parse_failed', '术语表 JSON 无法解析：{message}', { message: error.message }));
+      }
+      const response = await fetch('/api/glossary', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ terms })
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error || ui('settings.glossary_save_failed', '术语表保存失败'));
+      }
+      glossaryEditor.value = JSON.stringify(payload.terms || {}, null, 2);
+      updateGlossarySummary(payload.count || 0, payload.conflicts || {});
+      const conflictCount = payload.conflicts ? Object.keys(payload.conflicts).length : 0;
+      setSettingsStatus(formatUi('settings.glossary_saved', '已保存 {count} 条术语，{conflicts} 条与内置术语冲突。', { count: payload.count || 0, conflicts: conflictCount }), Boolean(conflictCount));
     }
 
     function bindSettingsMenu() {
@@ -4594,31 +4869,117 @@ INDEX_HTML = r"""<!doctype html>
           window.location.href = `/api/ui-locales/export/${encodeURIComponent(locale)}${uiLocaleQuery()}`;
         });
       }
+      if (settingsUiLocaleMissingTemplate) {
+        settingsUiLocaleMissingTemplate.addEventListener('click', () => {
+          const locale = uiLocale.value || 'zh_cn';
+          window.location.href = `/api/ui-locales/missing-template/${encodeURIComponent(locale)}${uiLocaleQuery()}`;
+        });
+      }
+      if (settingsUiLocaleCheck && uiLocaleImportFile) {
+        settingsUiLocaleCheck.addEventListener('click', () => {
+          uiLocaleImportFile.dataset.mode = 'check';
+          uiLocaleImportFile.click();
+        });
+      }
       if (settingsUiLocaleImport && uiLocaleImportFile) {
-        settingsUiLocaleImport.addEventListener('click', () => uiLocaleImportFile.click());
+        settingsUiLocaleImport.addEventListener('click', () => {
+          uiLocaleImportFile.dataset.mode = 'import';
+          uiLocaleImportFile.click();
+        });
         uiLocaleImportFile.addEventListener('change', async () => {
           const file = uiLocaleImportFile.files[0];
           if (!file) {
             return;
           }
+          const mode = uiLocaleImportFile.dataset.mode || 'import';
           const data = new FormData();
           data.append('ui_locale_dir', uiLocaleDirField ? uiLocaleDirField.value : '');
           data.append('ui_locale_file', file, file.name);
-          settingsUiLocaleImport.disabled = true;
-          setSettingsStatus(ui('settings.ui_locale_importing', '正在导入语言包...'));
+          settingsUiLocaleImport.disabled = mode === 'import';
+          if (settingsUiLocaleCheck) {
+            settingsUiLocaleCheck.disabled = mode === 'check';
+          }
+          setSettingsStatus(mode === 'check' ? ui('settings.ui_locale_checking', '正在检查语言包...') : ui('settings.ui_locale_importing', '正在导入语言包...'));
           try {
-            const response = await fetch('/api/ui-locales/import', { method: 'POST', body: data });
+            const response = await fetch(mode === 'check' ? '/api/ui-locales/check' : '/api/ui-locales/import', { method: 'POST', body: data });
             const payload = await response.json();
             if (!response.ok || !payload.ok) {
-              throw new Error(payload.error || ui('settings.ui_locale_import_failed', '语言包导入失败'));
+              throw new Error(payload.error || (mode === 'check' ? ui('settings.ui_locale_check_failed', '语言包检查失败') : ui('settings.ui_locale_import_failed', '语言包导入失败')));
             }
-            setSettingsStatus(formatUi('settings.ui_locale_imported', '已导入 {locale}，缺失 {missing} 个 key。', { locale: payload.locale, missing: payload.missing_count || 0 }));
-            await refreshUiLocales(true);
+            const checkText = formatUi('settings.ui_locale_check_result', '缺失 {missing}，额外 {extra}，占位符不匹配 {placeholders}', {
+              missing: payload.missing_count || 0,
+              extra: payload.extra_count || 0,
+              placeholders: payload.placeholder_mismatch_count || 0
+            });
+            if (settingsUiLocaleCheckSummary) {
+              settingsUiLocaleCheckSummary.textContent = `${payload.locale}: ${checkText}`;
+            }
+            if (mode === 'check') {
+              setSettingsStatus(checkText, Boolean(payload.placeholder_mismatch_count));
+            } else {
+              setSettingsStatus(formatUi('settings.ui_locale_imported_checked', '已导入 {locale}。{check}', { locale: payload.locale, check: checkText }), Boolean(payload.placeholder_mismatch_count));
+              await refreshUiLocales(true);
+            }
           } catch (error) {
-            setSettingsStatus(error.message || ui('settings.ui_locale_import_failed', '语言包导入失败'), true);
+            setSettingsStatus(error.message || (mode === 'check' ? ui('settings.ui_locale_check_failed', '语言包检查失败') : ui('settings.ui_locale_import_failed', '语言包导入失败')), true);
           } finally {
             settingsUiLocaleImport.disabled = false;
+            if (settingsUiLocaleCheck) {
+              settingsUiLocaleCheck.disabled = false;
+            }
             uiLocaleImportFile.value = '';
+            uiLocaleImportFile.dataset.mode = '';
+          }
+        });
+      }
+      if (settingsGlossaryRefresh) {
+        settingsGlossaryRefresh.addEventListener('click', async () => {
+          try {
+            await loadGlossarySettings();
+            setSettingsStatus(ui('settings.glossary_refreshed', '术语表已刷新。'));
+          } catch (error) {
+            setSettingsStatus(error.message || ui('settings.glossary_load_failed', '术语表读取失败'), true);
+          }
+        });
+      }
+      if (settingsGlossarySave) {
+        settingsGlossarySave.addEventListener('click', async () => {
+          settingsGlossarySave.disabled = true;
+          try {
+            await saveGlossarySettings();
+          } catch (error) {
+            setSettingsStatus(error.message || ui('settings.glossary_save_failed', '术语表保存失败'), true);
+          } finally {
+            settingsGlossarySave.disabled = false;
+          }
+        });
+      }
+      if (settingsGlossaryExport) {
+        settingsGlossaryExport.addEventListener('click', () => {
+          let terms = {};
+          try {
+            terms = JSON.parse(glossaryEditor ? glossaryEditor.value || '{}' : '{}');
+          } catch (error) {
+            setSettingsStatus(formatUi('settings.glossary_parse_failed', '术语表 JSON 无法解析：{message}', { message: error.message }), true);
+            return;
+          }
+          downloadJson('glossary.json', terms);
+        });
+      }
+      if (settingsGlossaryImport && glossaryImportFile) {
+        settingsGlossaryImport.addEventListener('click', () => glossaryImportFile.click());
+        glossaryImportFile.addEventListener('change', async () => {
+          const file = glossaryImportFile.files[0];
+          if (!file || !glossaryEditor) {
+            return;
+          }
+          try {
+            glossaryEditor.value = JSON.stringify(JSON.parse(await file.text()), null, 2);
+            setSettingsStatus(formatUi('settings.glossary_imported', '已导入 {file}，保存后会用于后续 Web 翻译任务。', { file: file.name }));
+          } catch (error) {
+            setSettingsStatus(formatUi('settings.glossary_parse_failed', '术语表 JSON 无法解析：{message}', { message: error.message }), true);
+          } finally {
+            glossaryImportFile.value = '';
           }
         });
       }
@@ -5087,6 +5448,65 @@ INDEX_HTML = r"""<!doctype html>
       modelFetchDebounce = window.setTimeout(() => refreshModelList(true), delay);
     }
 
+    function setProviderTestStatus(message, kind = '') {
+      if (!providerTestStatus) {
+        return;
+      }
+      providerTestStatus.textContent = message || '';
+      providerTestStatus.classList.toggle('success', kind === 'success');
+      providerTestStatus.classList.toggle('error', kind === 'error');
+    }
+
+    async function testProviderConnection() {
+      const preset = providerPresets[provider.value];
+      if (!preset || !providerTest) {
+        setProviderTestStatus(ui('advanced.test_provider_unsupported', '当前翻译器不需要 API 连接测试'), 'error');
+        return;
+      }
+      providerTest.disabled = true;
+      providerTest.setAttribute('aria-busy', 'true');
+      providerTest.innerHTML = `<i class="ri-loader-4-line"></i><span>${escapeHtml(ui('advanced.test_provider_testing', '正在测试...'))}</span>`;
+      setProviderTestStatus(ui('advanced.test_provider_testing', '正在测试...'));
+      try {
+        const response = await fetch('/api/test-provider', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            provider: provider.value,
+            base_url: apiBaseUrl.value,
+            api_key: apiKey.value,
+            api_key_env: apiKeyEnv.value,
+            model: model.value,
+            api_timeout: document.getElementById('api_timeout')?.value || '10'
+          })
+        });
+        const payload = await response.json();
+        if (!response.ok || !payload.ok) {
+          throw new Error(payload.message || payload.error || ui('advanced.test_provider_failed', '连接测试失败'));
+        }
+        setProviderTestStatus(
+          formatUi('advanced.test_provider_success', '{provider} / {model} 连接正常，耗时 {latency}ms', {
+            provider: ui(`provider.${payload.provider}`, payload.provider),
+            model: payload.model || model.value,
+            latency: payload.latency_ms ?? 0
+          }),
+          'success'
+        );
+      } catch (error) {
+        setProviderTestStatus(
+          formatUi('advanced.test_provider_failed', '连接测试失败：{message}', { message: error.message || String(error) }),
+          'error'
+        );
+      } finally {
+        providerTest.disabled = false;
+        providerTest.removeAttribute('aria-busy');
+        providerTest.innerHTML = `<i class="ri-plug-2-line"></i><span>${escapeHtml(ui('advanced.test_provider', '测试连接'))}</span>`;
+      }
+      loadGlossarySettings().catch(error => {
+        setSettingsStatus(error.message || ui('settings.glossary_load_failed', '术语表读取失败'), true);
+      });
+    }
+
     async function refreshModelList(silent = false) {
       const preset = providerPresets[provider.value];
       if (!preset) {
@@ -5154,6 +5574,7 @@ INDEX_HTML = r"""<!doctype html>
       if (!preset) {
         keyLink.hidden = true;
         setModelStatus('');
+        setProviderTestStatus('');
         return;
       }
       providerBadge.textContent = ui(`provider.${provider.value}`, preset.label);
@@ -5197,6 +5618,77 @@ INDEX_HTML = r"""<!doctype html>
         ? formatUi('file.directory.count', '{root}（{count} 个文件）', { root: directoryRoots[0] || ui('file.directory', '目录'), count: directoryFiles.length })
         : ui('file.ftbquests_dir.placeholder', '选择 quests、lang 或 en_us 目录');
       glossaryDisplay.textContent = glossaryInput.files.length ? glossaryInput.files[0].name : ui('translator.glossary.placeholder', '可选 .json 术语表');
+    }
+
+    function buildSubmissionData() {
+      const data = new FormData(form);
+      if (inputKind.value === 'ftbquests') {
+        data.delete('ftbquests_files');
+        data.delete('ftbquests_directory_files');
+        Array.from(ftbquestsInput.files || []).forEach(file => {
+          data.append('ftbquests_files', file, file.name);
+        });
+        Array.from(ftbquestsDirectoryInput.files || []).forEach(file => {
+          data.append('ftbquests_files', file, file.webkitRelativePath || file.name);
+        });
+        if (!data.getAll('ftbquests_files').length) {
+          throw new Error(ui('error.ftbquests_missing_input', '请上传 FTB Quests ZIP/SNBT，或选择 quests/lang/en_us 目录'));
+        }
+      } else if (inputKind.value === 'json') {
+        data.delete('json_files');
+        Array.from(jsonInput.files || []).forEach(file => {
+          data.append('json_files', file, file.name);
+        });
+        if (!data.getAll('json_files').length) {
+          throw new Error(ui('error.json_missing_input', '请上传语言 JSON 文件'));
+        }
+      }
+      return data;
+    }
+
+    function renderPreflight(payload) {
+      if (!preflightSummary || !preflightMessages) {
+        return;
+      }
+      const summary = payload.summary || {};
+      preflightSummary.hidden = false;
+      preflightSummary.innerHTML = [
+        ['preflight.inputs', '输入', summary.inputs || 0],
+        ['preflight.source_files', '源文件', summary.source_files || 0],
+        ['preflight.existing_targets', '已有目标', summary.existing_target_files || 0],
+        ['preflight.output_files', '预计输出', summary.output_files || 0]
+      ].map(([key, label, value]) => `
+        <div class="preflight-metric"><strong>${escapeHtml(value)}</strong><span>${escapeHtml(ui(key, label))}</span></div>
+      `).join('');
+      preflightMessages.innerHTML = (payload.messages || []).map(item => `
+        <li class="${escapeHtml(item.level || 'info')}">${escapeHtml(item.message || '')}</li>
+      `).join('');
+      statusBox.className = payload.ok ? 'status' : 'status error';
+      statusBox.textContent = payload.ok
+        ? ui('preflight.summary', '预检完成，可以开始生成。')
+        : ui('preflight.blocked', '预检发现阻断项，请修正后再开始生成。');
+    }
+
+    async function runPreflight() {
+      if (preflightRun) {
+        preflightRun.disabled = true;
+        preflightRun.setAttribute('aria-busy', 'true');
+      }
+      try {
+        const data = buildSubmissionData();
+        const response = await fetch('/api/preflight', { method: 'POST', body: data });
+        const payload = await response.json();
+        if (!response.ok && !payload.messages) {
+          throw new Error(payload.error || payload.message || ui('preflight.failed', '预检失败'));
+        }
+        renderPreflight(payload);
+        return payload;
+      } finally {
+        if (preflightRun) {
+          preflightRun.disabled = false;
+          preflightRun.removeAttribute('aria-busy');
+        }
+      }
     }
     function syncInputKind() {
       const mode = inputKind.value === 'ftbquests' ? 'ftbquests' : (inputKind.value === 'json' ? 'json' : 'jar');
@@ -5330,8 +5822,14 @@ INDEX_HTML = r"""<!doctype html>
         }
       });
       modelRefresh.addEventListener('click', () => refreshModelList(false));
+      if (providerTest) {
+        providerTest.addEventListener('click', testProviderConnection);
+      }
       [apiBaseUrl, apiKey, apiKeyEnv].forEach(input => {
-        input.addEventListener('input', () => scheduleModelFetch(650));
+        input.addEventListener('input', () => {
+          setProviderTestStatus('');
+          scheduleModelFetch(650);
+        });
       });
     }
     bindModelSelect();
@@ -5348,6 +5846,14 @@ INDEX_HTML = r"""<!doctype html>
     ftbquestsInput.addEventListener('change', handleFtbquestsInputChange);
     ftbquestsDirectoryInput.addEventListener('change', handleFtbquestsInputChange);
     jsonInput.addEventListener('change', syncFiles);
+    if (preflightRun) {
+      preflightRun.addEventListener('click', () => {
+        runPreflight().catch(error => {
+          statusBox.className = 'status error';
+          statusBox.textContent = error.message;
+        });
+      });
+    }
     glossaryInput.addEventListener('change', syncFiles);
     document.querySelectorAll('[data-input-kind]').forEach(button => {
       button.addEventListener('click', () => {
@@ -5387,18 +5893,26 @@ INDEX_HTML = r"""<!doctype html>
       resultState.activeView = view;
       closeAllSelectMenus();
       const isSettingsView = view === 'settings';
+      const isHistoryView = view === 'history';
+      const isMainUtilityView = isSettingsView || isHistoryView;
       const settingsPage = document.getElementById('settings-page');
-      document.querySelector('.config-panel')?.toggleAttribute('hidden', isSettingsView);
-      document.querySelector('.results-panel')?.toggleAttribute('hidden', isSettingsView);
+      document.querySelector('.config-panel')?.toggleAttribute('hidden', isMainUtilityView);
+      document.querySelector('.results-panel')?.toggleAttribute('hidden', isMainUtilityView);
       if (settingsPage) {
         settingsPage.hidden = !isSettingsView;
+      }
+      if (historyPanel) {
+        historyPanel.hidden = !isHistoryView;
+        if (isHistoryView) {
+          loadJobHistory();
+        }
       }
       document.querySelectorAll('.side-nav button[data-view], .top-tabs button[data-view]').forEach(button => {
         const isActive = button.dataset.view === view;
         button.classList.toggle('active', isActive);
         button.setAttribute('aria-current', isActive ? 'page' : 'false');
       });
-      if (isSettingsView) {
+      if (isMainUtilityView) {
         return;
       }
       document.querySelectorAll('.view-shell').forEach(shell => {
@@ -5416,6 +5930,89 @@ INDEX_HTML = r"""<!doctype html>
     document.querySelectorAll('[data-view]').forEach(button => {
       button.addEventListener('click', () => switchView(button.dataset.view));
     });
+    if (historyRefresh) {
+      historyRefresh.addEventListener('click', loadJobHistory);
+    }
+    [historyStatusFilter, historyKindFilter].forEach(filter => {
+      if (filter) {
+        filter.addEventListener('change', renderJobHistory);
+      }
+    });
+
+    async function loadJobHistory() {
+      if (!historyList) {
+        return;
+      }
+      historyList.innerHTML = `<div class="empty">${escapeHtml(ui('history.loading', '正在读取...'))}</div>`;
+      const response = await fetch('/api/jobs');
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error || ui('history.load_failed', '读取任务历史失败'));
+      }
+      historyRecords = Array.isArray(payload.jobs) ? payload.jobs : [];
+      renderJobHistory();
+    }
+
+    function renderJobHistory() {
+      if (!historyList) {
+        return;
+      }
+      const statusFilter = historyStatusFilter?.value || 'all';
+      const kindFilter = historyKindFilter?.value || 'all';
+      const rows = historyRecords.filter(record => {
+        return (statusFilter === 'all' || record.status === statusFilter)
+          && (kindFilter === 'all' || record.input_kind === kindFilter);
+      });
+      if (historyCount) {
+        historyCount.textContent = formatUi('history.count', '共 {count} 条', { count: rows.length });
+      }
+      if (!rows.length) {
+        historyList.innerHTML = `<div class="empty">${escapeHtml(ui('history.empty', '没有匹配的历史任务。'))}</div>`;
+        return;
+      }
+      historyList.innerHTML = `
+        <table>
+          <thead><tr><th>${escapeHtml(ui('history.time', '时间'))}</th><th>${escapeHtml(ui('history.kind', '输入类型'))}</th><th>${escapeHtml(ui('history.status', '状态'))}</th><th>${escapeHtml(ui('result.provider', 'Provider'))}</th><th>${escapeHtml(ui('history.counts', '成功/失败'))}</th><th>${escapeHtml(ui('history.downloads', '下载'))}</th></tr></thead>
+          <tbody>${rows.map(renderJobHistoryRow).join('')}</tbody>
+        </table>
+      `;
+    }
+
+    function renderJobHistoryRow(record) {
+      const downloads = record.downloads || {};
+      const links = Object.entries(downloads).map(([label, url]) => `<a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(historyDownloadLabel(label))}</a>`).join(' ');
+      return `
+        <tr>
+          <td>${escapeHtml(record.created_at || '')}<br><span class="muted">${escapeHtml(record.job_id || '')}</span></td>
+          <td>${escapeHtml(historyKindLabel(record.input_kind))}</td>
+          <td>${escapeHtml(historyStatusLabel(record.status))}</td>
+          <td>${escapeHtml(record.provider || '')}<br><span class="muted">${escapeHtml(record.model || '')}</span></td>
+          <td>${escapeHtml(record.success_count || 0)} / ${escapeHtml(record.failure_count || 0)}</td>
+          <td>${links || escapeHtml(ui('history.no_downloads', '无可用下载'))}</td>
+        </tr>
+      `;
+    }
+
+    function historyKindLabel(kind) {
+      return kind === 'ftbquests' ? ui('input.ftbquests', 'FTB Quests 任务书') : (kind === 'json' ? ui('input.json', '语言 JSON 文件') : ui('input.jar', 'Mod JAR 语言文件'));
+    }
+
+    function historyStatusLabel(status) {
+      return status === 'done' ? ui('history.done', '完成') : (status === 'cancelled' ? ui('history.cancelled', '已中断') : ui('history.error', '失败'));
+    }
+
+    function historyDownloadLabel(label) {
+      const labels = {
+        pack: ui('result.download_pack', '下载资源包'),
+        json: ui('result.download_json', '下载 JSON'),
+        ftbquests_patch: ui('result.download_ftbquests', '下载任务书补丁'),
+        report: ui('result.open_report', '打开报告'),
+        hardcoded_report: ui('result.hardcoded_report', '硬编码报告'),
+        hardcoded_map: ui('result.hardcoded_map', '硬编码映射'),
+        api_debug_log: ui('result.api_log', 'API 调试日志')
+      };
+      return labels[label] || label;
+    }
 
     function refreshSelectMenusForCurrentLocale() {
       buildUiLocaleMenu();
@@ -5659,28 +6256,11 @@ INDEX_HTML = r"""<!doctype html>
       try {
         applyCacheDirSetting(cacheDirField ? cacheDirField.value : storedCacheDirSetting());
         applyUiLocaleDirSetting(uiLocaleDirField ? uiLocaleDirField.value : storedUiLocaleDirSetting());
-        const data = new FormData(form);
-        if (inputKind.value === 'ftbquests') {
-          data.delete('ftbquests_files');
-          data.delete('ftbquests_directory_files');
-          Array.from(ftbquestsInput.files || []).forEach(file => {
-            data.append('ftbquests_files', file, file.name);
-          });
-          Array.from(ftbquestsDirectoryInput.files || []).forEach(file => {
-            data.append('ftbquests_files', file, file.webkitRelativePath || file.name);
-          });
-          if (!data.getAll('ftbquests_files').length) {
-            throw new Error(ui('error.ftbquests_missing_input', '请上传 FTB Quests ZIP/SNBT，或选择 quests/lang/en_us 目录'));
-          }
-        } else if (inputKind.value === 'json') {
-          data.delete('json_files');
-          Array.from(jsonInput.files || []).forEach(file => {
-            data.append('json_files', file, file.name);
-          });
-          if (!data.getAll('json_files').length) {
-            throw new Error(ui('error.json_missing_input', '请上传语言 JSON 文件'));
-          }
+        const preflight = await runPreflight();
+        if (!preflight.ok) {
+          throw new Error(ui('preflight.blocked', '预检发现阻断项，请修正后再开始生成。'));
         }
+        const data = buildSubmissionData();
         const response = await fetch('/api/translate', { method: 'POST', body: data });
         const payload = await response.json();
         if (!response.ok || !payload.ok) {
@@ -5926,6 +6506,7 @@ INDEX_HTML = r"""<!doctype html>
       resultState.activeTab = 'language';
       resultState.languageSearch = '';
       resultState.languageJarFilter = '全部';
+      resultState.languageStatusFilter = 'all';
       resultState.languageFilteredCacheKey = '';
       resultState.languageFilteredEntries = [];
       resultState.languageEdits = {};
@@ -6000,6 +6581,7 @@ INDEX_HTML = r"""<!doctype html>
             <div class="summary-group-grid">
               <div class="metric"><strong>${formatSeconds(payload.elapsed_seconds)}</strong><span>${escapeHtml(ui('result.elapsed', '耗时'))}</span></div>
               <div class="metric"><strong>${payload.cache_hits || 0}</strong><span>${escapeHtml(ui('result.cache_hits', '缓存命中'))}</span></div>
+              <div class="metric"><strong>${payload.memory_hits || 0}</strong><span>${escapeHtml(ui('result.memory_hits', '记忆命中'))}</span></div>
               <div class="metric"><strong>${payload.cache_misses || 0}</strong><span>${escapeHtml(ui('result.actual_translation', '实际翻译'))}</span></div>
               <div class="metric"><strong>${candidateCount}</strong><span>${escapeHtml(ui('result.candidate_text', '候选文本'))}</span></div>
             </div>
@@ -6132,13 +6714,66 @@ INDEX_HTML = r"""<!doctype html>
             <button type="button" class="control" data-select-trigger="jar-filter" aria-haspopup="listbox" aria-expanded="false" aria-controls="language-jar-filter-menu"><span class="value" id="language-jar-filter-display" title="${escapeHtml(activeLabel)}">${escapeHtml(activeDisplay)}</span><i class="ri-arrow-down-s-line chevron"></i></button>
             <div class="ghost-menu" id="language-jar-filter-menu" role="listbox" hidden>${jarMenuOptions}</div>
           </div>
+          <div class="status-filter" id="language-status-filter" aria-label="${escapeHtml(ui('result.status_filter', '状态筛选'))}">
+            ${renderLanguageStatusFilters(payload)}
+          </div>
           <input id="language-search" value="${escapeHtml(resultState.languageSearch)}" placeholder="${escapeHtml(ui('result.search_language', '搜索状态、Mod ID、Key、原文或译文'))}">
           ${isJsonResult ? '' : `<button type="button" id="export-language-edits"><i class="ri-download-2-line"></i><span>${escapeHtml(ui('result.export_edits', '导出已修改译文'))}</span></button>`}
         </div>
+        ${renderLanguagePreviewSummary(payload)}
+        ${renderJsonMetadataPreview(payload)}
         <div id="language-result-content" class="view-content">
           ${renderLanguageResultTable(payload)}
         </div>
       `;
+    }
+
+    function renderLanguageStatusFilters(payload) {
+      const entries = payload.entries || [];
+      const counts = {};
+      entries.forEach(entry => {
+        const status = entry.status || 'unknown';
+        counts[status] = (counts[status] || 0) + 1;
+      });
+      const ordered = ['translated', 'existing', 'skipped', 'failed', 'api_failed', 'incomplete', 'jar_failed'];
+      const statuses = ['all'].concat(ordered.filter(status => counts[status])).concat(
+        Object.keys(counts).filter(status => !ordered.includes(status)).sort()
+      );
+      if (!statuses.includes(resultState.languageStatusFilter)) {
+        resultState.languageStatusFilter = 'all';
+      }
+      return statuses.map(status => {
+        const count = status === 'all' ? entries.length : counts[status];
+        const label = status === 'all'
+          ? formatUi('result.all_count', '全部 {count}', { count })
+          : formatUi('result.status_count', '{status} {count}', { status: statusLabel(status), count });
+        return `<button type="button" data-language-status="${escapeHtml(status)}" class="${resultState.languageStatusFilter === status ? 'active' : ''}">${escapeHtml(label)}</button>`;
+      }).join('');
+    }
+
+    function renderLanguagePreviewSummary(payload) {
+      const entries = getFilteredLanguageEntries(payload);
+      const changed = entries.filter(entry => String(entry.target ?? '') !== String(entry.source ?? '')).length;
+      const issues = entries.filter(entry => ['failed', 'api_failed', 'incomplete', 'jar_failed'].includes(entry.status)).length;
+      return `
+        <div class="preview-summary" id="language-preview-summary">
+          <span class="preview-chip">${escapeHtml(formatUi('result.preview_visible', '预览 {count} 条', { count: entries.length }))}</span>
+          <span class="preview-chip">${escapeHtml(formatUi('result.preview_changed', '译文变化 {count} 条', { count: changed }))}</span>
+          <span class="preview-chip">${escapeHtml(formatUi('result.preview_issues', '待处理 {count} 条', { count: issues }))}</span>
+        </div>
+      `;
+    }
+
+    function renderJsonMetadataPreview(payload) {
+      const items = Array.isArray(payload.json_metadata_preview) ? payload.json_metadata_preview : [];
+      if (!items.length) {
+        return '';
+      }
+      const chips = items.map(item => {
+        const parts = [item.file, item.schema, item.locale, item.name, item.source_locale].filter(Boolean).join(' · ');
+        return `<span class="preview-chip">${escapeHtml(parts)}</span>`;
+      }).join('');
+      return `<div class="metadata-preview" id="json-metadata-preview"><span>${escapeHtml(ui('result.metadata_preview', 'Metadata 预览'))}</span>${chips}</div>`;
     }
 
     function renderLanguageResultTable(payload) {
@@ -6150,14 +6785,16 @@ INDEX_HTML = r"""<!doctype html>
         const target = Object.prototype.hasOwnProperty.call(resultState.languageEdits, editId)
           ? resultState.languageEdits[editId]
           : entry.target;
+        const retryDetail = retryStatusDetail(entry);
+        const changed = String(target ?? '') !== String(entry.source ?? '');
         return `
         <tr class="result-row">
-          <td>${escapeHtml(statusLabel(entry.status))}</td>
+          <td>${escapeHtml(statusLabel(entry.status))}${retryDetail ? `<br><span class="muted">${escapeHtml(retryDetail)}</span>` : ''}</td>
           <td>${escapeHtml(entry.jar)}</td>
           <td>${escapeHtml(entry.mod_id)}</td>
           <td>${escapeHtml(entry.key)}</td>
           <td>${escapeHtml(entry.source)}</td>
-          <td><textarea data-language-edit="${escapeHtml(editId)}" placeholder="${escapeHtml(ui('result.target', '译文'))}">${escapeHtml(target)}</textarea></td>
+          <td><textarea data-language-edit="${escapeHtml(editId)}" placeholder="${escapeHtml(ui('result.target', '译文'))}">${escapeHtml(target)}</textarea>${changed ? `<div class="diff-badge">${escapeHtml(ui('result.diff_changed', '与原文不同'))}</div>` : ''}</td>
         </tr>
       `;
       }).join('');
@@ -6175,13 +6812,17 @@ INDEX_HTML = r"""<!doctype html>
         return [];
       }
       const jarFilter = resultState.languageJarFilter || '全部';
+      const statusFilter = resultState.languageStatusFilter || 'all';
       const query = resultState.languageSearch.trim().toLowerCase();
-      const cacheKey = `${payload.job_id || ''}${jarFilter}${query}${(payload.entries || []).length}`;
+      const cacheKey = `${payload.job_id || ''}${jarFilter}${statusFilter}${query}${(payload.entries || []).length}`;
       if (resultState.languageFilteredCacheKey === cacheKey) {
         return resultState.languageFilteredEntries;
       }
       const entries = (payload.entries || []).filter(entry => {
         if (!jarFilterMatchesEntry(entry.jar, jarFilter)) {
+          return false;
+        }
+        if (statusFilter !== 'all' && entry.status !== statusFilter) {
           return false;
         }
         if (!query) {
@@ -6200,6 +6841,10 @@ INDEX_HTML = r"""<!doctype html>
       if (!target) {
         renderResultShell();
         return;
+      }
+      const summary = document.getElementById('language-preview-summary');
+      if (summary) {
+        summary.outerHTML = renderLanguagePreviewSummary(resultState.payload);
       }
       target.innerHTML = renderLanguageResultTable(resultState.payload);
       bindLanguageContentControls();
@@ -6518,7 +7163,7 @@ INDEX_HTML = r"""<!doctype html>
       statusBox.className = 'status';
       statusBox.textContent = ui('result.retrying_failed', '正在重试失败的翻译项...');
       try {
-        const response = await fetch(`/api/retry/${payload.job_id}`, { method: 'POST' });
+        const response = await fetch(`/api/retry/${encodeURIComponent(payload.job_id)}`, { method: 'POST' });
         const retryPayload = await response.json();
         if (!response.ok || !retryPayload.ok) {
           throw new Error(retryPayload.error || ui('result.retry_failed_error', '重试失败'));
@@ -6908,6 +7553,14 @@ INDEX_HTML = r"""<!doctype html>
           renderLanguageResultContent();
         }, 200);
       });
+      document.querySelectorAll('[data-language-status]').forEach(button => {
+        button.addEventListener('click', () => {
+          resultState.languageStatusFilter = button.dataset.languageStatus || 'all';
+          resultState.languageFilteredCacheKey = '';
+          resultState.languagePage = 1;
+          renderResultShell();
+        });
+      });
       const exportButton = document.getElementById('export-language-edits');
       if (exportButton) {
         exportButton.addEventListener('click', exportLanguageEdits);
@@ -7028,6 +7681,7 @@ INDEX_HTML = r"""<!doctype html>
             <div>
               <h3>${escapeHtml(ui('result.hardcoded_workbench', '硬编码映射工作台'))}</h3>
               <div class="muted">${escapeHtml(ui('result.hardcoded_workbench_desc', '填写 translation 后可导出 hardcoded-map.json。'))}</div>
+              <div class="muted">${escapeHtml(ui('result.hardcoded_runtime_note', '注意：硬编码映射不会随资源包自动生效，需要运行时补丁 Mod、Mixin 或对应配置模板读取。'))}</div>
             </div>
             <div class="actions">
               <button type="button" id="import-hardcoded"><i class="ri-upload-2-line"></i><span>${escapeHtml(ui('result.import_map', '导入 map'))}</span></button>
@@ -7440,6 +8094,16 @@ INDEX_HTML = r"""<!doctype html>
       return pair ? ui(pair[0], pair[1]) : status;
     }
 
+    function retryStatusDetail(entry) {
+      if (!entry.retry_previous_status) {
+        return '';
+      }
+      return formatUi('result.retry_status_detail', '重试：{from} -> {to}', {
+        from: statusLabel(entry.retry_previous_status),
+        to: statusLabel(entry.status)
+      });
+    }
+
     function escapeHtml(value) {
       return String(value ?? '').replace(/[&<>"']/g, ch => ({
         '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
@@ -7476,11 +8140,18 @@ def make_handler(workdir: Path):
     jobs: dict[str, dict[str, Any]] = {}
     cancel_events: dict[str, Event] = {}
     jobs_lock = Lock()
+    history_lock = Lock()
 
     def update_job(job_id: str, **values: Any) -> None:
+        snapshot: dict[str, Any] | None = None
         with jobs_lock:
             job = jobs.setdefault(job_id, {})
             job.update(values)
+            if job.get("status") in {"done", "error", "cancelled"}:
+                snapshot = dict(job)
+        if snapshot is not None:
+            with history_lock:
+                append_job_history(workdir, build_job_history_record(job_id, snapshot))
 
     def get_job(job_id: str) -> dict[str, Any] | None:
         with jobs_lock:
@@ -7513,6 +8184,24 @@ def make_handler(workdir: Path):
             if parsed.path.startswith("/api/progress/"):
                 self._send_progress(parsed.path.removeprefix("/api/progress/"))
                 return
+            if parsed.path == "/api/jobs":
+                self._send_json({"ok": True, "jobs": read_job_history(workdir)})
+                return
+            if parsed.path == "/api/glossary":
+                try:
+                    terms = read_user_glossary(workdir)
+                    self._send_json(
+                        {
+                            "ok": True,
+                            "terms": terms,
+                            "count": len(terms),
+                            "conflicts": glossary_conflicts(terms),
+                            "path": str(user_glossary_path(workdir)),
+                        }
+                    )
+                except Exception as exc:
+                    self._send_json({"ok": False, "error": str(exc)}, status=500)
+                return
             if parsed.path == "/api/ui-locales":
                 try:
                     payload = self._handle_ui_locales(parsed.query)
@@ -7523,6 +8212,12 @@ def make_handler(workdir: Path):
             if parsed.path.startswith("/api/ui-locales/export/"):
                 try:
                     self._send_ui_locale_export(parsed.path.removeprefix("/api/ui-locales/export/"), parsed.query)
+                except Exception as exc:
+                    self._send_json({"ok": False, "error": str(exc)}, status=500)
+                return
+            if parsed.path.startswith("/api/ui-locales/missing-template/"):
+                try:
+                    self._send_ui_locale_missing_template(parsed.path.removeprefix("/api/ui-locales/missing-template/"), parsed.query)
                 except Exception as exc:
                     self._send_json({"ok": False, "error": str(exc)}, status=500)
                 return
@@ -7543,6 +8238,20 @@ def make_handler(workdir: Path):
                 except Exception as exc:
                     self._send_json({"ok": False, "error": str(exc)}, status=500)
                 return
+            if parsed.path == "/api/test-provider":
+                try:
+                    payload = self._handle_test_provider()
+                    self._send_json(payload, status=200 if payload.get("ok") else 400)
+                except Exception as exc:
+                    self._send_json({"ok": False, "error_type": "bad_request", "message": str(exc)}, status=400)
+                return
+            if parsed.path == "/api/preflight":
+                try:
+                    payload = self._handle_preflight()
+                    self._send_json(payload, status=200 if payload.get("ok") else 400)
+                except Exception as exc:
+                    self._send_json({"ok": False, "error": str(exc)}, status=400)
+                return
             if parsed.path == "/api/cache/clear":
                 try:
                     payload = self._handle_clear_cache()
@@ -7556,6 +8265,20 @@ def make_handler(workdir: Path):
                     self._send_json(payload)
                 except Exception as exc:
                     self._send_json({"ok": False, "error": str(exc)}, status=500)
+                return
+            if parsed.path == "/api/ui-locales/check":
+                try:
+                    payload = self._handle_ui_locale_check()
+                    self._send_json(payload, status=200 if payload.get("ok") else 400)
+                except Exception as exc:
+                    self._send_json({"ok": False, "error": str(exc)}, status=400)
+                return
+            if parsed.path == "/api/glossary":
+                try:
+                    payload = self._handle_glossary_save()
+                    self._send_json(payload)
+                except Exception as exc:
+                    self._send_json({"ok": False, "error": str(exc)}, status=400)
                 return
             if parsed.path == "/api/translate":
                 try:
@@ -7617,6 +8340,41 @@ def make_handler(workdir: Path):
             )
             return {"ok": True, "models": models}
 
+        def _handle_preflight(self) -> dict[str, Any]:
+            length = int(self.headers.get("Content-Length") or "0")
+            body = self.rfile.read(length)
+            parts = parse_multipart(self.headers.get("Content-Type", ""), body)
+            fields = collect_fields(parts)
+            input_kind = fields.get("input_kind", "jar") or "jar"
+            source_locale = fields.get("source_locale", "en_us") or "en_us"
+            target_locale = fields.get("target_locale", "zh_cn") or "zh_cn"
+            with tempfile.TemporaryDirectory(prefix="preflight-", dir=workdir) as temp_dir:
+                temp_root = Path(temp_dir)
+                paths = save_preflight_uploads(input_kind, parts, temp_root, source_locale)
+                return preflight_inputs(input_kind, paths, source_locale, target_locale)
+
+        def _handle_test_provider(self) -> dict[str, Any]:
+            length = int(self.headers.get("Content-Length") or "0")
+            body = self.rfile.read(length)
+            payload = json.loads(body.decode("utf-8") or "{}")
+            provider = str(payload.get("provider", "openai-compatible") or "openai-compatible")
+            if not is_ai_provider(provider):
+                return {
+                    "ok": False,
+                    "provider": provider,
+                    "error_type": "unsupported_provider",
+                    "message": "当前翻译器不需要 API 连接测试",
+                }
+            preset = get_provider_preset(provider)
+            return test_provider_connection(
+                provider=provider,
+                api_url=str(payload.get("base_url") or payload.get("api_url") or preset.api_url),
+                api_key=str(payload.get("api_key", "")).strip(),
+                api_key_env=str(payload.get("api_key_env", preset.api_key_env) or preset.api_key_env),
+                model=str(payload.get("model", preset.model) or preset.model),
+                timeout=max(1.0, min(60.0, float(payload.get("api_timeout", "10") or "10"))),
+            )
+
         def _handle_clear_cache(self) -> dict[str, Any]:
             length = int(self.headers.get("Content-Length") or "0")
             body = self.rfile.read(length)
@@ -7659,12 +8417,21 @@ def make_handler(workdir: Path):
             self.end_headers()
             self.wfile.write(data)
 
-        def _handle_ui_locale_import(self) -> dict[str, Any]:
-            length = int(self.headers.get("Content-Length") or "0")
-            body = self.rfile.read(length)
-            parts = parse_multipart(self.headers.get("Content-Type", ""), body)
-            fields = collect_fields(parts)
-            root = resolve_ui_locale_root(workdir, fields.get("ui_locale_dir", ""))
+        def _send_ui_locale_missing_template(self, locale: str, query: str) -> None:
+            root = self._ui_locale_root_from_query(query)
+            normalized = resolve_ui_locale(unquote(locale))
+            package = export_ui_locale_package(normalized, root)
+            template = build_ui_locale_missing_template(package)
+            data = json.dumps(template, ensure_ascii=False, indent=2).encode("utf-8") + b"\n"
+            filename = f"mc-mod-i18n-ui-{package['locale']}-missing.json"
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+            self.end_headers()
+            self.wfile.write(data)
+
+        def _parse_uploaded_ui_locale_package(self, parts: list[MultipartPart]) -> dict[str, Any]:
             part = next((item for item in parts if item.filename and item.name in {"ui_locale_file", "ui_locale_pack"} and item.data), None)
             if part is None:
                 raise ValueError("请上传界面语言包 JSON")
@@ -7672,9 +8439,41 @@ def make_handler(workdir: Path):
                 payload = json.loads(part.data.decode("utf-8-sig"))
             except json.JSONDecodeError as exc:
                 raise ValueError(f"语言包 JSON 无法解析：{exc}") from exc
-            package = parse_ui_locale_package(payload, part.filename or "")
+            return parse_ui_locale_package(payload, part.filename or "")
+
+        def _handle_ui_locale_check(self) -> dict[str, Any]:
+            length = int(self.headers.get("Content-Length") or "0")
+            body = self.rfile.read(length)
+            parts = parse_multipart(self.headers.get("Content-Type", ""), body)
+            package = self._parse_uploaded_ui_locale_package(parts)
+            return {"ok": True, **package, **check_ui_locale_package(package)}
+
+        def _handle_ui_locale_import(self) -> dict[str, Any]:
+            length = int(self.headers.get("Content-Length") or "0")
+            body = self.rfile.read(length)
+            parts = parse_multipart(self.headers.get("Content-Type", ""), body)
+            fields = collect_fields(parts)
+            root = resolve_ui_locale_root(workdir, fields.get("ui_locale_dir", ""))
+            package = self._parse_uploaded_ui_locale_package(parts)
+            check = check_ui_locale_package(package)
+            if check["placeholder_mismatches"]:
+                raise ValueError("语言包占位符不匹配，请先修正后再导入")
             result = write_extension_package(root, package)
             return {"ok": True, "ui_locale_dir": str(root), **result}
+
+        def _handle_glossary_save(self) -> dict[str, Any]:
+            length = int(self.headers.get("Content-Length") or "0")
+            body = self.rfile.read(length)
+            payload = json.loads(body.decode("utf-8") or "{}")
+            terms = normalize_glossary_terms(payload.get("terms", {}))
+            path = write_user_glossary(workdir, terms)
+            return {
+                "ok": True,
+                "terms": terms,
+                "count": len(terms),
+                "conflicts": glossary_conflicts(terms),
+                "path": str(path),
+            }
 
         def _handle_translate(self) -> dict[str, Any]:
             length = int(self.headers.get("Content-Length") or "0")
@@ -7714,12 +8513,7 @@ def make_handler(workdir: Path):
             if not jar_paths:
                 raise ValueError(translate_ui("error.jar_no_file", ui_locale, ui_locale_root))
 
-            glossary_path = None
-            for part in parts:
-                if part.name == "glossary" and part.filename and part.data:
-                    glossary_path = upload_dir / sanitize_filename(part.filename)
-                    glossary_path.write_bytes(part.data)
-                    break
+            glossary_path = glossary_upload_or_saved(parts, upload_dir, workdir)
 
             progress_total = max(1, int(fields.get("api_concurrency", "2") or "2"))
             api_batch_size = max(5, min(200, int(fields.get("api_batch_size", "40") or "40")))
@@ -7784,6 +8578,11 @@ def make_handler(workdir: Path):
                 batch_size=api_batch_size,
                 result=None,
                 error="",
+                created_at=utc_timestamp(),
+                input_kind="jar",
+                target_locale=fields.get("target_locale", "zh_cn") or "zh_cn",
+                provider=fields.get("provider", "glossary") or "glossary",
+                model=fields.get("model", "gpt-4o-mini") or "gpt-4o-mini",
                 args=None,
                 api_debug_log_path=str(api_debug_log_path),
             )
@@ -7811,6 +8610,7 @@ def make_handler(workdir: Path):
                 progress_callback=progress_callback,
             )
             cache_root = resolve_cache_root(workdir, fields.get("cache_dir", ""))
+            args.translation_memory_path = str(translation_memory_path(cache_root))
             update_job(
                 job_id,
                 args={
@@ -7827,6 +8627,7 @@ def make_handler(workdir: Path):
                     "model": args.model,
                     "ignore_cache": args.ignore_cache,
                     "cache_dir": str(cache_root),
+                    "translation_memory_path": args.translation_memory_path,
                 },
             )
 
@@ -7871,12 +8672,7 @@ def make_handler(workdir: Path):
             if not json_paths:
                 raise ValueError(translate_ui("error.json_no_file", ui_locale, ui_locale_root))
 
-            glossary_path = None
-            for part in parts:
-                if part.name == "glossary" and part.filename and part.data:
-                    glossary_path = upload_dir / sanitize_filename(part.filename)
-                    glossary_path.write_bytes(part.data)
-                    break
+            glossary_path = glossary_upload_or_saved(parts, upload_dir, workdir)
 
             api_batch_size = max(5, min(200, int(fields.get("api_batch_size", "40") or "40")))
             api_timeout = max(1.0, min(300.0, float(fields.get("api_timeout", "10") or "10")))
@@ -7941,6 +8737,11 @@ def make_handler(workdir: Path):
                 batch_size=api_batch_size,
                 result=None,
                 error="",
+                created_at=utc_timestamp(),
+                input_kind="json",
+                target_locale=fields.get("target_locale", "zh_cn") or "zh_cn",
+                provider=fields.get("provider", "glossary") or "glossary",
+                model=fields.get("model", "gpt-4o-mini") or "gpt-4o-mini",
                 args=None,
                 api_debug_log_path=str(api_debug_log_path),
             )
@@ -7961,6 +8762,8 @@ def make_handler(workdir: Path):
                 model=fields.get("model", "gpt-4o-mini") or "gpt-4o-mini",
                 progress_callback=progress_callback,
             )
+            cache_root = resolve_cache_root(workdir, fields.get("cache_dir", ""))
+            args.translation_memory_path = str(translation_memory_path(cache_root))
             update_job(
                 job_id,
                 args={
@@ -7976,7 +8779,8 @@ def make_handler(workdir: Path):
                     "api_timeout": args.api_timeout,
                     "model": args.model,
                     "ignore_cache": True,
-                    "cache_dir": "",
+                    "cache_dir": str(cache_root),
+                    "translation_memory_path": args.translation_memory_path,
                 },
             )
 
@@ -8100,16 +8904,16 @@ def make_handler(workdir: Path):
                 batch_size=api_batch_size,
                 result=None,
                 error="",
+                created_at=utc_timestamp(),
+                input_kind="ftbquests",
+                target_locale=fields.get("target_locale", "zh_cn") or "zh_cn",
+                provider=fields.get("provider", "glossary") or "glossary",
+                model=fields.get("model", "gpt-4o-mini") or "gpt-4o-mini",
                 args=None,
                 api_debug_log_path=str(api_debug_log_path),
             )
 
-            glossary_path = None
-            for part in parts:
-                if part.name == "glossary" and part.filename and part.data:
-                    glossary_path = upload_dir / sanitize_filename(part.filename)
-                    glossary_path.write_bytes(part.data)
-                    break
+            glossary_path = glossary_upload_or_saved(parts, upload_dir, workdir)
 
             args = argparse.Namespace(
                 source_locale=source_locale,
@@ -8131,6 +8935,7 @@ def make_handler(workdir: Path):
                 progress_callback=progress_callback,
             )
             cache_root = resolve_cache_root(workdir, fields.get("cache_dir", ""))
+            args.translation_memory_path = str(translation_memory_path(cache_root))
             update_job(
                 job_id,
                 args={
@@ -8147,6 +8952,7 @@ def make_handler(workdir: Path):
                     "model": args.model,
                     "ignore_cache": args.ignore_cache,
                     "cache_dir": str(cache_root),
+                    "translation_memory_path": args.translation_memory_path,
                 },
             )
 
@@ -8190,44 +8996,7 @@ def make_handler(workdir: Path):
             started_at = time.perf_counter()
             translations, failed_map = translate_batch_with_failures(translator, items)
             elapsed_seconds = time.perf_counter() - started_at
-            updated = 0
-            still_failed = 0
-            remaining_failed_entries: list[dict[str, Any]] = []
-            visible_entries = result.get("entries", [])
-            visible_by_id = {entry_id(entry): entry for entry in visible_entries}
-            for failed_entry in failed_entries:
-                item_id = entry_id(failed_entry)
-                entry = visible_by_id.get(item_id, failed_entry)
-                if item_id in failed_map or item_id not in translations:
-                    entry["message"] = str(failed_map.get(item_id, "retry did not return translation"))
-                    still_failed += 1
-                    remaining_failed_entries.append(dict(entry))
-                    continue
-                translated = translations[item_id]
-                errors = validate_translation(entry.get("source", ""), translated)
-                if errors:
-                    entry["message"] = "; ".join(errors)
-                    still_failed += 1
-                    remaining_failed_entries.append(dict(entry))
-                    continue
-                entry["target"] = translated
-                entry["status"] = "translated"
-                entry["message"] = "手动重试成功"
-                updated += 1
-
-            summary: dict[str, int] = {}
-            base_summary = result.get("summary", {})
-            if isinstance(base_summary, dict):
-                summary.update({str(key): int(value) for key, value in base_summary.items()})
-                summary["api_failed"] = still_failed
-                summary["translated"] = max(0, summary.get("translated", 0)) + updated
-            else:
-                summary = {}
-            if "api_failed" in summary:
-                summary["api_failed"] = still_failed
-            result["summary"] = summary
-            result["api_failure_count"] = still_failed
-            result["api_failed_entries"] = remaining_failed_entries
+            updated, still_failed, _ = merge_retry_result(result, failed_entries, translations, failed_map)
             result["retry_elapsed_seconds"] = round(elapsed_seconds, 2)
             pack_url = str(result.get("pack_url") or "")
             if updated and pack_url.startswith(f"/download/{job_id}/"):
@@ -8368,13 +9137,151 @@ def fetch_provider_models(provider: str, base_url: str, api_key: str, api_key_en
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             response_text = response.read().decode("utf-8")
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"模型列表请求失败：HTTP {exc.code}: {body[:300]}") from exc
+    except urllib.error.HTTPError:
+        raise
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         reason = getattr(exc, "reason", exc)
         raise RuntimeError(f"模型列表连接失败：{reason}") from exc
     return parse_models_response(response_text)
+
+
+def test_provider_connection(
+    provider: str,
+    api_url: str,
+    api_key: str,
+    api_key_env: str,
+    model: str,
+    timeout: float = 10.0,
+) -> dict[str, Any]:
+    started_at = time.perf_counter()
+    key = api_key or os.environ.get(api_key_env, "")
+    if not key:
+        return provider_test_error(
+            provider=provider,
+            model=model,
+            error_type="missing_key",
+            message=f"API Key 未填写，且环境变量 {api_key_env} 未设置",
+            started_at=started_at,
+            secret=api_key,
+        )
+    try:
+        models = fetch_provider_models(provider, api_url, api_key, api_key_env, timeout)
+    except urllib.error.HTTPError as exc:
+        try:
+            body = exc.read().decode("utf-8", errors="replace")
+        finally:
+            exc.close()
+        return provider_test_error(
+            provider=provider,
+            model=model,
+            error_type=provider_http_error_type(exc.code),
+            message=provider_http_error_message(exc.code, body),
+            started_at=started_at,
+            secret=key,
+            status_code=exc.code,
+        )
+    except RuntimeError as exc:
+        return provider_test_error(
+            provider=provider,
+            model=model,
+            error_type=provider_runtime_error_type(str(exc)),
+            message=str(exc),
+            started_at=started_at,
+            secret=key,
+        )
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        reason = getattr(exc, "reason", exc)
+        return provider_test_error(
+            provider=provider,
+            model=model,
+            error_type="network",
+            message=f"网络连接失败：{reason}",
+            started_at=started_at,
+            secret=key,
+        )
+    model_ids = {item["id"] for item in models}
+    if model and model_ids and model not in model_ids:
+        return provider_test_error(
+            provider=provider,
+            model=model,
+            error_type="model_not_found",
+            message=f"连接正常，但模型列表中没有 {model}",
+            started_at=started_at,
+            secret=key,
+        )
+    return {
+        "ok": True,
+        "provider": provider,
+        "model": model,
+        "latency_ms": elapsed_ms(started_at),
+        "message": "连接正常",
+    }
+
+
+def provider_test_error(
+    provider: str,
+    model: str,
+    error_type: str,
+    message: str,
+    started_at: float,
+    secret: str = "",
+    status_code: int | None = None,
+) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "ok": False,
+        "provider": provider,
+        "model": model,
+        "error_type": error_type,
+        "latency_ms": elapsed_ms(started_at),
+        "message": redact_secret(message, secret),
+    }
+    if status_code is not None:
+        payload["status_code"] = status_code
+    return payload
+
+
+def elapsed_ms(started_at: float) -> int:
+    return max(0, int((time.perf_counter() - started_at) * 1000))
+
+
+def redact_secret(text: str, secret: str) -> str:
+    redacted = str(text or "")
+    if secret:
+        redacted = redacted.replace(secret, "[redacted]")
+    redacted = re.sub(r"sk-[A-Za-z0-9._-]+", "[redacted]", redacted)
+    redacted = re.sub(r"sk-ant-[A-Za-z0-9._-]+", "[redacted]", redacted)
+    return redacted
+
+
+def provider_http_error_type(status_code: int) -> str:
+    if status_code in {401, 403}:
+        return "auth"
+    if status_code == 404:
+        return "not_found"
+    if status_code == 429:
+        return "rate_limited"
+    return "http_error"
+
+
+def provider_http_error_message(status_code: int, body: str) -> str:
+    if status_code in {401, 403}:
+        return f"认证失败：HTTP {status_code}"
+    if status_code == 404:
+        return f"接口地址不可用：HTTP 404。请检查 BaseURL 路径。"
+    if status_code == 429:
+        return "请求被限流：HTTP 429。请稍后重试或降低并发。"
+    preview = str(body or "").strip()[:180]
+    return f"请求失败：HTTP {status_code}" + (f": {preview}" if preview else "")
+
+
+def provider_runtime_error_type(message: str) -> str:
+    if "返回格式无法识别" in message:
+        return "bad_response"
+    if "API Key 未填写" in message:
+        return "missing_key"
+    if "连接失败" in message:
+        return "network"
+    return "request_failed"
 
 
 def parse_models_response(response_text: str) -> list[dict[str, str]]:
@@ -8408,6 +9315,203 @@ def parse_models_response(response_text: str) -> list[dict[str, str]]:
         seen.add(model_id)
         models.append({"id": model_id, "label": label or model_id})
     return models
+
+
+def preflight_inputs(kind: str, paths: list[Path], source_locale: str, target_locale: str) -> dict[str, Any]:
+    normalized_kind = kind if kind in {"jar", "ftbquests", "json"} else "jar"
+    messages: list[dict[str, str]] = []
+    items: list[dict[str, Any]] = []
+    source_locale = (source_locale or "en_us").strip().lower()
+    target_locale = (target_locale or "zh_cn").strip().lower()
+    if normalized_kind == "json":
+        items = preflight_json_paths(paths, source_locale, target_locale, messages)
+    elif normalized_kind == "ftbquests":
+        items = preflight_ftbquests_paths(paths, source_locale, target_locale, messages)
+    else:
+        items = preflight_jar_paths(paths, source_locale, target_locale, messages)
+    blocking = any(message.get("level") == "blocking" for message in messages)
+    if not messages:
+        messages.append({"level": "info", "message": "预检通过，可以开始生成。"})
+    return {
+        "ok": not blocking,
+        "kind": normalized_kind,
+        "source_locale": source_locale,
+        "target_locale": target_locale,
+        "summary": preflight_summary(normalized_kind, items),
+        "messages": messages,
+        "items": items,
+    }
+
+
+def save_preflight_uploads(kind: str, parts: list[MultipartPart], temp_root: Path, source_locale: str) -> list[Path]:
+    if kind == "json":
+        paths: list[Path] = []
+        for index, part in enumerate([part for part in parts if part.name == "json_files" and part.filename and part.data], start=1):
+            filename = sanitize_filename(part.filename or f"language-{index}.json")
+            if not filename.lower().endswith(".json"):
+                continue
+            path = temp_root / filename
+            path.write_bytes(part.data)
+            paths.append(path)
+        if not paths:
+            raise ValueError("请上传语言 JSON 文件")
+        return paths
+    if kind == "ftbquests":
+        uploaded = [part for part in parts if part.name == "ftbquests_files" and part.filename and part.data]
+        if not uploaded:
+            raise ValueError("请上传 FTB Quests ZIP/SNBT，或选择 quests/lang/en_us 目录")
+        zip_paths: list[Path] = []
+        snbt_parts: list[MultipartPart] = []
+        for index, part in enumerate(uploaded, start=1):
+            filename = sanitize_filename(part.filename or f"ftbquests-{index}.bin")
+            if filename.lower().endswith(".zip"):
+                path = temp_root / filename
+                path.write_bytes(part.data)
+                zip_paths.append(path)
+            elif filename.lower().endswith(".snbt"):
+                snbt_parts.append(part)
+        if zip_paths and (len(zip_paths) > 1 or snbt_parts):
+            raise ValueError("FTB Quests 模式一次只处理一个 ZIP，或上传一个/多个 SNBT 文件")
+        if zip_paths:
+            return [zip_paths[0]]
+        snbt_root = temp_root / "ftbquests_input"
+        for index, part in enumerate(snbt_parts, start=1):
+            relative = sanitize_relative_upload_path(part.filename or f"{source_locale}-{index}.snbt")
+            if "/" not in relative and re.match(r"^[a-z]{2}_[a-z]{2}\.snbt$", relative, flags=re.IGNORECASE):
+                relative = f"lang/{relative}"
+            target = safe_run_path(snbt_root, relative)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(part.data)
+        return [snbt_root]
+    paths = []
+    for index, part in enumerate([part for part in parts if part.name == "jars" and part.filename and part.data], start=1):
+        filename = sanitize_filename(part.filename or f"mod-{index}.jar")
+        if not filename.lower().endswith(".jar"):
+            continue
+        path = temp_root / filename
+        path.write_bytes(part.data)
+        paths.append(path)
+    if not paths:
+        raise ValueError("请上传 Mod JAR 文件")
+    return paths
+
+
+def preflight_summary(kind: str, items: list[dict[str, Any]]) -> dict[str, int]:
+    summary = {
+        "inputs": len(items),
+        "source_files": 0,
+        "existing_target_files": 0,
+        "output_files": 0,
+    }
+    if kind == "jar":
+        summary["source_files"] = sum(int(item.get("source_files", 0)) for item in items)
+        summary["existing_target_files"] = sum(int(item.get("existing_target_files", 0)) for item in items)
+        summary["output_files"] = summary["source_files"]
+    elif kind == "ftbquests":
+        summary["source_files"] = sum(int(item.get("source_files", 0)) for item in items)
+        summary["existing_target_files"] = sum(int(item.get("existing_target_files", 0)) for item in items)
+        summary["output_files"] = sum(int(item.get("output_files", 0)) for item in items)
+    else:
+        summary["source_files"] = len([item for item in items if not item.get("error")])
+        summary["output_files"] = summary["source_files"]
+    return summary
+
+
+def preflight_jar_paths(paths: list[Path], source_locale: str, target_locale: str, messages: list[dict[str, str]]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for path in paths:
+        try:
+            with ZipFile(path) as zf:
+                source_docs = collect_lang_documents(zf, source_locale)
+                target_docs = collect_lang_documents(zf, target_locale)
+                source_paths = [doc.path for doc in source_docs]
+                target_paths = {doc.path for doc in target_docs}
+                expected_targets = [target_path_for(doc.path, source_locale, target_locale) for doc in source_docs]
+                existing_targets = [target for target in expected_targets if target in target_paths]
+                if not source_docs:
+                    messages.append({"level": "blocking", "message": f"{path.name} 没有找到 {source_locale} 语言文件。"})
+                elif existing_targets:
+                    messages.append({"level": "info", "message": f"{path.name} 已包含 {len(existing_targets)} 个 {target_locale} 目标语言文件。"})
+                else:
+                    messages.append({"level": "info", "message": f"{path.name} 将生成 {len(expected_targets)} 个目标语言文件。"})
+                items.append(
+                    {
+                        "input": path.name,
+                        "source_files": len(source_docs),
+                        "existing_target_files": len(existing_targets),
+                        "source_paths": source_paths,
+                        "target_paths": expected_targets,
+                        "target_path": expected_targets[0] if expected_targets else "",
+                    }
+                )
+        except (BadZipFile, OSError, ValueError) as exc:
+            messages.append({"level": "blocking", "message": f"{path.name} 不是可读取的 JAR：{exc}"})
+            items.append({"input": path.name, "error": str(exc), "source_files": 0, "existing_target_files": 0})
+    return items
+
+
+def preflight_json_paths(paths: list[Path], source_locale: str, target_locale: str, messages: list[dict[str, str]]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for path in paths:
+        try:
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
+            schema, _root, entries = parse_json_translation_payload(data, path.name)
+            output_name = json_target_filename(path.name, source_locale, target_locale, schema)
+            messages.append({"level": "info", "message": f"{path.name} 识别为 {json_schema_label(schema)}，将输出 {output_name}。"})
+            items.append(
+                {
+                    "input": path.name,
+                    "schema": schema,
+                    "entries": len(entries),
+                    "output_name": output_name,
+                }
+            )
+        except json.JSONDecodeError as exc:
+            messages.append({"level": "blocking", "message": f"{path.name} 不是有效 JSON：{exc}"})
+            items.append({"input": path.name, "error": str(exc)})
+        except ValueError as exc:
+            messages.append({"level": "blocking", "message": f"{path.name} 无法作为语言 JSON 处理：{exc}"})
+            items.append({"input": path.name, "error": str(exc)})
+    return items
+
+
+def json_schema_label(schema: str) -> str:
+    if schema == "ui_locale":
+        return "UI 语言包 JSON"
+    return "普通语言 JSON"
+
+
+def preflight_ftbquests_paths(paths: list[Path], source_locale: str, target_locale: str, messages: list[dict[str, str]]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for path in paths:
+        try:
+            source = load_ftbquests_source(path, source_locale)
+            detected_source = infer_source_locale_from_files(source.files, source_locale, target_locale)
+            lang_pairs = find_lang_file_pairs(source.files, detected_source, target_locale)
+            legacy_files = detect_legacy_snbt_files(source.files)
+            root = source.root_prefix or "quests"
+            if not lang_pairs:
+                level = "warning" if legacy_files else "blocking"
+                messages.append({"level": level, "message": f"{path.name} 未找到可处理的 lang/{detected_source}.snbt。"})
+            else:
+                messages.append({"level": "info", "message": f"{path.name} 识别到 {root} 根目录，将生成 {len(lang_pairs)} 个任务书语言文件。"})
+            items.append(
+                {
+                    "input": path.name,
+                    "root": root,
+                    "source_locale": detected_source,
+                    "source_files": len(lang_pairs),
+                    "existing_target_files": sum(1 for _source, target in lang_pairs if target in source.files),
+                    "output_files": len(lang_pairs),
+                    "source_paths": [source_path for source_path, _target_path in lang_pairs],
+                    "target_paths": [target_path for _source_path, target_path in lang_pairs],
+                    "legacy_files": len(legacy_files),
+                }
+            )
+        except (OSError, ValueError, BadZipFile) as exc:
+            messages.append({"level": "blocking", "message": f"{path.name} 无法作为 FTB Quests 输入处理：{exc}"})
+            items.append({"input": path.name, "error": str(exc)})
+    return items
 
 
 def parse_multipart(content_type: str, body: bytes) -> list[MultipartPart]:
@@ -8473,6 +9577,60 @@ def collect_fields(parts: list[MultipartPart]) -> dict[str, str]:
     return fields
 
 
+def user_glossary_path(workdir: Path) -> Path:
+    return workdir / "glossaries" / "user-glossary.json"
+
+
+def normalize_glossary_terms(value: Any) -> dict[str, str]:
+    if not isinstance(value, dict):
+        raise ValueError("术语表必须是 JSON 对象")
+    terms: dict[str, str] = {}
+    for key, target in value.items():
+        source = str(key).strip()
+        translation = str(target).strip()
+        if source and translation:
+            terms[source] = translation
+    return dict(sorted(terms.items(), key=lambda item: item[0].casefold()))
+
+
+def read_user_glossary(workdir: Path) -> dict[str, str]:
+    path = user_glossary_path(workdir)
+    if not path.is_file():
+        return {}
+    return normalize_glossary_terms(json.loads(path.read_text(encoding="utf-8-sig")))
+
+
+def write_user_glossary(workdir: Path, terms: dict[str, str]) -> Path:
+    path = user_glossary_path(workdir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(normalize_glossary_terms(terms), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def glossary_conflicts(terms: dict[str, str]) -> dict[str, dict[str, str]]:
+    builtin = {**GlossaryTranslator.BUILTIN_GLOSSARY, **GlossaryTranslator.BUILTIN_PHRASES}
+    conflicts: dict[str, dict[str, str]] = {}
+    for source, target in terms.items():
+        builtin_target = builtin.get(source)
+        if builtin_target is not None and builtin_target != target:
+            conflicts[source] = {"builtin": builtin_target, "user": target}
+    return conflicts
+
+
+def saved_glossary_path_if_present(workdir: Path) -> Path | None:
+    path = user_glossary_path(workdir)
+    return path if path.is_file() and read_user_glossary(workdir) else None
+
+
+def glossary_upload_or_saved(parts: list[MultipartPart], upload_dir: Path, workdir: Path) -> Path | None:
+    for part in parts:
+        if part.name == "glossary" and part.filename and part.data:
+            glossary_path = upload_dir / sanitize_filename(part.filename)
+            glossary_path.write_bytes(part.data)
+            return glossary_path
+    return saved_glossary_path_if_present(workdir)
+
+
 def resolve_cache_root(workdir: Path, raw_cache_dir: str | None) -> Path:
     raw = (raw_cache_dir or "").strip()
     if not raw:
@@ -8517,6 +9675,10 @@ def clear_cache_directory(cache_root: Path, workdir: Path) -> int:
             child.unlink(missing_ok=True)
         removed += 1
     return removed
+
+
+def translation_memory_path(cache_root: Path) -> Path:
+    return cache_root / "translation-memory.jsonl"
 
 
 def shared_cache_scope_dir(cache_root: Path, args: argparse.Namespace) -> Path:
@@ -8587,6 +9749,21 @@ def parse_json_translation_payload(data: Any, filename: str) -> tuple[str, dict[
         )
         return "ui_locale", root, root["messages"]
     return "flat", dict(data), data
+
+
+def json_output_metadata_preview(filename: str, data: dict[str, Any]) -> dict[str, str] | None:
+    if not isinstance(data.get("messages"), dict):
+        return None
+    return {
+        "file": filename,
+        "schema": "UI 语言包 JSON",
+        "locale": str(data.get("locale", "")),
+        "name": str(data.get("name", "")),
+        "native_name": str(data.get("native_name", "")),
+        "source_locale": str(data.get("source_locale", "")),
+        "source_version": str(data.get("source_version", "")),
+        "schema_version": str(data.get("schema_version", "")),
+    }
 
 
 def process_json_language_file(
@@ -8708,6 +9885,7 @@ def run_json_translate_job(
         translator = create_translator(args)
         report_entries: list[ReportEntry] = []
         output_paths: list[Path] = []
+        json_metadata_preview: list[dict[str, str]] = []
         translated_total = 0
         failed_total = 0
         skipped_total = 0
@@ -8716,6 +9894,9 @@ def run_json_translate_job(
                 raise RuntimeError("cancelled")
             update_job(job_id, stage="processing_file", files_completed=index - 1, files_total=len(json_paths), current_file=path.name)
             output_name, output_data, entries, translated_count, failed_count, skipped_count = process_json_language_file(path, args, translator)
+            metadata_preview = json_output_metadata_preview(output_name, output_data)
+            if metadata_preview:
+                json_metadata_preview.append(metadata_preview)
             target = out_dir / output_name
             target.write_text(json.dumps(output_data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
             output_paths.append(target)
@@ -8754,10 +9935,12 @@ def run_json_translate_job(
             "elapsed_seconds": round(elapsed_seconds, 2),
             "cache_hits": 0,
             "cache_misses": translated_total,
+            "memory_hits": getattr(translator, "memory_hits", 0),
             "summary": summary,
             "api_failure_count": summary.get("api_failed", 0),
             "api_failed_entries": [entry.__dict__ for entry in report_entries if entry.status == "api_failed"],
             "entries": [entry.__dict__ for entry in report_entries],
+            "json_metadata_preview": json_metadata_preview,
         }
         update_job(job_id, status="done", stage="done", completed=translated_total, total=translated_total, result=result)
     except Exception as exc:
@@ -8786,6 +9969,7 @@ def run_ftbquests_job(
         ignore_cache = bool(getattr(args, "ignore_cache", False))
         cache_hit = False
         result = None
+        memory_hits = 0
 
         if not ignore_cache:
             cached_hash = load_ftbquests_checkpoint_source_hash(shared_cache_dir, cache_key)
@@ -8804,6 +9988,7 @@ def run_ftbquests_job(
             if args.provider in {"copy", "glossary"}:
                 update_job(job_id, stage="translating", completed=1, total=1)
             result = process_ftbquests_source(source, args, translator)
+            memory_hits = getattr(translator, "memory_hits", 0)
             if not report_has_uncacheable_failures(result.report_entries):
                 save_ftbquests_checkpoint(shared_cache_dir, cache_key, result, config_hash=config_hash)
 
@@ -8857,6 +10042,7 @@ def run_ftbquests_job(
             "elapsed_seconds": round(elapsed_seconds, 2),
             "cache_hits": 1 if cache_hit else 0,
             "cache_misses": 0 if cache_hit else 1,
+            "memory_hits": memory_hits,
             "api_failure_count": summary.get("api_failed", 0),
             "api_failed_entries": [entry.__dict__ for entry in result.report_entries if entry.status == "api_failed"],
             "entries": [entry.__dict__ for entry in result.report_entries],
@@ -9047,6 +10233,7 @@ def run_translate_job(
             "elapsed_seconds": round(elapsed_seconds, 2),
             "cache_hits": cache_hits,
             "cache_misses": cache_misses,
+            "memory_hits": getattr(translator, "memory_hits", 0),
             "api_failure_count": summary.get("api_failed", 0),
             "api_failed_entries": [entry.__dict__ for entry in report_entries if entry.status == "api_failed"],
             "entries": [entry.__dict__ for entry in report_entries],
@@ -9109,6 +10296,53 @@ def successful_retry_updates(
     return updates
 
 
+def merge_retry_result(
+    result: dict[str, Any],
+    failed_entries: list[dict[str, Any]],
+    translations: dict[str, str],
+    failed_map: dict[str, str],
+) -> tuple[int, int, list[dict[str, Any]]]:
+    updated = 0
+    still_failed = 0
+    remaining_failed_entries: list[dict[str, Any]] = []
+    visible_entries = result.get("entries", [])
+    visible_by_id = {entry_id(entry): entry for entry in visible_entries if isinstance(entry, dict)}
+    for failed_entry in failed_entries:
+        item_id = entry_id(failed_entry)
+        entry = visible_by_id.get(item_id, failed_entry)
+        previous_status = str(entry.get("status") or failed_entry.get("status") or "api_failed")
+        previous_message = str(entry.get("message") or failed_entry.get("message") or "")
+        entry["retry_previous_status"] = previous_status
+        entry["retry_previous_message"] = previous_message
+        if item_id in failed_map or item_id not in translations:
+            entry["message"] = str(failed_map.get(item_id, "retry did not return translation"))
+            still_failed += 1
+            remaining_failed_entries.append(dict(entry))
+            continue
+        translated = translations[item_id]
+        errors = validate_translation(entry.get("source", ""), translated)
+        if errors:
+            entry["message"] = "; ".join(errors)
+            still_failed += 1
+            remaining_failed_entries.append(dict(entry))
+            continue
+        entry["target"] = translated
+        entry["status"] = "translated"
+        entry["message"] = "手动重试成功"
+        updated += 1
+
+    summary: dict[str, int] = {}
+    base_summary = result.get("summary", {})
+    if isinstance(base_summary, dict):
+        summary.update({str(key): int(value) for key, value in base_summary.items()})
+        summary["api_failed"] = still_failed
+        summary["translated"] = max(0, summary.get("translated", 0)) + updated
+    result["summary"] = summary
+    result["api_failure_count"] = still_failed
+    result["api_failed_entries"] = remaining_failed_entries
+    return updated, still_failed, remaining_failed_entries
+
+
 def hardcoded_entry_to_dict(entry: HardcodedEntry) -> dict[str, str]:
     return {
         "jar": entry.jar,
@@ -9146,6 +10380,105 @@ def read_jsonl(path: Path, limit: int = 300) -> list[dict[str, Any]]:
         if len(rows) >= limit:
             break
     return rows
+
+
+def build_job_history_record(job_id: str, job: dict[str, Any]) -> dict[str, Any]:
+    result = job.get("result") if isinstance(job.get("result"), dict) else {}
+    summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
+    input_kind = str(result.get("kind") or job.get("input_kind") or "jar")
+    success_count = int(summary.get("translated", 0) or 0) + int(summary.get("existing", 0) or 0)
+    failure_count = (
+        int(summary.get("api_failed", 0) or 0)
+        + int(summary.get("failed", 0) or 0)
+        + int(summary.get("jar_failed", 0) or 0)
+        + int(summary.get("incomplete", 0) or 0)
+    )
+    return {
+        "job_id": job_id,
+        "created_at": str(job.get("created_at") or utc_timestamp()),
+        "updated_at": utc_timestamp(),
+        "status": str(job.get("status") or "unknown"),
+        "input_kind": input_kind,
+        "target_locale": str(job.get("target_locale") or result.get("target_locale") or ""),
+        "provider": str(result.get("provider") or job.get("provider") or ""),
+        "model": str(result.get("model") or job.get("model") or ""),
+        "processed_sources": int(result.get("processed_sources") or result.get("processed_jars") or 0),
+        "generated_files": int(result.get("generated_files") or 0),
+        "success_count": success_count,
+        "failure_count": failure_count,
+        "summary": sanitize_history_value(summary),
+        "downloads": history_downloads(result),
+        "error": str(job.get("error") or ""),
+    }
+
+
+def history_downloads(result: dict[str, Any]) -> dict[str, str]:
+    mapping = {
+        "pack": "pack_url",
+        "json": "json_url",
+        "ftbquests_patch": "ftbquests_patch_url",
+        "report": "report_url",
+        "hardcoded_report": "hardcoded_report_url",
+        "hardcoded_map": "hardcoded_map_url",
+        "api_debug_log": "api_debug_log_url",
+    }
+    return {
+        label: str(result.get(key) or "")
+        for label, key in mapping.items()
+        if result.get(key)
+    }
+
+
+def sanitize_history_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        sanitized: dict[str, Any] = {}
+        for key, item in value.items():
+            key_text = str(key)
+            if "api_key" in key_text.lower() or key_text.lower() in {"authorization", "x-api-key"}:
+                continue
+            sanitized[key_text] = sanitize_history_value(item)
+        return sanitized
+    if isinstance(value, list):
+        return [sanitize_history_value(item) for item in value]
+    if isinstance(value, str):
+        return redact_secret(value, value if value.startswith("sk-") else "")
+    return value
+
+
+def append_job_history(workdir: Path, record: dict[str, Any], limit: int = 100) -> None:
+    jobs_dir = workdir / "jobs"
+    jobs_dir.mkdir(parents=True, exist_ok=True)
+    index_path = jobs_dir / "index.jsonl"
+    existing = list(reversed(read_job_history(workdir, limit=max(limit * 2, limit + 1))))
+    existing = [item for item in existing if item.get("job_id") != record.get("job_id")]
+    existing.append(record)
+    if limit > 0:
+        existing = existing[-limit:]
+    index_path.write_text(
+        "".join(json.dumps(item, ensure_ascii=False, sort_keys=True) + "\n" for item in existing),
+        encoding="utf-8",
+    )
+
+
+def read_job_history(workdir: Path, limit: int = 100) -> list[dict[str, Any]]:
+    index_path = workdir / "jobs" / "index.jsonl"
+    if not index_path.is_file():
+        return []
+    records: list[dict[str, Any]] = []
+    for line in index_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            records.append(value)
+    return list(reversed(records[-limit:])) if limit > 0 else list(reversed(records))
+
+
+def utc_timestamp() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 def safe_run_path(workdir: Path, relative: str) -> Path:

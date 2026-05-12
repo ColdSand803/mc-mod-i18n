@@ -117,27 +117,115 @@ def compute_translation_config_hash(args: argparse.Namespace) -> str:
     ).hexdigest()
 
 
+class TranslationMemory:
+    def __init__(self, path: str | Path, scope: str) -> None:
+        self.path = Path(path)
+        self.scope = scope
+        self._entries: dict[str, str] | None = None
+
+    def _load(self) -> dict[str, str]:
+        if self._entries is not None:
+            return self._entries
+        entries: dict[str, str] = {}
+        if self.path.is_file():
+            for line in self.path.read_text(encoding="utf-8", errors="replace").splitlines():
+                if not line.strip():
+                    continue
+                try:
+                    row = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if row.get("scope") == self.scope and isinstance(row.get("source"), str) and isinstance(row.get("target"), str):
+                    entries[row["source"]] = row["target"]
+        self._entries = entries
+        return entries
+
+    def get(self, source: str) -> str | None:
+        return self._load().get(source)
+
+    def put_many(self, values: dict[str, str]) -> None:
+        if not values:
+            return
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        existing = self._load()
+        rows: list[str] = []
+        for source, target in values.items():
+            if existing.get(source) == target:
+                continue
+            existing[source] = target
+            rows.append(json.dumps({"scope": self.scope, "source": source, "target": target}, ensure_ascii=False))
+        if rows:
+            with self.path.open("a", encoding="utf-8") as handle:
+                handle.write("\n".join(rows) + "\n")
+
+
+class TranslationMemoryTranslator:
+    def __init__(self, inner, memory: TranslationMemory) -> None:
+        self.inner = inner
+        self.memory = memory
+        self.memory_hits = 0
+
+    def translate_batch(self, items: list[TranslationItem]) -> dict[str, str]:
+        translations, failed = self.translate_batch_with_failures(items)
+        if failed:
+            self.failed_items = failed
+        return translations
+
+    def translate_batch_with_failures(self, items: list[TranslationItem]) -> tuple[dict[str, str], dict[str, str]]:
+        translations: dict[str, str] = {}
+        misses: list[TranslationItem] = []
+        for item in items:
+            cached = self.memory.get(item.text)
+            if cached is None:
+                misses.append(item)
+            else:
+                translations[item.id] = cached
+                self.memory_hits += 1
+        failed: dict[str, str] = {}
+        if misses:
+            missed_translations, failed = translate_batch_with_failures(self.inner, misses)
+            translations.update(missed_translations)
+            by_id = {item.id: item for item in misses}
+            self.memory.put_many(
+                {
+                    by_id[item_id].text: translated
+                    for item_id, translated in missed_translations.items()
+                    if item_id in by_id and item_id not in failed
+                }
+            )
+        return translations, failed
+
+
+def wrap_with_translation_memory(translator, args: argparse.Namespace):
+    memory_path = getattr(args, "translation_memory_path", "")
+    if not memory_path:
+        return translator
+    scope = compute_translation_config_hash(args)
+    return TranslationMemoryTranslator(translator, TranslationMemory(memory_path, scope))
+
+
 def create_translator(args: argparse.Namespace):
     if args.provider == "copy":
-        return CopyTranslator()
-    if args.provider == "glossary":
-        return GlossaryTranslator(load_glossary(args.glossary))
-    if not is_ai_provider(args.provider):
-        raise ValueError(f"unknown provider: {args.provider}")
-    preset = get_provider_preset(args.provider)
-    default_preset = get_provider_preset("openai-compatible")
-    api_url = args.api_url or preset.api_url
-    api_key_env = args.api_key_env or preset.api_key_env
-    model = args.model or preset.model
-    if args.provider != "openai-compatible":
-        if args.api_url == default_preset.api_url:
-            api_url = preset.api_url
-        if args.api_key_env == default_preset.api_key_env:
-            api_key_env = preset.api_key_env
-        if args.model == default_preset.model:
-            model = preset.model
-    translator_class = AnthropicCompatibleTranslator if args.provider == "anthropic-compatible" else OpenAICompatibleTranslator
-    return translator_class(
+        translator = CopyTranslator()
+    elif args.provider == "glossary":
+        translator = GlossaryTranslator(load_glossary(args.glossary))
+    else:
+        if not is_ai_provider(args.provider):
+            raise ValueError(f"unknown provider: {args.provider}")
+        preset = get_provider_preset(args.provider)
+        default_preset = get_provider_preset("openai-compatible")
+        api_url = args.api_url or preset.api_url
+        api_key_env = args.api_key_env or preset.api_key_env
+        model = args.model or preset.model
+        if args.provider != "openai-compatible":
+            if args.api_url == default_preset.api_url:
+                api_url = preset.api_url
+            if args.api_key_env == default_preset.api_key_env:
+                api_key_env = preset.api_key_env
+            if args.model == default_preset.model:
+                model = preset.model
+        translator_class = AnthropicCompatibleTranslator if args.provider == "anthropic-compatible" else OpenAICompatibleTranslator
+        translator = translator_class(
         api_url=api_url,
         api_key_env=api_key_env,
         api_key=getattr(args, "api_key", ""),
@@ -151,7 +239,8 @@ def create_translator(args: argparse.Namespace):
         progress_callback=getattr(args, "progress_callback", None),
         source_locale=getattr(args, "source_locale", "en_us"),
         target_locale=getattr(args, "target_locale", "zh_cn"),
-    )
+        )
+    return wrap_with_translation_memory(translator, args)
 
 
 def report_has_uncacheable_failures(report_entries: list[ReportEntry]) -> bool:
