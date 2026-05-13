@@ -180,24 +180,27 @@ async function launchSystemBrowserSmoke() {
     await browserClient.connect();
     try {
       await browserClient.send('Browser.getVersion');
+      const targetId = await waitForPageTarget(browserClient);
+      const attached = await browserClient.send('Target.attachToTarget', { targetId, flatten: true });
+      const sessionId = attached.sessionId;
+      try {
+        await evalExpression(browserClient, `window.location.href = ${JSON.stringify(baseUrl)}; true;`, sessionId);
+        await waitForReadyState(browserClient, sessionId);
+        await runSystemBrowserAssertions(browserClient, sessionId);
+      } finally {
+        if (sessionId) {
+          try {
+            await browserClient.send('Target.detachFromTarget', { sessionId });
+          } catch {}
+        }
+      }
     } finally {
       browserClient.close();
     }
-
-    const pageUrl = await openDebugPage(debugInfo.port, baseUrl);
-    const pageClient = new CdpClient(pageUrl);
-    await pageClient.connect();
-    try {
-      await pageClient.send('Runtime.enable');
-      await pageClient.send('Page.enable');
-      await waitForReadyState(pageClient);
-      await runSystemBrowserAssertions(pageClient);
-    } finally {
-      pageClient.close();
-    }
   } finally {
     chrome.kill();
-    rmSync(userDataDir, { recursive: true, force: true });
+    await waitForProcessExit(chrome, 5000);
+    await removeDirWithRetry(userDataDir, 12, 250);
   }
 }
 
@@ -222,31 +225,29 @@ async function waitForDebugInfo(userDataDir, chrome) {
   fail('Timed out waiting for system browser DevTools endpoint.');
 }
 
-async function openDebugPage(port, url) {
-  let response = await fetch(`http://127.0.0.1:${port}/json/new?${encodeURIComponent(url)}`, { method: 'PUT' });
-  if (!response.ok) {
-    response = await fetch(`http://127.0.0.1:${port}/json/list`);
-    if (!response.ok) {
-      fail(`Could not create or list browser debug pages: HTTP ${response.status}`);
+async function waitForPageTarget(client) {
+  const started = Date.now();
+  let lastError = null;
+  while (Date.now() - started < 10000) {
+    try {
+      const payload = await client.send('Target.getTargets');
+      const target = (payload.targetInfos || []).find((item) => item.type === 'page' && item.targetId);
+      if (target?.targetId) {
+        return target.targetId;
+      }
+      lastError = new Error('No debuggable browser page target was available.');
+    } catch (error) {
+      lastError = error;
     }
-    const pages = await response.json();
-    const page = pages.find((item) => item.type === 'page' && item.webSocketDebuggerUrl);
-    if (!page) {
-      fail('No debuggable browser page target was available.');
-    }
-    return page.webSocketDebuggerUrl;
+    await sleep(200);
   }
-  const page = await response.json();
-  if (!page.webSocketDebuggerUrl) {
-    fail('Browser did not return a page DevTools WebSocket URL.');
-  }
-  return page.webSocketDebuggerUrl;
+  throw lastError || new Error('Timed out waiting for a browser debug page target.');
 }
 
-async function waitForReadyState(client) {
+async function waitForReadyState(client, sessionId = undefined) {
   const started = Date.now();
   while (Date.now() - started < 10000) {
-    const state = await evalExpression(client, 'document.readyState');
+    const state = await evalExpression(client, 'document.readyState', sessionId);
     if (state === 'interactive' || state === 'complete') {
       return;
     }
@@ -255,25 +256,25 @@ async function waitForReadyState(client) {
   fail('Timed out waiting for page readiness.');
 }
 
-async function runSystemBrowserAssertions(client) {
-  await expectSelector(client, '[data-select-trigger="source_locale"]', '源语言下拉框');
-  await clickSelector(client, '[data-select-trigger="source_locale"]');
-  await expectExpression(client, "document.querySelector('[data-select-trigger=\"source_locale\"]')?.getAttribute('aria-expanded') === 'true'");
-  await keypress(client, 'Escape');
-  await clickSelector(client, '[data-select-trigger="target_locale"]');
-  await expectExpression(client, "document.querySelector('[data-select-trigger=\"target_locale\"]')?.getAttribute('aria-expanded') === 'true'");
-  await keypress(client, 'Escape');
-  await evalExpression(client, "document.querySelector('#provider').value = 'openai-compatible'; document.querySelector('#provider').dispatchEvent(new Event('change', { bubbles: true }));");
-  await clickSelector(client, '[data-model-trigger]');
-  await expectExpression(client, "document.querySelector('[data-model-trigger]')?.getAttribute('aria-expanded') === 'true'");
-  await keypress(client, 'Escape');
-  await clickSelector(client, '#theme-toggle');
-  await expectExpression(client, "document.querySelector('#theme-toggle')?.getAttribute('aria-expanded') === 'true'");
-  await keypress(client, 'Escape');
-  await clickSelector(client, '#settings-open');
-  await expectSelector(client, '#settings-page:not([hidden])', '设置页面');
-  await expectSelector(client, '#settings-cache-clear', '清空缓存按钮');
-  await expectSelector(client, '#settings-ui-locale-download', '语言包下载按钮');
+async function runSystemBrowserAssertions(client, sessionId = undefined) {
+  await expectSelector(client, '[data-select-trigger="source_locale"]', '源语言下拉框', sessionId);
+  await clickSelector(client, '[data-select-trigger="source_locale"]', sessionId);
+  await expectExpression(client, "document.querySelector('[data-select-trigger=\"source_locale\"]')?.getAttribute('aria-expanded') === 'true'", undefined, sessionId);
+  await keypress(client, 'Escape', sessionId);
+  await clickSelector(client, '[data-select-trigger="target_locale"]', sessionId);
+  await expectExpression(client, "document.querySelector('[data-select-trigger=\"target_locale\"]')?.getAttribute('aria-expanded') === 'true'", undefined, sessionId);
+  await keypress(client, 'Escape', sessionId);
+  await evalExpression(client, "document.querySelector('#provider').value = 'openai-compatible'; document.querySelector('#provider').dispatchEvent(new Event('change', { bubbles: true }));", sessionId);
+  await clickSelector(client, '[data-model-trigger]', sessionId);
+  await expectExpression(client, "document.querySelector('[data-model-trigger]')?.getAttribute('aria-expanded') === 'true'", undefined, sessionId);
+  await keypress(client, 'Escape', sessionId);
+  await clickSelector(client, '#theme-toggle', sessionId);
+  await expectExpression(client, "document.querySelector('#theme-toggle')?.getAttribute('aria-expanded') === 'true'", undefined, sessionId);
+  await keypress(client, 'Escape', sessionId);
+  await clickSelector(client, '#settings-open', sessionId);
+  await expectSelector(client, '#settings-page:not([hidden])', '设置页面', sessionId);
+  await expectSelector(client, '#settings-cache-clear', '清空缓存按钮', sessionId);
+  await expectSelector(client, '#settings-ui-locale-download', '语言包下载按钮', sessionId);
 
   const overlap = await evalExpression(client, `(() => {
     document.documentElement.style.zoom = '67%';
@@ -292,30 +293,39 @@ async function runSystemBrowserAssertions(client) {
     }
     document.documentElement.style.zoom = '';
     return overlaps;
-  })()`);
+  })()`, sessionId);
   if (overlap.length) {
     fail(`Settings cards overlap: ${JSON.stringify(overlap)}`);
   }
 }
 
-async function expectSelector(client, selector, label) {
-  await expectExpression(client, `Boolean(document.querySelector(${JSON.stringify(selector)}))`, `${label} not found`);
+async function expectSelector(client, selector, label, sessionId = undefined) {
+  await expectExpression(client, `Boolean(document.querySelector(${JSON.stringify(selector)}))`, `${label} not found`, sessionId);
 }
 
-async function clickSelector(client, selector) {
-  await expectSelector(client, selector, selector);
-  await evalExpression(client, `document.querySelector(${JSON.stringify(selector)}).click()`);
+async function clickSelector(client, selector, sessionId = undefined) {
+  await expectSelector(client, selector, selector, sessionId);
+  await evalExpression(client, `document.querySelector(${JSON.stringify(selector)}).click()`, sessionId);
 }
 
-async function keypress(client, key) {
-  await client.send('Input.dispatchKeyEvent', { type: 'keyDown', key });
-  await client.send('Input.dispatchKeyEvent', { type: 'keyUp', key });
+async function keypress(client, key, sessionId = undefined) {
+  await evalExpression(
+    client,
+    `(() => {
+      const down = new KeyboardEvent('keydown', { key: ${JSON.stringify(key)}, bubbles: true });
+      const up = new KeyboardEvent('keyup', { key: ${JSON.stringify(key)}, bubbles: true });
+      document.dispatchEvent(down);
+      document.dispatchEvent(up);
+      return true;
+    })()`,
+    sessionId,
+  );
 }
 
-async function expectExpression(client, expression, message = `Expression failed: ${expression}`) {
+async function expectExpression(client, expression, message = `Expression failed: ${expression}`, sessionId = undefined) {
   const started = Date.now();
   while (Date.now() - started < 5000) {
-    if (await evalExpression(client, expression)) {
+    if (await evalExpression(client, expression, sessionId)) {
       return;
     }
     await sleep(100);
@@ -323,12 +333,12 @@ async function expectExpression(client, expression, message = `Expression failed
   fail(message);
 }
 
-async function evalExpression(client, expression) {
+async function evalExpression(client, expression, sessionId = undefined) {
   const response = await client.send('Runtime.evaluate', {
     expression,
     awaitPromise: true,
     returnByValue: true,
-  });
+  }, sessionId);
   if (response.exceptionDetails) {
     fail(response.exceptionDetails.text || 'Browser evaluation failed');
   }
@@ -349,7 +359,7 @@ class CdpClient {
       this.socket.addEventListener('error', () => reject(new Error(`Could not connect to browser DevTools at ${this.url}`)), { once: true });
     });
     this.socket.addEventListener('message', async (event) => {
-      const text = typeof event.data === 'string' ? event.data : Buffer.from(await event.data.arrayBuffer()).toString('utf-8');
+      const text = await readWebSocketMessage(event.data);
       const payload = JSON.parse(text);
       if (!payload.id) {
         return;
@@ -393,8 +403,53 @@ class CdpClient {
   }
 }
 
+async function readWebSocketMessage(data) {
+  if (typeof data === 'string') {
+    return data;
+  }
+  if (data instanceof ArrayBuffer) {
+    return Buffer.from(data).toString('utf-8');
+  }
+  if (ArrayBuffer.isView(data)) {
+    return Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString('utf-8');
+  }
+  if (typeof Blob !== 'undefined' && data instanceof Blob) {
+    return Buffer.from(await data.arrayBuffer()).toString('utf-8');
+  }
+  return Buffer.from(await data.arrayBuffer()).toString('utf-8');
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForProcessExit(child, timeoutMs) {
+  if (child.exitCode !== null) {
+    return;
+  }
+  await new Promise((resolve) => {
+    const timer = setTimeout(resolve, timeoutMs);
+    child.once('exit', () => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
+}
+
+async function removeDirWithRetry(path, attempts = 8, delayMs = 200) {
+  let lastError = null;
+  for (let index = 0; index < attempts; index += 1) {
+    try {
+      rmSync(path, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      lastError = error;
+      await sleep(delayMs);
+    }
+  }
+  if (lastError) {
+    throw lastError;
+  }
 }
 
 let usedPlaywright = false;
