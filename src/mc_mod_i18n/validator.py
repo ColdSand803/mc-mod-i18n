@@ -6,9 +6,16 @@ import re
 
 from .lang import extract_plain_text, LangDocument
 
-PRINTF_RE = re.compile(r"%(?!%)(?:\d+\$)?[+#\-0,( ]*(?:\d+)?(?:\.\d+)?[bcdeEfgGaAosxXhHsd]")
+PRINTF_RE = re.compile(
+    r"%(?!%)"
+    r"(?:(?:\d+\$|<)?[+#\-0,(]*(?:\d+)?(?:\.\d+)?[bBhHsScC]"
+    r"|(?:\d+\$|<)?[+#\-0,( ]*(?:\d+)?(?:\.\d+)?[doxXeEfgGaA]"
+    r"|(?:\d+\$|<)?[+#\-0,(]*(?:\d+)?(?:\.\d+)?[tT][A-Za-z]"
+    r"|n)"
+)
 BRACE_RE = re.compile(r"\{[A-Za-z0-9_.:-]+\}")
 COLOR_RE = re.compile(r"§[0-9A-FK-ORa-fk-or]")
+NUMBERED_TEXT_LINE_RE = re.compile(r"^(?P<prefix>.+\.(?:desc|description|hint|info|line|summary|text|tooltip))\.\d+$", re.IGNORECASE)
 
 
 def validate_translation(source: str, target: str) -> list[str]:
@@ -130,7 +137,7 @@ def pre_check_lang_documents(
                 ))
             seen_keys.add(key)
 
-            if not text.strip():
+            if not text.strip() and not _looks_like_intentional_blank_line(key, doc.entries):
                 warnings.append(PreCheckWarning(
                     severity="warning", category="empty_value",
                     file=doc.path, key=key,
@@ -145,14 +152,63 @@ def pre_check_lang_documents(
                     value_snippet=text[:80],
                 ))
 
-            pct_count = text.count("%")
-            pct_excluding_escaped = pct_count - 2 * text.count("%%")
-            valid_pct = len(PRINTF_RE.findall(text))
-            if pct_excluding_escaped > valid_pct:
+            unusual_pct = _unusual_percent_count(text)
+            if unusual_pct:
                 warnings.append(PreCheckWarning(
                     severity="info", category="unusual_placeholder",
                     file=doc.path, key=key,
-                    message=f"Possible non-standard % specifiers: {pct_excluding_escaped - valid_pct} unmatched",
+                    message=f"Possible non-standard % specifiers: {unusual_pct} unmatched",
                 ))
 
     return warnings
+
+
+def _looks_like_intentional_blank_line(
+    key: str,
+    entries: dict[str, str | dict[str, object]],
+) -> bool:
+    match = NUMBERED_TEXT_LINE_RE.match(key)
+    if not match:
+        return False
+
+    prefix = match.group("prefix")
+    sibling_prefix = f"{prefix}."
+    for sibling_key, sibling_value in entries.items():
+        if sibling_key != key and sibling_key.startswith(sibling_prefix) and extract_plain_text(sibling_value).strip():
+            return True
+    return False
+
+
+def _unusual_percent_count(text: str) -> int:
+    count = 0
+    index = 0
+    while index < len(text):
+        if text[index] != "%":
+            index += 1
+            continue
+
+        if text.startswith("%%", index):
+            index += 2
+            continue
+
+        match = PRINTF_RE.match(text, index)
+        if match:
+            index = match.end()
+            continue
+
+        if _previous_non_space_char(text, index).isdigit():
+            index += 1
+            continue
+
+        count += 1
+        index += 1
+    return count
+
+
+def _previous_non_space_char(text: str, index: int) -> str:
+    cursor = index - 1
+    while cursor >= 0:
+        if not text[cursor].isspace():
+            return text[cursor]
+        cursor -= 1
+    return ""

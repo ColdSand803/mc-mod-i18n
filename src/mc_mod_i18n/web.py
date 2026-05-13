@@ -3,6 +3,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 import argparse
+import csv
 import hashlib
 import json
 import mimetypes
@@ -25,6 +26,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from .core import compute_translation_config_hash, compute_zip_source_hash, create_translator, process_jar, report_has_uncacheable_failures, translate_batch_with_failures
 from .ftbquests import (
+    FTBQuestsResult,
+    FTBQuestsOutputFile,
     compute_ftbquests_config_hash,
     compute_ftbquests_source_hash,
     detect_legacy_snbt_files,
@@ -35,11 +38,15 @@ from .ftbquests import (
     load_ftbquests_checkpoint_config_hash,
     load_ftbquests_checkpoint_source_hash,
     load_ftbquests_source,
+    parse_snbt,
     process_ftbquests_source,
+    render_snbt,
     save_ftbquests_checkpoint,
+    set_snbt_string,
     write_ftbquests_html_report,
     write_ftbquests_json_report,
     write_ftbquests_outputs,
+    collect_string_leaves,
 )
 from .hardcoded import HardcodedEntry, hardcoded_category_label, hardcoded_category_order
 from .hardcoded import scan_jar_for_hardcoded
@@ -54,6 +61,8 @@ from .report import (
 )
 from .translator import GlossaryTranslator, LOCALE_DISPLAY_NAMES, TranslationItem, get_provider_preset, is_ai_provider
 from .ui_i18n import (
+    FALLBACK_UI_LOCALE,
+    build_ui_locale_filled_package,
     build_ui_locale_missing_template,
     check_ui_locale_package,
     export_ui_locale_package,
@@ -190,6 +199,7 @@ INDEX_HTML = r"""<!doctype html>
       --radius-lg: 18px;
       --motion-fast: 160ms;
       --motion-base: 220ms;
+      --dropdown-motion-offset: 8px;
       --focus-ring: 0 0 0 3px rgba(38, 104, 168, .14);
     }
     :root[data-theme="dark"] {
@@ -1113,6 +1123,10 @@ INDEX_HTML = r"""<!doctype html>
       display: grid;
       gap: 6px;
     }
+    .ghost-select.open,
+    .ghost-file.open {
+      z-index: 80;
+    }
     .ghost-select .control,
     .ghost-file .control,
     .ghost-input,
@@ -1158,6 +1172,11 @@ INDEX_HTML = r"""<!doctype html>
     .ghost-file .icon {
       color: var(--muted);
       flex: 0 0 auto;
+      transition: transform var(--motion-base) ease, color var(--motion-fast) ease;
+    }
+    .ghost-select.open .chevron {
+      color: var(--accent);
+      transform: rotate(180deg);
     }
     .mode-switch {
       display: grid;
@@ -1206,10 +1225,37 @@ INDEX_HTML = r"""<!doctype html>
       border-radius: var(--radius-md);
       background: var(--field-bg);
       box-shadow: 0 18px 40px rgba(15, 23, 42, .16);
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transform: translateY(calc(var(--dropdown-motion-offset) * -1)) scale(.98);
+      transform-origin: top center;
+      transition: opacity var(--motion-base) ease, visibility var(--motion-base) ease, transform var(--motion-base) ease, box-shadow var(--motion-base) ease;
+      will-change: opacity, transform;
       scrollbar-width: thin;
       scrollbar-color: var(--dropdown-scroll-thumb) var(--dropdown-scroll-track);
       scrollbar-gutter: stable;
       overscroll-behavior: contain;
+    }
+    .ghost-select.open .ghost-menu,
+    .ghost-file.open .ghost-menu {
+      opacity: 1;
+      visibility: visible;
+      pointer-events: auto;
+      transform: translateY(0) scale(1);
+      box-shadow: 0 22px 46px rgba(15, 23, 42, .20);
+    }
+    .ghost-menu.is-floating {
+      position: fixed;
+      right: auto;
+      z-index: 180;
+      max-width: calc(100vw - 24px);
+    }
+    .ghost-menu.is-closing {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transform: translateY(calc(var(--dropdown-motion-offset) * -1)) scale(.98);
     }
     .ghost-menu::-webkit-scrollbar {
       width: 14px;
@@ -1799,6 +1845,21 @@ INDEX_HTML = r"""<!doctype html>
       padding: 0;
       list-style: none;
     }
+    .preflight-message-summary {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .preflight-list-collapsed::after {
+      content: "";
+      display: block;
+      height: 1px;
+      background: var(--line);
+      opacity: .72;
+    }
     .preflight-list li {
       color: var(--muted);
       font-weight: 600;
@@ -1969,9 +2030,13 @@ INDEX_HTML = r"""<!doctype html>
     .settings-page,
     .history-page {
       grid-column: 1 / -1;
+      min-height: 0;
       height: calc(100vh - 104px);
       max-height: calc(100vh - 104px);
       overflow: hidden;
+    }
+    .history-page {
+      overflow: visible;
     }
     .settings-page[hidden],
     .history-page[hidden] {
@@ -1980,6 +2045,7 @@ INDEX_HTML = r"""<!doctype html>
     .settings-card {
       width: 100%;
       height: 100%;
+      min-height: 0;
       min-height: 100%;
       display: grid;
       grid-template-rows: auto minmax(0, 1fr) auto;
@@ -1988,6 +2054,16 @@ INDEX_HTML = r"""<!doctype html>
       border-radius: 0;
       background: var(--panel);
       box-shadow: none;
+    }
+    .history-card {
+      overflow: visible;
+    }
+    .history-card .settings-layout,
+    .history-card .settings-section {
+      overflow: visible;
+    }
+    .history-card .ghost-select.open {
+      z-index: 90;
     }
     .pack-name-head,
     .settings-head {
@@ -2082,11 +2158,22 @@ INDEX_HTML = r"""<!doctype html>
       font-size: 13px;
       overflow-wrap: anywhere;
     }
+    .history-download-missing {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      color: var(--muted);
+      font-weight: 700;
+      text-decoration: line-through;
+    }
     .settings-layout {
       min-height: 0;
       display: grid;
-      grid-template-columns: repeat(2, minmax(280px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
+      grid-auto-flow: row;
+      grid-auto-rows: minmax(min-content, max-content);
       align-items: start;
+      align-content: start;
       gap: 16px;
       padding: 18px 22px;
       overflow: auto;
@@ -2094,7 +2181,12 @@ INDEX_HTML = r"""<!doctype html>
       scrollbar-color: var(--scroll-thumb) transparent;
     }
     .settings-section {
+      min-width: 0;
+      min-height: 0;
+      height: fit-content;
+      align-self: start;
       display: grid;
+      align-content: start;
       gap: 14px;
       padding: 16px;
       border: 1px solid var(--line);
@@ -2122,6 +2214,10 @@ INDEX_HTML = r"""<!doctype html>
       gap: 10px;
       flex-wrap: wrap;
       padding-top: 2px;
+    }
+    .settings-section-actions button {
+      flex: 0 1 auto;
+      white-space: normal;
     }
     .settings-footer {
       display: flex;
@@ -2397,6 +2493,11 @@ INDEX_HTML = r"""<!doctype html>
     .theme-toggle .chevron {
       color: var(--muted);
       flex: 0 0 auto;
+      transition: transform var(--motion-base) ease, color var(--motion-fast) ease;
+    }
+    .theme-picker.open .theme-toggle .chevron {
+      color: var(--accent);
+      transform: rotate(180deg);
     }
     .theme-menu {
       position: absolute;
@@ -2411,8 +2512,38 @@ INDEX_HTML = r"""<!doctype html>
       border-radius: var(--radius-md);
       background: var(--panel);
       box-shadow: 0 18px 44px rgba(15, 23, 42, .18);
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transform: translateY(calc(var(--dropdown-motion-offset) * -1)) scale(.98);
+      transform-origin: top right;
+      transition: opacity var(--motion-base) ease, visibility var(--motion-base) ease, transform var(--motion-base) ease, box-shadow var(--motion-base) ease;
+      will-change: opacity, transform;
       scrollbar-width: thin;
       scrollbar-color: var(--dropdown-scroll-thumb) var(--dropdown-scroll-track);
+    }
+    .theme-picker.open .theme-menu {
+      opacity: 1;
+      visibility: visible;
+      pointer-events: auto;
+      transform: translateY(0) scale(1);
+      box-shadow: 0 24px 54px rgba(15, 23, 42, .22);
+    }
+    .theme-menu.is-floating {
+      position: fixed;
+      left: var(--dropdown-left, 12px);
+      right: auto;
+      top: var(--dropdown-top, 12px);
+      z-index: 180;
+      width: var(--dropdown-width, min(380px, calc(100vw - 24px)));
+      max-width: calc(100vw - 24px);
+      max-height: var(--dropdown-max-height, min(520px, calc(100vh - var(--dropdown-top, 12px) - 12px)));
+    }
+    .theme-menu.is-closing {
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transform: translateY(calc(var(--dropdown-motion-offset) * -1)) scale(.98);
     }
     .theme-menu[hidden] {
       display: none;
@@ -2551,11 +2682,114 @@ INDEX_HTML = r"""<!doctype html>
       overflow-wrap: anywhere;
       line-height: 1.4;
     }
+    .glossary-editor-shell {
+      display: grid;
+      gap: 12px;
+      min-width: 0;
+    }
+    .glossary-table-panel,
+    .glossary-json-panel {
+      min-width: 0;
+    }
     .glossary-editor {
-      min-height: 180px;
+      min-height: 220px;
       resize: vertical;
       font-family: "Fira Code", Consolas, monospace;
       line-height: 1.5;
+    }
+    .glossary-toolbar {
+      display: grid;
+      gap: 12px;
+    }
+    .glossary-search {
+      min-width: 0;
+    }
+    .glossary-table-wrap {
+      min-width: 0;
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius-sm);
+      background: var(--card-surface);
+      box-shadow: var(--card-shadow-soft);
+      overflow: auto;
+    }
+    .glossary-table-wrap table {
+      width: 100%;
+      min-width: 0;
+      border-collapse: collapse;
+    }
+    .glossary-table-wrap th:last-child,
+    .glossary-table-wrap td:last-child {
+      width: 56px;
+    }
+    .glossary-table-wrap tbody tr[hidden] {
+      display: none;
+    }
+    .glossary-cell-input,
+    .glossary-cell-input:hover,
+    .glossary-cell-input:focus,
+    .glossary-cell-input:focus-visible {
+      min-height: 38px;
+      height: 38px;
+      padding: 0 10px;
+      box-shadow: none;
+    }
+    .glossary-remove {
+      width: 38px;
+      min-width: 38px;
+      height: 38px;
+      min-height: 38px;
+      padding: 0;
+      display: grid;
+      place-items: center;
+      border: 1px solid var(--danger-line);
+      border-radius: 10px;
+      background: var(--danger-bg);
+      color: var(--danger);
+    }
+    .glossary-empty {
+      padding: 14px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1.5;
+      text-align: center;
+    }
+    .glossary-conflicts {
+      display: grid;
+      gap: 8px;
+    }
+    .glossary-conflict-item {
+      display: grid;
+      gap: 6px;
+      padding: 10px 12px;
+      border: 1px solid var(--danger-line);
+      border-radius: var(--radius-sm);
+      background: var(--danger-bg);
+    }
+    .glossary-conflict-item strong {
+      font-size: 13px;
+      line-height: 1.4;
+      overflow-wrap: anywhere;
+    }
+    .glossary-conflict-pair {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 8px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .glossary-conflict-pair span {
+      display: grid;
+      gap: 3px;
+      padding: 8px 10px;
+      border: 1px solid color-mix(in srgb, var(--danger-line) 72%, transparent);
+      border-radius: 8px;
+      background: color-mix(in srgb, var(--panel) 88%, var(--danger-bg));
+    }
+    .glossary-conflict-pair b {
+      color: var(--text);
+      font-size: 12px;
     }
     .status-filter {
       display: inline-flex;
@@ -2596,6 +2830,22 @@ INDEX_HTML = r"""<!doctype html>
       border-color: var(--line);
       background: var(--field-bg-soft);
       color: var(--muted);
+    }
+    .issue-badge {
+      margin-top: 6px;
+      border-color: var(--danger-line);
+      background: var(--danger-bg);
+      color: var(--danger);
+    }
+    .result-row.issue td {
+      background:
+        linear-gradient(0deg, color-mix(in srgb, var(--danger-bg) 88%, transparent), color-mix(in srgb, var(--danger-bg) 88%, transparent)),
+        var(--table-alt);
+    }
+    .result-row.issue:hover td {
+      background:
+        linear-gradient(0deg, color-mix(in srgb, var(--danger-bg) 92%, transparent), color-mix(in srgb, var(--danger-bg) 92%, transparent)),
+        var(--table-hover);
     }
     .pager {
       display: flex;
@@ -3265,6 +3515,11 @@ INDEX_HTML = r"""<!doctype html>
         transform: none !important;
       }
     }
+    @media (max-width: 1120px) {
+      .settings-layout {
+        grid-template-columns: 1fr;
+      }
+    }
     @media (max-width: 880px) {
       body { overflow: auto; }
       .app-shell {
@@ -3642,6 +3897,7 @@ INDEX_HTML = r"""<!doctype html>
             <button type="button" class="secondary" id="preflight-run"><i class="ri-scan-2-line"></i><span data-i18n="preflight.run">运行预检</span></button>
           </div>
           <div id="preflight-summary" class="preflight-summary" hidden></div>
+          <div id="preflight-message-summary" class="preflight-message-summary" hidden></div>
           <ul id="preflight-messages" class="preflight-list"></ul>
         </div>
         <details class="form-card" data-advanced-panel>
@@ -3723,6 +3979,10 @@ INDEX_HTML = r"""<!doctype html>
           <input name="ignore_cache" type="checkbox">
           <span data-i18n="output.ignore_cache">忽略缓存并重新翻译</span>
         </label>
+        <label class="checkline">
+          <input name="ignore_preflight_blockers" type="checkbox">
+          <span data-i18n="output.ignore_preflight_blockers">忽略预检阻断并继续</span>
+        </label>
         <input type="hidden" name="cache_dir" id="cache_dir">
         <input type="hidden" name="ui_locale" id="ui_locale_field" value="zh_cn">
         <input type="hidden" name="ui_locale_dir" id="ui_locale_dir">
@@ -3751,7 +4011,7 @@ INDEX_HTML = r"""<!doctype html>
       </div>
     </section>
     <section class="history-page" id="history-panel" data-main-view="history" hidden>
-      <div class="settings-card">
+      <div class="settings-card history-card">
         <div class="settings-head">
           <div>
             <strong data-i18n="history.title">任务历史</strong>
@@ -3767,7 +4027,9 @@ INDEX_HTML = r"""<!doctype html>
               <div><strong data-i18n="history.filters">筛选</strong><span data-i18n="history.filters_desc">按状态和输入类型缩小范围。</span></div>
             </div>
             <div class="grid-2">
-              <label><span data-i18n="history.status">状态</span>
+              <label class="ghost-select" id="history-status-filter-shell"><span data-i18n="history.status">状态</span>
+                <button type="button" class="control" data-select-trigger="history_status" role="combobox" tabindex="0" aria-haspopup="listbox" aria-expanded="false" aria-controls="history-status-filter-menu"><span class="value" id="history-status-filter-display">全部</span><i class="ri-arrow-down-s-line chevron"></i></button>
+                <div class="ghost-menu" id="history-status-filter-menu" role="listbox" hidden></div>
                 <select id="history-status-filter">
                   <option value="all" data-i18n="history.all">全部</option>
                   <option value="done" data-i18n="history.done">完成</option>
@@ -3775,7 +4037,9 @@ INDEX_HTML = r"""<!doctype html>
                   <option value="cancelled" data-i18n="history.cancelled">已中断</option>
                 </select>
               </label>
-              <label><span data-i18n="history.kind">输入类型</span>
+              <label class="ghost-select" id="history-kind-filter-shell"><span data-i18n="history.kind">输入类型</span>
+                <button type="button" class="control" data-select-trigger="history_kind" role="combobox" tabindex="0" aria-haspopup="listbox" aria-expanded="false" aria-controls="history-kind-filter-menu"><span class="value" id="history-kind-filter-display">全部</span><i class="ri-arrow-down-s-line chevron"></i></button>
+                <div class="ghost-menu" id="history-kind-filter-menu" role="listbox" hidden></div>
                 <select id="history-kind-filter">
                   <option value="all" data-i18n="history.all">全部</option>
                   <option value="jar" data-i18n="input.jar">Mod JAR 语言文件</option>
@@ -3818,6 +4082,38 @@ INDEX_HTML = r"""<!doctype html>
               <button type="button" class="danger" id="settings-cache-clear"><i class="ri-delete-bin-6-line"></i><span data-i18n="settings.clear_cache">清空缓存</span></button>
             </div>
           </section>
+          <section class="settings-section" id="settings-presets-section" aria-labelledby="settings-presets-title">
+            <div class="settings-section-title" id="settings-presets-title"><i class="ri-save-3-line"></i><span data-i18n="settings.presets_section">配置预设</span></div>
+            <label class="settings-field"><span data-i18n="settings.preset_name">预设名称</span>
+              <input class="ghost-input" id="settings-preset-name" placeholder="例如：OpenAI 高并发" data-i18n-placeholder="settings.preset_name_placeholder" autocomplete="off" spellcheck="false">
+            </label>
+            <label class="settings-field"><span data-i18n="settings.saved_presets">已保存预设</span>
+              <select class="ghost-input" id="settings-preset-select"></select>
+            </label>
+            <div class="settings-current">
+              <span data-i18n="settings.preset_hint">安全说明</span>
+              <strong data-i18n="settings.preset_no_key">预设不会保存 API Key 明文，只保存环境变量名。</strong>
+            </div>
+            <div class="settings-section-actions">
+              <button type="button" class="secondary" id="settings-preset-refresh"><i class="ri-refresh-line"></i><span data-i18n="settings.preset_refresh">刷新预设</span></button>
+              <button type="button" class="secondary" id="settings-preset-apply"><i class="ri-magic-line"></i><span data-i18n="settings.preset_apply">套用预设</span></button>
+              <button type="button" class="secondary" id="settings-preset-save"><i class="ri-save-3-line"></i><span data-i18n="settings.preset_save">保存当前配置</span></button>
+              <button type="button" class="danger" id="settings-preset-delete"><i class="ri-delete-bin-6-line"></i><span data-i18n="settings.preset_delete">删除预设</span></button>
+            </div>
+          </section>
+          <section class="settings-section" id="settings-memory-section" aria-labelledby="settings-memory-title">
+            <div class="settings-section-title" id="settings-memory-title"><i class="ri-brain-line"></i><span data-i18n="settings.memory_section">翻译记忆</span></div>
+            <div class="settings-current">
+              <span data-i18n="settings.current">当前</span>
+              <strong id="settings-memory-summary" data-i18n="settings.memory_empty">未发现翻译记忆</strong>
+            </div>
+            <div class="settings-section-actions">
+              <button type="button" class="secondary" id="settings-memory-refresh"><i class="ri-refresh-line"></i><span data-i18n="settings.memory_refresh">刷新记忆</span></button>
+              <button type="button" class="secondary" id="settings-memory-export"><i class="ri-download-2-line"></i><span data-i18n="settings.memory_export">导出 JSONL</span></button>
+              <button type="button" class="secondary" id="settings-memory-compact"><i class="ri-contract-left-right-line"></i><span data-i18n="settings.memory_compact">压缩去重</span></button>
+              <button type="button" class="danger" id="settings-memory-clear"><i class="ri-delete-bin-6-line"></i><span data-i18n="settings.memory_clear">清理记忆</span></button>
+            </div>
+          </section>
           <section class="settings-section" id="settings-locale-section" aria-labelledby="settings-locale-title">
             <div class="settings-section-title" id="settings-locale-title"><i class="ri-translate-2"></i><span data-i18n="settings.language_section">界面语言</span></div>
             <label class="settings-field"><span data-i18n="settings.ui_locale_dir">语言拓展包目录</span>
@@ -3842,18 +4138,38 @@ INDEX_HTML = r"""<!doctype html>
               <button type="button" class="secondary" id="settings-ui-locale-download"><i class="ri-download-2-line"></i><span data-i18n="ui_locale.download">下载所选语言包</span></button>
               <button type="button" class="secondary" id="settings-ui-locale-check"><i class="ri-shield-check-line"></i><span data-i18n="settings.ui_locale_check_button">检查语言包</span></button>
               <button type="button" class="secondary" id="settings-ui-locale-missing-template"><i class="ri-file-add-line"></i><span data-i18n="settings.ui_locale_missing_template">导出缺失模板</span></button>
+              <button type="button" class="secondary" id="settings-ui-locale-fill-en"><i class="ri-file-add-line"></i><span data-i18n="settings.ui_locale_fill_en">英文补全下载</span></button>
+              <button type="button" class="secondary" id="settings-ui-locale-fill-zh"><i class="ri-file-add-line"></i><span data-i18n="settings.ui_locale_fill_zh">中文补全下载</span></button>
             </div>
           </section>
           <section class="settings-section" id="settings-glossary-section" aria-labelledby="settings-glossary-title">
             <div class="settings-section-title" id="settings-glossary-title"><i class="ri-book-2-line"></i><span data-i18n="settings.glossary_section">术语表管理</span></div>
-            <label class="settings-field"><span data-i18n="settings.glossary_terms">用户术语 JSON</span>
-              <textarea class="ghost-input glossary-editor" id="settings-glossary-editor" spellcheck="false" placeholder="{&#10;  &quot;Copper&quot;: &quot;铜&quot;&#10;}" data-i18n-placeholder="settings.glossary_placeholder"></textarea>
-            </label>
             <div class="settings-current">
               <span data-i18n="settings.current">当前</span>
               <strong id="settings-glossary-summary" data-i18n="settings.glossary_empty">未保存用户术语</strong>
             </div>
+            <div class="glossary-toolbar">
+              <label class="settings-field glossary-search"><span data-i18n="settings.glossary_search">搜索术语</span>
+                <input class="ghost-input" id="settings-glossary-search" placeholder="搜索原文或译文" data-i18n-placeholder="settings.glossary_search_placeholder" autocomplete="off" spellcheck="false">
+              </label>
+              <div class="glossary-editor-shell">
+                <div class="glossary-table-panel" id="settings-glossary-table-panel">
+                  <div class="glossary-table-wrap" id="settings-glossary-table"></div>
+                </div>
+                <div class="glossary-json-panel" id="settings-glossary-json-panel" hidden>
+                  <label class="settings-field"><span data-i18n="settings.glossary_terms">用户术语 JSON</span>
+                    <textarea class="ghost-input glossary-editor" id="settings-glossary-editor" spellcheck="false" placeholder="{&#10;  &quot;Copper&quot;: &quot;铜&quot;&#10;}" data-i18n-placeholder="settings.glossary_placeholder"></textarea>
+                  </label>
+                </div>
+              </div>
+            </div>
+            <div class="settings-current">
+              <span data-i18n="settings.glossary_conflicts">内置冲突</span>
+              <div id="settings-glossary-conflicts" class="glossary-conflicts"></div>
+            </div>
             <div class="settings-section-actions">
+              <button type="button" class="secondary" id="settings-glossary-add-row"><i class="ri-add-line"></i><span data-i18n="settings.glossary_add_row">新增术语</span></button>
+              <button type="button" class="secondary" id="settings-glossary-toggle-json"><i class="ri-braces-line"></i><span data-i18n="settings.glossary_mode_json">高级 JSON</span></button>
               <button type="button" class="secondary" id="settings-glossary-refresh"><i class="ri-refresh-line"></i><span data-i18n="settings.glossary_refresh">刷新术语</span></button>
               <button type="button" class="secondary" id="settings-glossary-import"><i class="ri-upload-2-line"></i><span data-i18n="settings.glossary_import">导入术语</span></button>
               <button type="button" class="secondary" id="settings-glossary-export"><i class="ri-download-2-line"></i><span data-i18n="settings.glossary_export">导出术语</span></button>
@@ -3892,6 +4208,10 @@ INDEX_HTML = r"""<!doctype html>
     const uiLocaleDirField = document.getElementById('ui_locale_dir');
     const glossaryEditor = document.getElementById('settings-glossary-editor');
     const glossarySummary = document.getElementById('settings-glossary-summary');
+    const glossaryTable = document.getElementById('settings-glossary-table');
+    const glossaryTablePanel = document.getElementById('settings-glossary-table-panel');
+    const glossaryJsonPanel = document.getElementById('settings-glossary-json-panel');
+    const glossaryConflicts = document.getElementById('settings-glossary-conflicts');
     const glossaryImportFile = document.getElementById('glossary-import-file');
     const jarsInput = document.getElementById('jars');
     const ftbquestsInput = document.getElementById('ftbquests-files');
@@ -3926,12 +4246,28 @@ INDEX_HTML = r"""<!doctype html>
     const settingsStatus = document.getElementById('settings-status');
     const settingsCacheDefault = document.getElementById('settings-cache-default');
     const settingsCacheClear = document.getElementById('settings-cache-clear');
+    const settingsPresetName = document.getElementById('settings-preset-name');
+    const settingsPresetSelect = document.getElementById('settings-preset-select');
+    const settingsPresetRefresh = document.getElementById('settings-preset-refresh');
+    const settingsPresetApply = document.getElementById('settings-preset-apply');
+    const settingsPresetSave = document.getElementById('settings-preset-save');
+    const settingsPresetDelete = document.getElementById('settings-preset-delete');
+    const settingsMemorySummary = document.getElementById('settings-memory-summary');
+    const settingsMemoryRefresh = document.getElementById('settings-memory-refresh');
+    const settingsMemoryExport = document.getElementById('settings-memory-export');
+    const settingsMemoryCompact = document.getElementById('settings-memory-compact');
+    const settingsMemoryClear = document.getElementById('settings-memory-clear');
     const settingsUiLocaleRefresh = document.getElementById('settings-ui-locale-refresh');
     const settingsUiLocaleDefault = document.getElementById('settings-ui-locale-default');
     const settingsUiLocaleImport = document.getElementById('settings-ui-locale-import');
     const settingsUiLocaleDownload = document.getElementById('settings-ui-locale-download');
     const settingsUiLocaleCheck = document.getElementById('settings-ui-locale-check');
     const settingsUiLocaleMissingTemplate = document.getElementById('settings-ui-locale-missing-template');
+    const settingsUiLocaleFillEn = document.getElementById('settings-ui-locale-fill-en');
+    const settingsUiLocaleFillZh = document.getElementById('settings-ui-locale-fill-zh');
+    const settingsGlossarySearch = document.getElementById('settings-glossary-search');
+    const settingsGlossaryAddRow = document.getElementById('settings-glossary-add-row');
+    const settingsGlossaryToggleJson = document.getElementById('settings-glossary-toggle-json');
     const settingsGlossaryRefresh = document.getElementById('settings-glossary-refresh');
     const settingsGlossaryImport = document.getElementById('settings-glossary-import');
     const settingsGlossaryExport = document.getElementById('settings-glossary-export');
@@ -3964,6 +4300,7 @@ INDEX_HTML = r"""<!doctype html>
       languageSearch: '',
       languageJarFilter: '全部',
       languageStatusFilter: 'all',
+      languageConditionFilter: 'all',
       languageFilteredCacheKey: '',
       languageFilteredEntries: [],
       languageEdits: {},
@@ -3976,6 +4313,13 @@ INDEX_HTML = r"""<!doctype html>
       hardcodedPage: 1,
       apiLogPage: 1
     };
+    const glossaryState = {
+      rows: [],
+      conflicts: {},
+      mode: 'table',
+      search: '',
+      nextRowId: 1
+    };
     let historyRecords = [];
     let languageSearchDebounce = 0;
     let reportSearchDebounce = 0;
@@ -3985,6 +4329,7 @@ INDEX_HTML = r"""<!doctype html>
     let modelFetchDebounce = 0;
     let modelFetchSequence = 0;
     let modelOptions = [];
+    const PREVIEW_PREFLIGHT_MESSAGE_LIMIT = 8;
     const themePicker = document.getElementById('theme-picker');
     const themeToggle = document.getElementById('theme-toggle');
     const themeMenu = document.getElementById('theme-menu');
@@ -4087,6 +4432,7 @@ INDEX_HTML = r"""<!doctype html>
     const providerTestStatus = document.getElementById('provider-test-status');
     const preflightRun = document.getElementById('preflight-run');
     const preflightSummary = document.getElementById('preflight-summary');
+    const preflightMessageSummary = document.getElementById('preflight-message-summary');
     const preflightMessages = document.getElementById('preflight-messages');
     const apiConcurrency = document.getElementById('api_concurrency');
     const apiConcurrencyHelp = document.getElementById('api-concurrency-help');
@@ -4097,10 +4443,14 @@ INDEX_HTML = r"""<!doctype html>
     const targetLocaleSelectShell = document.getElementById('target-locale-select');
     const providerSelectShell = document.getElementById('provider-select');
     const packFormatSelectShell = document.getElementById('pack-format-select');
+    const historyStatusFilterShell = document.getElementById('history-status-filter-shell');
+    const historyKindFilterShell = document.getElementById('history-kind-filter-shell');
     const sourceLocaleMenu = document.getElementById('source-locale-menu');
     const targetLocaleMenu = document.getElementById('target-locale-menu');
     const providerMenu = document.getElementById('provider-menu');
     const packFormatMenu = document.getElementById('pack-format-menu');
+    const historyStatusFilterMenu = document.getElementById('history-status-filter-menu');
+    const historyKindFilterMenu = document.getElementById('history-kind-filter-menu');
     const minecraftLocales = [
       ["af_za", "Afrikaans"],
       ["ar_sa", "العربية"],
@@ -4356,9 +4706,12 @@ INDEX_HTML = r"""<!doctype html>
       if (!themePicker || !themeMenu || !themeToggle) {
         return;
       }
-      themePicker.classList.toggle('open', open);
-      themeMenu.hidden = !open;
-      themeToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      if (open) {
+        closeAllSelectMenus();
+        openSelectMenu(themePicker, themeMenu, themeToggle);
+      } else {
+        scheduleMenuHide(themePicker, themeMenu, themeToggle);
+      }
     }
 
     function applyThemeMode(mode, persist = false) {
@@ -4414,7 +4767,7 @@ INDEX_HTML = r"""<!doctype html>
       themeToggle.addEventListener('click', event => {
         event.preventDefault();
         event.stopPropagation();
-        setThemeMenuOpen(themeMenu.hidden);
+        setThemeMenuOpen(!themePicker.classList.contains('open'));
       });
       themeMenu.addEventListener('click', event => {
         const option = event.target.closest('[data-theme-value]');
@@ -4694,6 +5047,8 @@ INDEX_HTML = r"""<!doctype html>
       syncConcurrencyHint();
       refreshSettingsDirectoryLabels();
       refreshSelectMenusForCurrentLocale();
+      updateGlossaryModeButton();
+      renderGlossaryConflicts(glossaryState.conflicts || {});
       if (resultState.payload) {
         renderResultShell();
       }
@@ -4755,6 +5110,12 @@ INDEX_HTML = r"""<!doctype html>
       loadGlossarySettings().catch(error => {
         setSettingsStatus(error.message || ui('settings.glossary_load_failed', '术语表读取失败'), true);
       });
+      loadConfigPresets().catch(error => {
+        setSettingsStatus(error.message || ui('settings.preset_load_failed', '配置预设读取失败'), true);
+      });
+      loadTranslationMemorySettings().catch(error => {
+        setSettingsStatus(error.message || ui('settings.memory_load_failed', '翻译记忆读取失败'), true);
+      });
       switchView('settings');
       window.setTimeout(() => {
         if (settingsCacheDir) {
@@ -4777,8 +5138,181 @@ INDEX_HTML = r"""<!doctype html>
         : ui('settings.glossary_empty', '未保存用户术语');
     }
 
-    async function loadGlossarySettings() {
+    function nextGlossaryRowId() {
+      const value = glossaryState.nextRowId;
+      glossaryState.nextRowId += 1;
+      return value;
+    }
+
+    function createGlossaryRow(source = '', target = '') {
+      return { id: nextGlossaryRowId(), source: String(source || ''), target: String(target || '') };
+    }
+
+    function normalizeGlossaryTermsClient(value) {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) {
+        throw new Error(ui('settings.glossary_invalid_object', '术语表必须是 JSON 对象'));
+      }
+      const normalized = {};
+      Object.entries(value).forEach(([source, target]) => {
+        const key = String(source || '').trim();
+        const translation = String(target || '').trim();
+        if (!key || !translation) {
+          return;
+        }
+        normalized[key] = translation;
+      });
+      return normalized;
+    }
+
+    function glossaryRowsFromTerms(terms) {
+      const entries = Object.entries(terms || {}).sort((left, right) => left[0].localeCompare(right[0], undefined, { sensitivity: 'base' }));
+      return entries.length ? entries.map(([source, target]) => createGlossaryRow(source, target)) : [createGlossaryRow('', '')];
+    }
+
+    function glossaryTermsFromRows(rows) {
+      const terms = {};
+      (rows || []).forEach(row => {
+        const source = String(row?.source || '').trim();
+        const target = String(row?.target || '').trim();
+        if (!source || !target) {
+          return;
+        }
+        terms[source] = target;
+      });
+      return normalizeGlossaryTermsClient(terms);
+    }
+
+    function syncGlossaryRowsFromTable() {
+      if (!glossaryTable) {
+        return glossaryState.rows;
+      }
+      const rows = Array.from(glossaryTable.querySelectorAll('[data-glossary-row]')).map(node => ({
+        id: Number(node.dataset.glossaryRow || '0') || nextGlossaryRowId(),
+        source: node.querySelector('[data-glossary-source]')?.value || '',
+        target: node.querySelector('[data-glossary-target]')?.value || '',
+      }));
+      glossaryState.rows = rows.length ? rows : [createGlossaryRow('', '')];
+      return glossaryState.rows;
+    }
+
+    function syncGlossaryEditorFromState() {
       if (!glossaryEditor) {
+        return;
+      }
+      glossaryEditor.value = JSON.stringify(glossaryTermsFromRows(glossaryState.rows), null, 2);
+    }
+
+    function renderGlossaryConflicts(conflicts) {
+      if (!glossaryConflicts) {
+        return;
+      }
+      const items = Object.entries(conflicts || {}).sort((left, right) => left[0].localeCompare(right[0], undefined, { sensitivity: 'base' }));
+      if (!items.length) {
+        glossaryConflicts.innerHTML = `<div class="glossary-empty">${escapeHtml(ui('settings.glossary_conflicts_empty', '没有与内置术语冲突的条目'))}</div>`;
+        return;
+      }
+      glossaryConflicts.innerHTML = items.map(([source, values]) => `
+        <div class="glossary-conflict-item">
+          <strong>${escapeHtml(source)}</strong>
+          <div class="glossary-conflict-pair">
+            <span><b>${escapeHtml(ui('settings.glossary_conflict_builtin', '内置'))}</b>${escapeHtml(values?.builtin || '')}</span>
+            <span><b>${escapeHtml(ui('settings.glossary_conflict_user', '用户'))}</b>${escapeHtml(values?.user || '')}</span>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function renderGlossaryTable() {
+      if (!glossaryTable) {
+        return;
+      }
+      const rows = glossaryState.rows.length ? glossaryState.rows : [createGlossaryRow('', '')];
+      const query = String(glossaryState.search || '').trim().toLowerCase();
+      const body = rows.map(row => {
+        const haystack = `${row.source} ${row.target}`.toLowerCase();
+        const hidden = query && !haystack.includes(query) ? ' hidden' : '';
+        return `
+          <tr data-glossary-row="${row.id}"${hidden}>
+            <td><input class="ghost-input glossary-cell-input" data-glossary-source value="${escapeHtml(row.source)}" placeholder="${escapeHtml(ui('settings.glossary_term_source', '原文'))}" autocomplete="off" spellcheck="false"></td>
+            <td><input class="ghost-input glossary-cell-input" data-glossary-target value="${escapeHtml(row.target)}" placeholder="${escapeHtml(ui('settings.glossary_term_target', '译文'))}" autocomplete="off" spellcheck="false"></td>
+            <td><button type="button" class="glossary-remove" data-glossary-remove="${row.id}" title="${escapeHtml(ui('settings.glossary_remove_term', '删除术语'))}" aria-label="${escapeHtml(ui('settings.glossary_remove_term', '删除术语'))}"><i class="ri-delete-bin-line"></i></button></td>
+          </tr>
+        `;
+      }).join('');
+      const hasVisibleRows = rows.some(row => {
+        const haystack = `${row.source} ${row.target}`.toLowerCase();
+        return !query || haystack.includes(query);
+      });
+      glossaryTable.innerHTML = `
+        <table>
+          <thead>
+            <tr>
+              <th>${escapeHtml(ui('settings.glossary_term_source', '原文'))}</th>
+              <th>${escapeHtml(ui('settings.glossary_term_target', '译文'))}</th>
+              <th>${escapeHtml(ui('settings.glossary_actions', '操作'))}</th>
+            </tr>
+          </thead>
+          <tbody>${body}</tbody>
+        </table>
+        ${hasVisibleRows ? '' : `<div class="glossary-empty">${escapeHtml(ui('settings.glossary_table_empty', '没有匹配的术语。可调整搜索条件，或新增术语。'))}</div>`}
+      `;
+    }
+
+    function collectGlossaryTermsFromTable() {
+      syncGlossaryRowsFromTable();
+      return glossaryTermsFromRows(glossaryState.rows);
+    }
+
+    function applyGlossaryTerms(terms, conflicts = {}, preserveSearch = false) {
+      glossaryState.rows = glossaryRowsFromTerms(terms || {});
+      glossaryState.conflicts = conflicts || {};
+      if (!preserveSearch) {
+        glossaryState.search = '';
+        if (settingsGlossarySearch) {
+          settingsGlossarySearch.value = '';
+        }
+      }
+      syncGlossaryEditorFromState();
+      renderGlossaryTable();
+      renderGlossaryConflicts(glossaryState.conflicts);
+    }
+
+    function updateGlossaryModeButton() {
+      if (!settingsGlossaryToggleJson) {
+        return;
+      }
+      const label = glossaryState.mode === 'json'
+        ? ui('settings.glossary_mode_table', '表格编辑')
+        : ui('settings.glossary_mode_json', '高级 JSON');
+      settingsGlossaryToggleJson.innerHTML = `<i class="ri-braces-line"></i><span>${escapeHtml(label)}</span>`;
+    }
+
+    function setGlossaryMode(mode) {
+      const nextMode = mode === 'json' ? 'json' : 'table';
+      if (nextMode === glossaryState.mode) {
+        updateGlossaryModeButton();
+        return;
+      }
+      if (nextMode === 'json') {
+        syncGlossaryRowsFromTable();
+        syncGlossaryEditorFromState();
+      } else {
+        const parsed = normalizeGlossaryTermsClient(JSON.parse(glossaryEditor?.value || '{}'));
+        glossaryState.rows = glossaryRowsFromTerms(parsed);
+        renderGlossaryTable();
+      }
+      glossaryState.mode = nextMode;
+      if (glossaryTablePanel) {
+        glossaryTablePanel.hidden = glossaryState.mode !== 'table';
+      }
+      if (glossaryJsonPanel) {
+        glossaryJsonPanel.hidden = glossaryState.mode !== 'json';
+      }
+      updateGlossaryModeButton();
+    }
+
+    async function loadGlossarySettings() {
+      if (!glossaryEditor || !glossaryTable) {
         return;
       }
       const response = await fetch('/api/glossary');
@@ -4786,7 +5320,7 @@ INDEX_HTML = r"""<!doctype html>
       if (!response.ok || !payload.ok) {
         throw new Error(payload.error || ui('settings.glossary_load_failed', '术语表读取失败'));
       }
-      glossaryEditor.value = JSON.stringify(payload.terms || {}, null, 2);
+      applyGlossaryTerms(payload.terms || {}, payload.conflicts || {});
       updateGlossarySummary(payload.count || 0, payload.conflicts || {});
     }
 
@@ -4794,12 +5328,9 @@ INDEX_HTML = r"""<!doctype html>
       if (!glossaryEditor) {
         return;
       }
-      let terms = {};
-      try {
-        terms = JSON.parse(glossaryEditor.value || '{}');
-      } catch (error) {
-        throw new Error(formatUi('settings.glossary_parse_failed', '术语表 JSON 无法解析：{message}', { message: error.message }));
-      }
+      const terms = glossaryState.mode === 'json'
+        ? normalizeGlossaryTermsClient(JSON.parse(glossaryEditor.value || '{}'))
+        : collectGlossaryTermsFromTable();
       const response = await fetch('/api/glossary', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -4809,10 +5340,167 @@ INDEX_HTML = r"""<!doctype html>
       if (!response.ok || !payload.ok) {
         throw new Error(payload.error || ui('settings.glossary_save_failed', '术语表保存失败'));
       }
-      glossaryEditor.value = JSON.stringify(payload.terms || {}, null, 2);
+      applyGlossaryTerms(payload.terms || {}, payload.conflicts || {}, true);
       updateGlossarySummary(payload.count || 0, payload.conflicts || {});
       const conflictCount = payload.conflicts ? Object.keys(payload.conflicts).length : 0;
       setSettingsStatus(formatUi('settings.glossary_saved', '已保存 {count} 条术语，{conflicts} 条与内置术语冲突。', { count: payload.count || 0, conflicts: conflictCount }), Boolean(conflictCount));
+    }
+
+    function currentPresetConfig() {
+      const data = new FormData(form);
+      data.delete('api_key');
+      data.delete('jars');
+      data.delete('ftbquests_files');
+      data.delete('ftbquests_directory_files');
+      data.delete('json_files');
+      data.delete('glossary');
+      return {
+        provider: provider.value,
+        api_url: document.getElementById('api_base_url')?.value || '',
+        model: document.getElementById('model')?.value || '',
+        api_key_env: document.getElementById('api_key_env')?.value || '',
+        api_concurrency: Number(data.get('api_concurrency') || '2'),
+        api_retries: Number(data.get('api_retries') || '5'),
+        api_batch_size: Number(data.get('api_batch_size') || '40'),
+        api_timeout: Number(data.get('api_timeout') || '10'),
+        pack_format: Number(data.get('pack_format') || '15'),
+        overwrite_existing: data.get('overwrite_existing') === 'on',
+        skip_translated: data.get('skip_translated') === 'on',
+        ignore_cache: data.get('ignore_cache') === 'on',
+        ignore_preflight_blockers: data.get('ignore_preflight_blockers') === 'on',
+        scan_hardcoded: data.get('scan_hardcoded') === 'on'
+      };
+    }
+
+    function renderConfigPresets(presets) {
+      if (!settingsPresetSelect) {
+        return;
+      }
+      const selected = settingsPresetSelect.value;
+      settingsPresetSelect.innerHTML = (presets || []).map(item => `
+        <option value="${escapeHtml(item.name)}">${escapeHtml(item.name)}</option>
+      `).join('');
+      if (selected && Array.from(settingsPresetSelect.options).some(option => option.value === selected)) {
+        settingsPresetSelect.value = selected;
+      }
+    }
+
+    async function loadConfigPresets() {
+      const response = await fetch('/api/presets');
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error || ui('settings.preset_load_failed', '配置预设读取失败'));
+      }
+      renderConfigPresets(payload.presets || []);
+    }
+
+    function setCheckbox(name, checked) {
+      const node = form.querySelector(`input[name="${name}"]`);
+      if (node) {
+        node.checked = Boolean(checked);
+      }
+    }
+
+    function applyConfigPreset(config) {
+      if (!config) {
+        return;
+      }
+      if (config.provider) {
+        provider.value = config.provider;
+      }
+      syncProvider(false);
+      if (config.api_url !== undefined) {
+        document.getElementById('api_base_url').value = config.api_url || '';
+      }
+      if (config.api_key_env !== undefined) {
+        document.getElementById('api_key_env').value = config.api_key_env || '';
+      }
+      if (config.model !== undefined) {
+        setModelValue(config.model || '');
+      }
+      if (config.api_concurrency !== undefined) {
+        document.getElementById('api_concurrency').value = config.api_concurrency;
+      }
+      if (config.api_retries !== undefined) {
+        document.getElementById('api_retries').value = config.api_retries;
+      }
+      if (config.api_batch_size !== undefined) {
+        document.getElementById('api_batch_size').value = config.api_batch_size;
+      }
+      if (config.api_timeout !== undefined) {
+        document.getElementById('api_timeout').value = config.api_timeout;
+      }
+      if (config.pack_format !== undefined) {
+        packFormat.value = String(config.pack_format || '15');
+        syncPackFormat();
+      }
+      setCheckbox('overwrite_existing', config.overwrite_existing);
+      setCheckbox('skip_translated', config.skip_translated);
+      setCheckbox('ignore_cache', config.ignore_cache);
+      setCheckbox('ignore_preflight_blockers', config.ignore_preflight_blockers);
+      setCheckbox('scan_hardcoded', config.scan_hardcoded);
+      refreshSelectMenusForCurrentLocale();
+    }
+
+    async function saveConfigPreset() {
+      const name = (settingsPresetName ? settingsPresetName.value : '').trim();
+      if (!name) {
+        throw new Error(ui('settings.preset_name_required', '请先填写预设名称'));
+      }
+      const response = await fetch('/api/presets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, config: currentPresetConfig() })
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error || ui('settings.preset_save_failed', '配置预设保存失败'));
+      }
+      renderConfigPresets(payload.presets || []);
+      settingsPresetSelect.value = payload.preset.name;
+      setSettingsStatus(formatUi('settings.preset_saved', '已保存预设 {name}。', { name: payload.preset.name }));
+    }
+
+    function renderTranslationMemorySummary(payload) {
+      if (!settingsMemorySummary) {
+        return;
+      }
+      const count = payload.entries || 0;
+      const size = payload.size_bytes || 0;
+      settingsMemorySummary.textContent = count
+        ? formatUi('settings.memory_summary', '已保存 {count} 条，{size}', { count, size: formatBytes(size) })
+        : ui('settings.memory_empty', '未发现翻译记忆');
+    }
+
+    async function loadTranslationMemorySettings() {
+      const cacheDir = applyCacheDirSetting(settingsCacheDir ? settingsCacheDir.value : '', true);
+      const response = await fetch(`/api/translation-memory?cache_dir=${encodeURIComponent(cacheDir)}`);
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error || ui('settings.memory_load_failed', '翻译记忆读取失败'));
+      }
+      renderTranslationMemorySummary(payload);
+      return payload;
+    }
+
+    async function mutateTranslationMemory(action) {
+      const cacheDir = applyCacheDirSetting(settingsCacheDir ? settingsCacheDir.value : '', true);
+      const response = await fetch('/api/translation-memory', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cache_dir: cacheDir, action })
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error || ui('settings.memory_save_failed', '翻译记忆操作失败'));
+      }
+      renderTranslationMemorySummary(payload);
+      return payload;
+    }
+
+    function downloadFilledUiLocale(fillLocale) {
+      const locale = uiLocale.value || 'zh_cn';
+      window.location.href = `/api/ui-locales/fill/${encodeURIComponent(locale)}${uiLocaleQuery()}&fill_locale=${encodeURIComponent(fillLocale)}`;
     }
 
     function bindSettingsMenu() {
@@ -4845,6 +5533,71 @@ INDEX_HTML = r"""<!doctype html>
           setSettingsStatus(ui('settings.cache_default_done', '已恢复默认缓存目录。'));
         });
       }
+      if (settingsPresetRefresh) {
+        settingsPresetRefresh.addEventListener('click', async () => {
+          try {
+            await loadConfigPresets();
+            setSettingsStatus(ui('settings.preset_refreshed', '配置预设已刷新。'));
+          } catch (error) {
+            setSettingsStatus(error.message || ui('settings.preset_load_failed', '配置预设读取失败'), true);
+          }
+        });
+      }
+      if (settingsPresetSave) {
+        settingsPresetSave.addEventListener('click', async () => {
+          settingsPresetSave.disabled = true;
+          try {
+            await saveConfigPreset();
+          } catch (error) {
+            setSettingsStatus(error.message || ui('settings.preset_save_failed', '配置预设保存失败'), true);
+          } finally {
+            settingsPresetSave.disabled = false;
+          }
+        });
+      }
+      if (settingsPresetApply) {
+        settingsPresetApply.addEventListener('click', async () => {
+          const name = settingsPresetSelect ? settingsPresetSelect.value : '';
+          if (!name) {
+            setSettingsStatus(ui('settings.preset_select_required', '请先选择一个预设'), true);
+            return;
+          }
+          try {
+            const response = await fetch(`/api/presets/${encodeURIComponent(name)}`);
+            const payload = await response.json();
+            if (!response.ok || !payload.ok) {
+              throw new Error(payload.error || ui('settings.preset_load_failed', '配置预设读取失败'));
+            }
+            applyConfigPreset(payload.preset.config || {});
+            setSettingsStatus(formatUi('settings.preset_applied', '已套用预设 {name}。', { name: payload.preset.name }));
+          } catch (error) {
+            setSettingsStatus(error.message || ui('settings.preset_load_failed', '配置预设读取失败'), true);
+          }
+        });
+      }
+      if (settingsPresetDelete) {
+        settingsPresetDelete.addEventListener('click', async () => {
+          const name = settingsPresetSelect ? settingsPresetSelect.value : '';
+          if (!name) {
+            setSettingsStatus(ui('settings.preset_select_required', '请先选择一个预设'), true);
+            return;
+          }
+          settingsPresetDelete.disabled = true;
+          try {
+            const response = await fetch(`/api/presets/${encodeURIComponent(name)}`, { method: 'DELETE' });
+            const payload = await response.json();
+            if (!response.ok || !payload.ok) {
+              throw new Error(payload.error || ui('settings.preset_delete_failed', '配置预设删除失败'));
+            }
+            renderConfigPresets(payload.presets || []);
+            setSettingsStatus(formatUi('settings.preset_deleted', '已删除预设 {name}。', { name }));
+          } catch (error) {
+            setSettingsStatus(error.message || ui('settings.preset_delete_failed', '配置预设删除失败'), true);
+          } finally {
+            settingsPresetDelete.disabled = false;
+          }
+        });
+      }
       if (settingsUiLocaleDefault) {
         settingsUiLocaleDefault.addEventListener('click', () => {
           applyUiLocaleDirSetting('', true);
@@ -4874,6 +5627,12 @@ INDEX_HTML = r"""<!doctype html>
           const locale = uiLocale.value || 'zh_cn';
           window.location.href = `/api/ui-locales/missing-template/${encodeURIComponent(locale)}${uiLocaleQuery()}`;
         });
+      }
+      if (settingsUiLocaleFillEn) {
+        settingsUiLocaleFillEn.addEventListener('click', () => downloadFilledUiLocale('en_us'));
+      }
+      if (settingsUiLocaleFillZh) {
+        settingsUiLocaleFillZh.addEventListener('click', () => downloadFilledUiLocale('zh_cn'));
       }
       if (settingsUiLocaleCheck && uiLocaleImportFile) {
         settingsUiLocaleCheck.addEventListener('click', () => {
@@ -4954,16 +5713,62 @@ INDEX_HTML = r"""<!doctype html>
           }
         });
       }
-      if (settingsGlossaryExport) {
-        settingsGlossaryExport.addEventListener('click', () => {
-          let terms = {};
-          try {
-            terms = JSON.parse(glossaryEditor ? glossaryEditor.value || '{}' : '{}');
-          } catch (error) {
-            setSettingsStatus(formatUi('settings.glossary_parse_failed', '术语表 JSON 无法解析：{message}', { message: error.message }), true);
+      if (settingsGlossarySearch) {
+        settingsGlossarySearch.addEventListener('input', () => {
+          glossaryState.search = settingsGlossarySearch.value || '';
+          renderGlossaryTable();
+        });
+      }
+      if (glossaryTable) {
+        glossaryTable.addEventListener('input', () => {
+          syncGlossaryRowsFromTable();
+          syncGlossaryEditorFromState();
+        });
+        glossaryTable.addEventListener('click', event => {
+          const removeButton = event.target.closest('[data-glossary-remove]');
+          if (!removeButton) {
             return;
           }
-          downloadJson('glossary.json', terms);
+          syncGlossaryRowsFromTable();
+          const rowId = Number(removeButton.dataset.glossaryRemove || '0');
+          glossaryState.rows = glossaryState.rows.filter(row => row.id !== rowId);
+          if (!glossaryState.rows.length) {
+            glossaryState.rows = [createGlossaryRow('', '')];
+          }
+          renderGlossaryTable();
+          syncGlossaryEditorFromState();
+        });
+      }
+      if (settingsGlossaryAddRow) {
+        settingsGlossaryAddRow.addEventListener('click', () => {
+          syncGlossaryRowsFromTable();
+          glossaryState.rows.push(createGlossaryRow('', ''));
+          renderGlossaryTable();
+          syncGlossaryEditorFromState();
+          const inputs = glossaryTable?.querySelectorAll('[data-glossary-source]');
+          inputs?.[inputs.length - 1]?.focus();
+        });
+      }
+      if (settingsGlossaryToggleJson) {
+        settingsGlossaryToggleJson.addEventListener('click', () => {
+          try {
+            setGlossaryMode(glossaryState.mode === 'json' ? 'table' : 'json');
+            setSettingsStatus('');
+          } catch (error) {
+            setSettingsStatus(error.message || ui('settings.glossary_parse_failed', '术语表 JSON 无法解析：{message}'), true);
+          }
+        });
+      }
+      if (settingsGlossaryExport) {
+        settingsGlossaryExport.addEventListener('click', () => {
+          try {
+            const terms = glossaryState.mode === 'json'
+              ? normalizeGlossaryTermsClient(JSON.parse(glossaryEditor ? glossaryEditor.value || '{}' : '{}'))
+              : collectGlossaryTermsFromTable();
+            downloadJson('glossary.json', terms);
+          } catch (error) {
+            setSettingsStatus(formatUi('settings.glossary_parse_failed', '术语表 JSON 无法解析：{message}', { message: error.message }), true);
+          }
         });
       }
       if (settingsGlossaryImport && glossaryImportFile) {
@@ -4974,7 +5779,8 @@ INDEX_HTML = r"""<!doctype html>
             return;
           }
           try {
-            glossaryEditor.value = JSON.stringify(JSON.parse(await file.text()), null, 2);
+            const imported = normalizeGlossaryTermsClient(JSON.parse(await file.text()));
+            applyGlossaryTerms(imported, {}, true);
             setSettingsStatus(formatUi('settings.glossary_imported', '已导入 {file}，保存后会用于后续 Web 翻译任务。', { file: file.name }));
           } catch (error) {
             setSettingsStatus(formatUi('settings.glossary_parse_failed', '术语表 JSON 无法解析：{message}', { message: error.message }), true);
@@ -5003,6 +5809,48 @@ INDEX_HTML = r"""<!doctype html>
             setSettingsStatus(error.message || ui('settings.cache_clear_failed', '清空缓存失败'), true);
           } finally {
             settingsCacheClear.disabled = false;
+          }
+        });
+      }
+      if (settingsMemoryRefresh) {
+        settingsMemoryRefresh.addEventListener('click', async () => {
+          try {
+            await loadTranslationMemorySettings();
+            setSettingsStatus(ui('settings.memory_refreshed', '翻译记忆已刷新。'));
+          } catch (error) {
+            setSettingsStatus(error.message || ui('settings.memory_load_failed', '翻译记忆读取失败'), true);
+          }
+        });
+      }
+      if (settingsMemoryExport) {
+        settingsMemoryExport.addEventListener('click', () => {
+          const cacheDir = applyCacheDirSetting(settingsCacheDir ? settingsCacheDir.value : '', true);
+          window.location.href = `/api/translation-memory/export?cache_dir=${encodeURIComponent(cacheDir)}`;
+        });
+      }
+      if (settingsMemoryCompact) {
+        settingsMemoryCompact.addEventListener('click', async () => {
+          settingsMemoryCompact.disabled = true;
+          try {
+            const payload = await mutateTranslationMemory('compact');
+            setSettingsStatus(formatUi('settings.memory_compacted', '已压缩翻译记忆，移除 {removed} 条重复记录。', { removed: payload.removed || 0 }));
+          } catch (error) {
+            setSettingsStatus(error.message || ui('settings.memory_save_failed', '翻译记忆操作失败'), true);
+          } finally {
+            settingsMemoryCompact.disabled = false;
+          }
+        });
+      }
+      if (settingsMemoryClear) {
+        settingsMemoryClear.addEventListener('click', async () => {
+          settingsMemoryClear.disabled = true;
+          try {
+            const payload = await mutateTranslationMemory('clear');
+            setSettingsStatus(formatUi('settings.memory_cleared', '已清理 {removed} 条翻译记忆。', { removed: payload.removed || 0 }));
+          } catch (error) {
+            setSettingsStatus(error.message || ui('settings.memory_save_failed', '翻译记忆操作失败'), true);
+          } finally {
+            settingsMemoryClear.disabled = false;
           }
         });
       }
@@ -5360,6 +6208,9 @@ INDEX_HTML = r"""<!doctype html>
     function updateModelMenu(query = '') {
       modelMenu.innerHTML = buildModelMenuOptions(query);
       updateModelMenuActive();
+      if (isMenuOpen(modelSelectShell, modelMenu)) {
+        openSelectMenu(modelSelectShell, modelMenu, modelTrigger);
+      }
     }
 
     function updateModelMenuActive() {
@@ -5375,16 +6226,12 @@ INDEX_HTML = r"""<!doctype html>
 
     function openModelMenu(query = '') {
       updateModelMenu(query);
-      modelSelectShell.classList.add('open');
-      modelMenu.hidden = false;
-      modelTrigger.setAttribute('aria-expanded', 'true');
+      openSelectMenu(modelSelectShell, modelMenu, modelTrigger);
       window.setTimeout(() => modelSearch.focus(), 0);
     }
 
     function closeModelMenu() {
-      modelSelectShell.classList.remove('open');
-      modelMenu.hidden = true;
-      modelTrigger.setAttribute('aria-expanded', 'false');
+      scheduleMenuHide(modelSelectShell, modelMenu, modelTrigger);
       modelSearch.value = '';
     }
 
@@ -5646,11 +6493,27 @@ INDEX_HTML = r"""<!doctype html>
       return data;
     }
 
+    function renderPreflightMessageSummary(messages) {
+      const counts = messages.reduce((acc, item) => {
+        const level = item.level || 'info';
+        acc[level] = (acc[level] || 0) + 1;
+        return acc;
+      }, {});
+      const total = messages.length;
+      const parts = [
+        formatUi('preflight.message_total', '共 {count} 条消息', { count: total }),
+        counts.blocking ? formatUi('preflight.blocking_count', '阻断 {count}', { count: counts.blocking }) : '',
+        counts.warning ? formatUi('preflight.warning_count', '警告 {count}', { count: counts.warning }) : ''
+      ].filter(Boolean);
+      return parts.join(' · ');
+    }
+
     function renderPreflight(payload) {
       if (!preflightSummary || !preflightMessages) {
         return;
       }
       const summary = payload.summary || {};
+      const messages = payload.messages || [];
       preflightSummary.hidden = false;
       preflightSummary.innerHTML = [
         ['preflight.inputs', '输入', summary.inputs || 0],
@@ -5660,9 +6523,20 @@ INDEX_HTML = r"""<!doctype html>
       ].map(([key, label, value]) => `
         <div class="preflight-metric"><strong>${escapeHtml(value)}</strong><span>${escapeHtml(ui(key, label))}</span></div>
       `).join('');
-      preflightMessages.innerHTML = (payload.messages || []).map(item => `
+      if (preflightMessageSummary) {
+        preflightMessageSummary.hidden = !messages.length;
+        preflightMessageSummary.textContent = messages.length
+          ? renderPreflightMessageSummary(messages)
+          : '';
+      }
+      const visibleMessages = messages.slice(0, PREVIEW_PREFLIGHT_MESSAGE_LIMIT);
+      const hiddenCount = Math.max(0, messages.length - visibleMessages.length);
+      preflightMessages.classList.toggle('preflight-list-collapsed', hiddenCount > 0);
+      preflightMessages.innerHTML = visibleMessages.map(item => `
         <li class="${escapeHtml(item.level || 'info')}">${escapeHtml(item.message || '')}</li>
-      `).join('');
+      `).join('') + (hiddenCount ? `
+        <li>${escapeHtml(formatUi('preflight.more_messages', '还有 {count} 条预检消息未展开显示，请先处理摘要中的阻断/警告。', { count: hiddenCount }))}</li>
+      ` : '');
       statusBox.className = payload.ok ? 'status' : 'status error';
       statusBox.textContent = payload.ok
         ? ui('preflight.summary', '预检完成，可以开始生成。')
@@ -5689,6 +6563,9 @@ INDEX_HTML = r"""<!doctype html>
           preflightRun.removeAttribute('aria-busy');
         }
       }
+    }
+    function ignorePreflightBlockers() {
+      return Boolean(form.querySelector('input[name="ignore_preflight_blockers"]')?.checked);
     }
     function syncInputKind() {
       const mode = inputKind.value === 'ftbquests' ? 'ftbquests' : (inputKind.value === 'json' ? 'json' : 'jar');
@@ -5745,13 +6622,13 @@ INDEX_HTML = r"""<!doctype html>
     }
     function bindModelSelect() {
       modelTrigger.addEventListener('click', (event) => {
-        if (event.target === modelSearch && modelSelectShell.classList.contains('open')) {
+        if (event.target === modelSearch && isMenuOpen(modelSelectShell, modelMenu)) {
           event.stopPropagation();
           return;
         }
         event.preventDefault();
         event.stopPropagation();
-        if (modelSelectShell.classList.contains('open')) {
+        if (isMenuOpen(modelSelectShell, modelMenu)) {
           closeModelMenu();
         } else {
           modelSearch.value = '';
@@ -5763,12 +6640,12 @@ INDEX_HTML = r"""<!doctype html>
           return;
         }
         event.preventDefault();
-        if (!modelSelectShell.classList.contains('open')) {
+        if (!isMenuOpen(modelSelectShell, modelMenu)) {
           openModelMenu();
         }
       });
       modelSearch.addEventListener('input', () => {
-        if (!modelSelectShell.classList.contains('open')) {
+        if (!isMenuOpen(modelSelectShell, modelMenu)) {
           openModelMenu(modelSearch.value);
         } else {
           updateModelMenu(modelSearch.value);
@@ -5817,7 +6694,7 @@ INDEX_HTML = r"""<!doctype html>
         }
       });
       document.addEventListener('click', (event) => {
-        if (!modelSelectShell.contains(event.target)) {
+        if (!modelSelectShell.contains(event.target) && !modelMenu.contains(event.target)) {
           closeModelMenu();
         }
       });
@@ -5980,7 +6857,15 @@ INDEX_HTML = r"""<!doctype html>
 
     function renderJobHistoryRow(record) {
       const downloads = record.downloads || {};
-      const links = Object.entries(downloads).map(([label, url]) => `<a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(historyDownloadLabel(label))}</a>`).join(' ');
+      const downloadStatus = record.download_status || {};
+      const links = Object.entries(downloads).map(([label, url]) => {
+        const available = !downloadStatus[label] || downloadStatus[label].exists !== false;
+        const text = historyDownloadLabel(label);
+        if (!available) {
+          return `<span class="history-download-missing" title="${escapeHtml(ui('history.file_missing', '文件已不存在'))}">${escapeHtml(text)}</span>`;
+        }
+        return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(text)}</a>`;
+      }).join(' ');
       return `
         <tr>
           <td>${escapeHtml(record.created_at || '')}<br><span class="muted">${escapeHtml(record.job_id || '')}</span></td>
@@ -6007,11 +6892,25 @@ INDEX_HTML = r"""<!doctype html>
         json: ui('result.download_json', '下载 JSON'),
         ftbquests_patch: ui('result.download_ftbquests', '下载任务书补丁'),
         report: ui('result.open_report', '打开报告'),
+        report_json: ui('result.export_report_json', '导出报告 JSON'),
+        report_csv: ui('result.export_report_csv', '导出报告 CSV'),
+        failed_items: ui('result.export_failed_json', '导出失败项'),
         hardcoded_report: ui('result.hardcoded_report', '硬编码报告'),
         hardcoded_map: ui('result.hardcoded_map', '硬编码映射'),
         api_debug_log: ui('result.api_log', 'API 调试日志')
       };
       return labels[label] || label;
+    }
+
+    function syncHistoryFilterDisplays() {
+      const statusDisplay = document.getElementById('history-status-filter-display');
+      const kindDisplay = document.getElementById('history-kind-filter-display');
+      if (statusDisplay && historyStatusFilter) {
+        statusDisplay.textContent = historyStatusFilter.options[historyStatusFilter.selectedIndex]?.textContent || ui('history.all', '全部');
+      }
+      if (kindDisplay && historyKindFilter) {
+        kindDisplay.textContent = historyKindFilter.options[historyKindFilter.selectedIndex]?.textContent || ui('history.all', '全部');
+      }
     }
 
     function refreshSelectMenusForCurrentLocale() {
@@ -6030,12 +6929,21 @@ INDEX_HTML = r"""<!doctype html>
           <strong>${escapeHtml(option.textContent)}</strong>
         </button>
       `).join('');
+      if (historyStatusFilterMenu && historyStatusFilter) {
+        historyStatusFilterMenu.innerHTML = buildSelectMenuOptions(historyStatusFilter, 'history_status');
+      }
+      if (historyKindFilterMenu && historyKindFilter) {
+        historyKindFilterMenu.innerHTML = buildSelectMenuOptions(historyKindFilter, 'history_kind');
+      }
       updateSelectMenuActive(uiLocaleMenu, uiLocale.value);
       updateSelectMenuActive(sourceLocaleMenu, sourceLocale.value);
       updateSelectMenuActive(targetLocaleMenu, targetLocale.value);
       updateSelectMenuActive(providerMenu, provider.value);
       updateSelectMenuActive(packFormatMenu, packFormat.value);
+      updateSelectMenuActive(historyStatusFilterMenu, historyStatusFilter?.value);
+      updateSelectMenuActive(historyKindFilterMenu, historyKindFilter?.value);
       syncUiLocaleDisplay();
+      syncHistoryFilterDisplays();
       if (modelMenu && !modelMenu.hidden) {
         updateModelMenu(modelSearch.value);
       }
@@ -6048,11 +6956,19 @@ INDEX_HTML = r"""<!doctype html>
       bindSelectMenu(targetLocaleSelectShell, targetLocaleMenu, targetLocale, syncTargetLocale);
       bindSelectMenu(providerSelectShell, providerMenu, provider, syncProvider);
       bindSelectMenu(packFormatSelectShell, packFormatMenu, packFormat, syncPackFormat);
+      bindSelectMenu(historyStatusFilterShell, historyStatusFilterMenu, historyStatusFilter, () => {
+        syncHistoryFilterDisplays();
+        renderJobHistory();
+      });
+      bindSelectMenu(historyKindFilterShell, historyKindFilterMenu, historyKindFilter, () => {
+        syncHistoryFilterDisplays();
+        renderJobHistory();
+      });
     }
 
     function buildSelectMenuOptions(select, name) {
       return Array.from(select.options).map(option => `
-        <button type="button" class="ghost-option ${option.selected ? 'active' : ''}" data-select-value="${escapeHtml(name)}" data-value="${escapeHtml(option.value)}">
+        <button type="button" class="ghost-option ${option.selected ? 'active' : ''}" data-select-value="${escapeHtml(name)}" data-value="${escapeHtml(option.value)}" role="option" aria-selected="${option.selected ? 'true' : 'false'}">
           <strong>${escapeHtml(option.textContent)}</strong>
         </button>
       `).join('');
@@ -6060,11 +6976,7 @@ INDEX_HTML = r"""<!doctype html>
 
     function closeAllSelectMenus() {
       document.querySelectorAll('.ghost-select.open').forEach(shell => {
-        shell.classList.remove('open');
         const trigger = shell.querySelector('[data-select-trigger]');
-        if (trigger) {
-          trigger.setAttribute('aria-expanded', 'false');
-        }
         const modelTriggerNode = shell.querySelector('[data-model-trigger]');
         if (modelTriggerNode) {
           modelTriggerNode.setAttribute('aria-expanded', 'false');
@@ -6079,7 +6991,7 @@ INDEX_HTML = r"""<!doctype html>
         }
         const menu = shell.querySelector('.ghost-menu');
         if (menu) {
-          menu.hidden = true;
+          scheduleMenuHide(shell, menu, trigger || modelTriggerNode);
         }
       });
     }
@@ -6097,13 +7009,100 @@ INDEX_HTML = r"""<!doctype html>
       });
     }
 
+    function cancelMenuHide(menu) {
+      if (!menu) {
+        return;
+      }
+      if (menu._hideTimer) {
+        window.clearTimeout(menu._hideTimer);
+        menu._hideTimer = 0;
+      }
+      menu.classList.remove('is-closing');
+    }
+
+    function isMenuOpen(shell, menu) {
+      return Boolean(shell && menu && shell.classList.contains('open') && !menu.hidden && !menu.classList.contains('is-closing'));
+    }
+
+    function scheduleMenuHide(shell, menu, trigger) {
+      if (!shell || !menu) {
+        return;
+      }
+      cancelMenuHide(menu);
+      shell.classList.remove('open');
+      menu.classList.add('is-closing');
+      if (trigger) {
+        trigger.setAttribute('aria-expanded', 'false');
+      }
+      menu._hideTimer = window.setTimeout(() => {
+        menu.hidden = true;
+        menu.classList.remove('is-closing');
+        menu.classList.remove('is-floating');
+        menu.style.removeProperty('position');
+        menu.style.removeProperty('left');
+        menu.style.removeProperty('top');
+        menu.style.removeProperty('right');
+        menu.style.removeProperty('width');
+        menu.style.removeProperty('min-width');
+        menu.style.removeProperty('max-width');
+        menu.style.removeProperty('max-height');
+        menu.style.removeProperty('z-index');
+        menu._hideTimer = 0;
+      }, 180);
+    }
+
+    function positionFloatingMenu(shell, menu, trigger) {
+      if (!shell || !menu) {
+        return;
+      }
+      const anchor = trigger || shell.querySelector('[data-select-trigger]') || shell.querySelector('[data-model-trigger]') || shell;
+      const rect = anchor.getBoundingClientRect();
+      const gutter = 12;
+      const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 1024;
+      const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 768;
+      const naturalWidth = Math.ceil(menu.getBoundingClientRect().width || rect.width || 0);
+      const desiredWidth = Math.max(rect.width, Math.min(Math.max(naturalWidth, 360), viewportWidth - gutter * 2));
+      const width = Math.min(desiredWidth, viewportWidth - gutter * 2);
+      const left = Math.max(gutter, Math.min(rect.left, viewportWidth - width - gutter));
+      const belowTop = rect.bottom + 6;
+      const aboveSpace = Math.max(0, rect.top - gutter - 6);
+      const belowSpace = Math.max(0, viewportHeight - belowTop - gutter);
+      const openAbove = belowSpace < 180 && aboveSpace > belowSpace;
+      const maxHeight = Math.max(96, Math.min(320, openAbove ? aboveSpace : belowSpace));
+      const top = openAbove
+        ? Math.max(gutter, rect.top - 6 - maxHeight)
+        : Math.max(gutter, Math.min(belowTop, viewportHeight - 64));
+      menu.classList.add('is-floating');
+      menu.style.position = 'fixed';
+      menu.style.left = `${Math.round(left)}px`;
+      menu.style.top = `${Math.round(top)}px`;
+      menu.style.right = 'auto';
+      menu.style.width = `${Math.round(width)}px`;
+      menu.style.minWidth = `${Math.round(width)}px`;
+      menu.style.maxWidth = 'calc(100vw - 24px)';
+      menu.style.maxHeight = `${Math.round(maxHeight)}px`;
+      menu.style.zIndex = '180';
+    }
+
+    function openSelectMenu(shell, menu, trigger) {
+      if (!shell || !menu) {
+        return;
+      }
+      cancelMenuHide(menu);
+      menu.hidden = false;
+      positionFloatingMenu(shell, menu, trigger);
+      void menu.offsetHeight;
+      shell.classList.add('open');
+      if (trigger) {
+        trigger.setAttribute('aria-expanded', 'true');
+      }
+    }
+
     function bindSelectMenu(shell, menu, select, onChange) {
       const trigger = shell.querySelector('[data-select-trigger]');
       const localeSearchInput = shell.querySelector('[data-locale-control-search]');
       const closeMenu = () => {
-        shell.classList.remove('open');
-        menu.hidden = true;
-        trigger.setAttribute('aria-expanded', 'false');
+        scheduleMenuHide(shell, menu, trigger);
         if (localeSearchInput) {
           localeSearchInput.value = '';
         }
@@ -6113,41 +7112,36 @@ INDEX_HTML = r"""<!doctype html>
         if (menu.dataset.localeName) {
           menu.innerHTML = buildLocaleSelectMenuOptions(select, menu.dataset.localeName, query);
         }
-        shell.classList.add('open');
-        menu.hidden = false;
-        trigger.setAttribute('aria-expanded', 'true');
+        openSelectMenu(shell, menu, trigger);
         if (localeSearchInput) {
           window.setTimeout(() => localeSearchInput.focus(), 0);
         }
       };
       trigger.addEventListener('click', (event) => {
-        if (localeSearchInput && event.target === localeSearchInput && shell.classList.contains('open')) {
+        if (localeSearchInput && event.target === localeSearchInput && isMenuOpen(shell, menu)) {
           event.stopPropagation();
           return;
         }
         event.preventDefault();
         event.stopPropagation();
-        const isOpen = shell.classList.contains('open');
+        const isOpen = isMenuOpen(shell, menu);
         document.querySelectorAll('.ghost-select.open').forEach(item => {
           if (item !== shell) {
-            item.classList.remove('open');
             const otherTrigger = item.querySelector('[data-select-trigger]');
-            if (otherTrigger) {
-              otherTrigger.setAttribute('aria-expanded', 'false');
-            }
             const otherLocaleSearchInput = item.querySelector('[data-locale-control-search]');
             if (otherLocaleSearchInput) {
               otherLocaleSearchInput.value = '';
             }
             const otherMenu = item.querySelector('.ghost-menu');
             if (otherMenu) {
-              otherMenu.hidden = true;
+              scheduleMenuHide(item, otherMenu, otherTrigger);
             }
           }
         });
         if (isOpen) {
           closeMenu();
         } else {
+          setThemeMenuOpen(false);
           if (localeSearchInput) {
             localeSearchInput.value = '';
           }
@@ -6162,13 +7156,13 @@ INDEX_HTML = r"""<!doctype html>
           return;
         }
         event.preventDefault();
-        if (!shell.classList.contains('open')) {
+        if (!isMenuOpen(shell, menu)) {
           openMenu();
         }
       });
       if (localeSearchInput) {
         localeSearchInput.addEventListener('input', () => {
-          if (!shell.classList.contains('open')) {
+          if (!isMenuOpen(shell, menu)) {
             openMenu();
           }
           refreshLocaleMenuSearch(menu, select, localeSearchInput.value);
@@ -6232,7 +7226,7 @@ INDEX_HTML = r"""<!doctype html>
         }
       });
       document.addEventListener('click', (event) => {
-        if (!shell.contains(event.target)) {
+        if (!shell.contains(event.target) && !menu.contains(event.target)) {
           closeMenu();
         }
       });
@@ -6257,8 +7251,12 @@ INDEX_HTML = r"""<!doctype html>
         applyCacheDirSetting(cacheDirField ? cacheDirField.value : storedCacheDirSetting());
         applyUiLocaleDirSetting(uiLocaleDirField ? uiLocaleDirField.value : storedUiLocaleDirSetting());
         const preflight = await runPreflight();
-        if (!preflight.ok) {
+        if (!preflight.ok && !ignorePreflightBlockers()) {
           throw new Error(ui('preflight.blocked', '预检发现阻断项，请修正后再开始生成。'));
+        }
+        if (!preflight.ok && ignorePreflightBlockers()) {
+          statusBox.className = 'status';
+          statusBox.textContent = ui('preflight.ignored_blockers', '已忽略预检阻断，继续提交任务。');
         }
         const data = buildSubmissionData();
         const response = await fetch('/api/translate', { method: 'POST', body: data });
@@ -6548,6 +7546,9 @@ INDEX_HTML = r"""<!doctype html>
           ${payload.pack_url ? `<button type="button" id="download-pack" data-pack-url="${escapeHtml(payload.pack_url)}" data-pack-name="${escapeHtml(payload.pack_filename || defaultPackFilename(payload.pack_url))}"><i class="ri-download-2-line"></i><span>${escapeHtml(ui('result.download_pack', '下载资源包'))}</span></button>` : ''}
           ${payload.ftbquests_patch_url ? `<button type="button" id="download-ftbquests" data-download-url="${escapeHtml(payload.ftbquests_patch_url)}"><i class="ri-download-2-line"></i><span>${escapeHtml(ui('result.download_ftbquests', '下载任务书补丁'))}</span></button>` : ''}
           ${payload.json_url ? `<button type="button" id="download-json" data-download-url="${escapeHtml(payload.json_url)}"><i class="ri-download-2-line"></i><span>${escapeHtml(ui('result.download_json', '下载 JSON'))}</span></button>` : ''}
+          <button type="button" id="export-report-json"><i class="ri-download-2-line"></i><span>${escapeHtml(ui('result.export_report_json', '导出报告 JSON'))}</span></button>
+          <button type="button" id="export-report-csv"><i class="ri-file-excel-2-line"></i><span>${escapeHtml(ui('result.export_report_csv', '导出报告 CSV'))}</span></button>
+          <button type="button" id="export-failed-json"><i class="ri-error-warning-line"></i><span>${escapeHtml(ui('result.export_failed_json', '导出失败项'))}</span></button>
           <button type="button" data-view="report"><i class="ri-file-list-3-line"></i><span>${escapeHtml(ui('result.open_report', '打开报告'))}</span></button>
           ${isFtbquestsResult || isJsonResult ? '' : `<button type="button" data-view="hardcoded"><i class="ri-file-search-line"></i><span>${escapeHtml(ui('result.hardcoded_report', '硬编码报告'))}</span></button>`}
           <button type="button" data-view="api-log"><i class="ri-bug-line"></i><span>${escapeHtml(ui('result.api_log', 'API 调试日志'))}</span></button>
@@ -6717,6 +7718,9 @@ INDEX_HTML = r"""<!doctype html>
           <div class="status-filter" id="language-status-filter" aria-label="${escapeHtml(ui('result.status_filter', '状态筛选'))}">
             ${renderLanguageStatusFilters(payload)}
           </div>
+          <div class="status-filter" id="language-condition-filter" aria-label="${escapeHtml(ui('result.condition_filter', '条件筛选'))}">
+            ${renderLanguageConditionFilters(payload)}
+          </div>
           <input id="language-search" value="${escapeHtml(resultState.languageSearch)}" placeholder="${escapeHtml(ui('result.search_language', '搜索状态、Mod ID、Key、原文或译文'))}">
           ${isJsonResult ? '' : `<button type="button" id="export-language-edits"><i class="ri-download-2-line"></i><span>${escapeHtml(ui('result.export_edits', '导出已修改译文'))}</span></button>`}
         </div>
@@ -6749,6 +7753,39 @@ INDEX_HTML = r"""<!doctype html>
           : formatUi('result.status_count', '{status} {count}', { status: statusLabel(status), count });
         return `<button type="button" data-language-status="${escapeHtml(status)}" class="${resultState.languageStatusFilter === status ? 'active' : ''}">${escapeHtml(label)}</button>`;
       }).join('');
+    }
+
+    function languageConditionOptions(entries) {
+      const counts = entries.reduce((acc, entry) => {
+        const changed = String(entry.target ?? '') !== String(entry.source ?? '');
+        const issue = ['failed', 'api_failed', 'incomplete', 'jar_failed'].includes(entry.status);
+        if (issue) {
+          acc.issues += 1;
+        }
+        if (changed) {
+          acc.changed += 1;
+        } else {
+          acc.unchanged += 1;
+        }
+        return acc;
+      }, { changed: 0, unchanged: 0, issues: 0 });
+      return [
+        ['all', formatUi('result.all_count', '全部 {count}', { count: entries.length })],
+        ['issues', formatUi('result.condition_issues', '问题 {count}', { count: counts.issues })],
+        ['changed', formatUi('result.condition_changed', '有变化 {count}', { count: counts.changed })],
+        ['unchanged', formatUi('result.condition_unchanged', '未变化 {count}', { count: counts.unchanged })]
+      ];
+    }
+
+    function renderLanguageConditionFilters(payload) {
+      const entries = payload.entries || [];
+      const options = languageConditionOptions(entries);
+      if (!options.some(([value]) => value === resultState.languageConditionFilter)) {
+        resultState.languageConditionFilter = 'all';
+      }
+      return options.map(([value, label]) => `
+        <button type="button" data-language-condition="${escapeHtml(value)}" class="${resultState.languageConditionFilter === value ? 'active' : ''}">${escapeHtml(label)}</button>
+      `).join('');
     }
 
     function renderLanguagePreviewSummary(payload) {
@@ -6787,14 +7824,15 @@ INDEX_HTML = r"""<!doctype html>
           : entry.target;
         const retryDetail = retryStatusDetail(entry);
         const changed = String(target ?? '') !== String(entry.source ?? '');
+        const issue = ['failed', 'api_failed', 'incomplete', 'jar_failed'].includes(entry.status);
         return `
-        <tr class="result-row">
+        <tr class="result-row ${issue ? 'issue' : ''}" data-language-row-issue="${issue ? 'true' : 'false'}">
           <td>${escapeHtml(statusLabel(entry.status))}${retryDetail ? `<br><span class="muted">${escapeHtml(retryDetail)}</span>` : ''}</td>
           <td>${escapeHtml(entry.jar)}</td>
           <td>${escapeHtml(entry.mod_id)}</td>
           <td>${escapeHtml(entry.key)}</td>
           <td>${escapeHtml(entry.source)}</td>
-          <td><textarea data-language-edit="${escapeHtml(editId)}" placeholder="${escapeHtml(ui('result.target', '译文'))}">${escapeHtml(target)}</textarea>${changed ? `<div class="diff-badge">${escapeHtml(ui('result.diff_changed', '与原文不同'))}</div>` : ''}</td>
+          <td><textarea data-language-edit="${escapeHtml(editId)}" placeholder="${escapeHtml(ui('result.target', '译文'))}">${escapeHtml(target)}</textarea>${issue ? `<div class="diff-badge issue-badge">${escapeHtml(ui('result.issue_badge', '需处理'))}</div>` : ''}${changed ? `<div class="diff-badge">${escapeHtml(ui('result.diff_changed', '与原文不同'))}</div>` : ''}</td>
         </tr>
       `;
       }).join('');
@@ -6813,16 +7851,28 @@ INDEX_HTML = r"""<!doctype html>
       }
       const jarFilter = resultState.languageJarFilter || '全部';
       const statusFilter = resultState.languageStatusFilter || 'all';
+      const conditionFilter = resultState.languageConditionFilter || 'all';
       const query = resultState.languageSearch.trim().toLowerCase();
-      const cacheKey = `${payload.job_id || ''}${jarFilter}${statusFilter}${query}${(payload.entries || []).length}`;
+      const cacheKey = `${payload.job_id || ''}${jarFilter}${statusFilter}${conditionFilter}${query}${(payload.entries || []).length}`;
       if (resultState.languageFilteredCacheKey === cacheKey) {
         return resultState.languageFilteredEntries;
       }
       const entries = (payload.entries || []).filter(entry => {
+        const changed = String(entry.target ?? '') !== String(entry.source ?? '');
+        const issue = ['failed', 'api_failed', 'incomplete', 'jar_failed'].includes(entry.status);
         if (!jarFilterMatchesEntry(entry.jar, jarFilter)) {
           return false;
         }
         if (statusFilter !== 'all' && entry.status !== statusFilter) {
+          return false;
+        }
+        if (conditionFilter === 'issues' && !issue) {
+          return false;
+        }
+        if (conditionFilter === 'changed' && !changed) {
+          return false;
+        }
+        if (conditionFilter === 'unchanged' && changed) {
           return false;
         }
         if (!query) {
@@ -6943,6 +7993,18 @@ INDEX_HTML = r"""<!doctype html>
             window.location.href = url;
           }
         });
+      }
+      const exportReportJsonButton = document.getElementById('export-report-json');
+      if (exportReportJsonButton) {
+        exportReportJsonButton.addEventListener('click', () => exportReportJson());
+      }
+      const exportReportCsvButton = document.getElementById('export-report-csv');
+      if (exportReportCsvButton) {
+        exportReportCsvButton.addEventListener('click', () => exportReportCsv());
+      }
+      const exportFailedJsonButton = document.getElementById('export-failed-json');
+      if (exportFailedJsonButton) {
+        exportFailedJsonButton.addEventListener('click', () => exportFailedItemsJson());
       }
     }
 
@@ -7471,27 +8533,24 @@ INDEX_HTML = r"""<!doctype html>
         return;
       }
       const closeMenu = () => {
-        shell.classList.remove('open');
-        menu.hidden = true;
-        trigger.setAttribute('aria-expanded', 'false');
+        scheduleMenuHide(shell, menu, trigger);
       };
       const openMenu = () => {
-        shell.classList.add('open');
-        menu.hidden = false;
-        trigger.setAttribute('aria-expanded', 'true');
+        openSelectMenu(shell, menu, trigger);
       };
       trigger.addEventListener('click', (event) => {
         event.preventDefault();
         event.stopPropagation();
-        if (shell.classList.contains('open')) {
+        if (isMenuOpen(shell, menu)) {
           closeMenu();
         } else {
+          setThemeMenuOpen(false);
           document.querySelectorAll('.ghost-select.open').forEach(item => {
             if (item !== shell) {
-              item.classList.remove('open');
+              const otherTrigger = item.querySelector('[data-select-trigger]') || item.querySelector('[data-model-trigger]');
               const otherMenu = item.querySelector('.ghost-menu');
               if (otherMenu) {
-                otherMenu.hidden = true;
+                scheduleMenuHide(item, otherMenu, otherTrigger);
               }
             }
           });
@@ -7524,7 +8583,7 @@ INDEX_HTML = r"""<!doctype html>
         renderLanguageResultContent();
       });
       document.addEventListener('click', (event) => {
-        if (!shell.contains(event.target)) {
+        if (!shell.contains(event.target) && !menu.contains(event.target)) {
           closeMenu();
         }
       });
@@ -7556,6 +8615,14 @@ INDEX_HTML = r"""<!doctype html>
       document.querySelectorAll('[data-language-status]').forEach(button => {
         button.addEventListener('click', () => {
           resultState.languageStatusFilter = button.dataset.languageStatus || 'all';
+          resultState.languageFilteredCacheKey = '';
+          resultState.languagePage = 1;
+          renderResultShell();
+        });
+      });
+      document.querySelectorAll('[data-language-condition]').forEach(button => {
+        button.addEventListener('click', () => {
+          resultState.languageConditionFilter = button.dataset.languageCondition || 'all';
           resultState.languageFilteredCacheKey = '';
           resultState.languagePage = 1;
           renderResultShell();
@@ -7617,6 +8684,66 @@ INDEX_HTML = r"""<!doctype html>
       downloadJson('language-edits.json', changed);
       statusBox.className = 'status';
       statusBox.textContent = formatUi('result.exported_manual_edits', '已导出 {total} 条人工修改译文。', { total });
+    }
+
+    function reportExportPayload() {
+      const payload = resultState.payload || {};
+      return {
+        job_id: payload.job_id || '',
+        kind: payload.kind || 'jar',
+        provider: payload.provider || '',
+        model: payload.model || '',
+        elapsed_seconds: payload.elapsed_seconds || 0,
+        cache_hits: payload.cache_hits || 0,
+        cache_misses: payload.cache_misses || 0,
+        memory_hits: payload.memory_hits || 0,
+        summary: payload.summary || {},
+        entries: payload.entries || [],
+        api_failed_entries: payload.api_failed_entries || []
+      };
+    }
+
+    function failedReportEntries() {
+      const entries = (resultState.payload && resultState.payload.entries) || [];
+      return entries.filter(entry => ['failed', 'api_failed', 'incomplete', 'jar_failed'].includes(entry.status));
+    }
+
+    function csvCell(value) {
+      const text = String(value ?? '');
+      return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+    }
+
+    function downloadText(filename, text, type) {
+      const blob = new Blob([text], { type });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    function exportReportJson() {
+      const payload = reportExportPayload();
+      downloadJson(`${payload.job_id || 'mc-mod-i18n'}-report.json`, payload);
+    }
+
+    function exportFailedItemsJson() {
+      const payload = reportExportPayload();
+      downloadJson(`${payload.job_id || 'mc-mod-i18n'}-failed-items.json`, {
+        job_id: payload.job_id,
+        summary: payload.summary,
+        entries: failedReportEntries()
+      });
+    }
+
+    function exportReportCsv() {
+      const payload = reportExportPayload();
+      const headers = ['jar', 'mod_id', 'file', 'key', 'source', 'target', 'status', 'message'];
+      const rows = [headers.join(',')].concat((payload.entries || []).map(entry => headers.map(header => csvCell(entry[header])).join(',')));
+      downloadText(`${payload.job_id || 'mc-mod-i18n'}-report.csv`, rows.join('\r\n') + '\r\n', 'text/csv;charset=utf-8');
     }
 
     function loadHardcodedMap(map) {
@@ -8070,6 +9197,17 @@ INDEX_HTML = r"""<!doctype html>
       return `${minutes}m ${rest}s`;
     }
 
+    function formatBytes(value) {
+      const bytes = Math.max(0, Number(value || 0));
+      if (bytes < 1024) {
+        return `${bytes} B`;
+      }
+      if (bytes < 1024 * 1024) {
+        return `${(bytes / 1024).toFixed(1)} KB`;
+      }
+      return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+    }
+
     function formatElapsed(ms) {
       if (ms == null) return '-';
       if (ms < 1000) return ms + 'ms';
@@ -8202,6 +9340,32 @@ def make_handler(workdir: Path):
                 except Exception as exc:
                     self._send_json({"ok": False, "error": str(exc)}, status=500)
                 return
+            if parsed.path == "/api/presets":
+                try:
+                    self._send_json({"ok": True, "presets": list_config_presets(workdir)})
+                except Exception as exc:
+                    self._send_json({"ok": False, "error": str(exc)}, status=500)
+                return
+            if parsed.path.startswith("/api/presets/"):
+                try:
+                    name = unquote(parsed.path.removeprefix("/api/presets/"))
+                    self._send_json({"ok": True, "preset": read_config_preset(workdir, name)})
+                except Exception as exc:
+                    self._send_json({"ok": False, "error": str(exc)}, status=404)
+                return
+            if parsed.path == "/api/translation-memory":
+                try:
+                    payload = self._handle_translation_memory(parsed.query)
+                    self._send_json(payload)
+                except Exception as exc:
+                    self._send_json({"ok": False, "error": str(exc)}, status=500)
+                return
+            if parsed.path == "/api/translation-memory/export":
+                try:
+                    self._send_translation_memory_export(parsed.query)
+                except Exception as exc:
+                    self._send_json({"ok": False, "error": str(exc)}, status=500)
+                return
             if parsed.path == "/api/ui-locales":
                 try:
                     payload = self._handle_ui_locales(parsed.query)
@@ -8218,6 +9382,12 @@ def make_handler(workdir: Path):
             if parsed.path.startswith("/api/ui-locales/missing-template/"):
                 try:
                     self._send_ui_locale_missing_template(parsed.path.removeprefix("/api/ui-locales/missing-template/"), parsed.query)
+                except Exception as exc:
+                    self._send_json({"ok": False, "error": str(exc)}, status=500)
+                return
+            if parsed.path.startswith("/api/ui-locales/fill/"):
+                try:
+                    self._send_ui_locale_filled(parsed.path.removeprefix("/api/ui-locales/fill/"), parsed.query)
                 except Exception as exc:
                     self._send_json({"ok": False, "error": str(exc)}, status=500)
                 return
@@ -8259,6 +9429,13 @@ def make_handler(workdir: Path):
                 except Exception as exc:
                     self._send_json({"ok": False, "error": str(exc)}, status=500)
                 return
+            if parsed.path == "/api/translation-memory":
+                try:
+                    payload = self._handle_translation_memory_mutation()
+                    self._send_json(payload)
+                except Exception as exc:
+                    self._send_json({"ok": False, "error": str(exc)}, status=400)
+                return
             if parsed.path == "/api/ui-locales/import":
                 try:
                     payload = self._handle_ui_locale_import()
@@ -8276,6 +9453,13 @@ def make_handler(workdir: Path):
             if parsed.path == "/api/glossary":
                 try:
                     payload = self._handle_glossary_save()
+                    self._send_json(payload)
+                except Exception as exc:
+                    self._send_json({"ok": False, "error": str(exc)}, status=400)
+                return
+            if parsed.path == "/api/presets":
+                try:
+                    payload = self._handle_preset_save()
                     self._send_json(payload)
                 except Exception as exc:
                     self._send_json({"ok": False, "error": str(exc)}, status=400)
@@ -8314,6 +9498,18 @@ def make_handler(workdir: Path):
             if parsed.path != "/api/translate":
                 self.send_error(404)
                 return
+
+        def do_DELETE(self) -> None:
+            parsed = urlparse(self.path)
+            if parsed.path.startswith("/api/presets/"):
+                try:
+                    name = unquote(parsed.path.removeprefix("/api/presets/"))
+                    delete_config_preset(workdir, name)
+                    self._send_json({"ok": True, "presets": list_config_presets(workdir)})
+                except Exception as exc:
+                    self._send_json({"ok": False, "error": str(exc)}, status=400)
+                return
+            self.send_error(404)
 
         def _send_progress(self, job_id: str) -> None:
             job = get_job(sanitize_job_id(job_id))
@@ -8383,6 +9579,39 @@ def make_handler(workdir: Path):
             removed = clear_cache_directory(cache_root, workdir)
             return {"ok": True, "cache_dir": str(cache_root), "removed": removed}
 
+        def _cache_root_from_query(self, query: str) -> Path:
+            values = parse_qs(query or "")
+            return resolve_cache_root(workdir, values.get("cache_dir", [""])[0])
+
+        def _handle_translation_memory(self, query: str) -> dict[str, Any]:
+            cache_root = self._cache_root_from_query(query)
+            return {"ok": True, **translation_memory_stats(cache_root)}
+
+        def _send_translation_memory_export(self, query: str) -> None:
+            cache_root = self._cache_root_from_query(query)
+            path = translation_memory_path(cache_root)
+            data = path.read_bytes() if path.is_file() else b""
+            self.send_response(200)
+            self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Content-Disposition", 'attachment; filename="translation-memory.jsonl"')
+            self.end_headers()
+            self.wfile.write(data)
+
+        def _handle_translation_memory_mutation(self) -> dict[str, Any]:
+            length = int(self.headers.get("Content-Length") or "0")
+            body = self.rfile.read(length)
+            payload = json.loads(body.decode("utf-8") or "{}")
+            cache_root = resolve_cache_root(workdir, str(payload.get("cache_dir", "") or ""))
+            action = str(payload.get("action", "") or "")
+            if action == "clear":
+                removed = clear_translation_memory(cache_root)
+            elif action == "compact":
+                removed = compact_translation_memory(cache_root)
+            else:
+                raise ValueError("未知翻译记忆操作")
+            return {"ok": True, "removed": removed, **translation_memory_stats(cache_root)}
+
         def _ui_locale_root_from_query(self, query: str) -> Path:
             values = parse_qs(query or "")
             raw_dir = values.get("ui_locale_dir", [""])[0]
@@ -8424,6 +9653,22 @@ def make_handler(workdir: Path):
             template = build_ui_locale_missing_template(package)
             data = json.dumps(template, ensure_ascii=False, indent=2).encode("utf-8") + b"\n"
             filename = f"mc-mod-i18n-ui-{package['locale']}-missing.json"
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+            self.end_headers()
+            self.wfile.write(data)
+
+        def _send_ui_locale_filled(self, locale: str, query: str) -> None:
+            root = self._ui_locale_root_from_query(query)
+            values = parse_qs(query or "")
+            fill_locale = values.get("fill_locale", [FALLBACK_UI_LOCALE])[0]
+            normalized = resolve_ui_locale(unquote(locale))
+            package = export_ui_locale_package(normalized, root)
+            filled = build_ui_locale_filled_package(package, fill_locale)
+            data = json.dumps(filled, ensure_ascii=False, indent=2).encode("utf-8") + b"\n"
+            filename = f"mc-mod-i18n-ui-{filled['locale']}-filled-{resolve_ui_locale(fill_locale)}.json"
             self.send_response(200)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self.send_header("Content-Length", str(len(data)))
@@ -8474,6 +9719,13 @@ def make_handler(workdir: Path):
                 "conflicts": glossary_conflicts(terms),
                 "path": str(path),
             }
+
+        def _handle_preset_save(self) -> dict[str, Any]:
+            length = int(self.headers.get("Content-Length") or "0")
+            body = self.rfile.read(length)
+            payload = json.loads(body.decode("utf-8") or "{}")
+            preset = write_config_preset(workdir, str(payload.get("name", "")), payload.get("config", {}))
+            return {"ok": True, "preset": preset, "presets": list_config_presets(workdir)}
 
         def _handle_translate(self) -> dict[str, Any]:
             length = int(self.headers.get("Content-Length") or "0")
@@ -8998,11 +10250,25 @@ def make_handler(workdir: Path):
             elapsed_seconds = time.perf_counter() - started_at
             updated, still_failed, _ = merge_retry_result(result, failed_entries, translations, failed_map)
             result["retry_elapsed_seconds"] = round(elapsed_seconds, 2)
+            out_dir = workdir / job_id / "out"
+            successful_entries = successful_retry_result_entries(result, failed_entries)
             pack_url = str(result.get("pack_url") or "")
             if updated and pack_url.startswith(f"/download/{job_id}/"):
                 relative = pack_url.removeprefix(f"/download/{job_id}/")
                 pack_path = safe_run_path(workdir / job_id, relative)
                 update_resource_pack_entries(pack_path, successful_retry_updates(failed_entries, translations, failed_map))
+            if updated and result.get("kind") == "json":
+                update_json_retry_outputs(out_dir, successful_entries)
+            if updated and result.get("kind") == "ftbquests":
+                ftbquests_result = ftbquests_result_from_retry_payload(result)
+                if ftbquests_result:
+                    update_ftbquests_retry_outputs(out_dir, ftbquests_result, successful_entries)
+                    result["ftbquests_output_files"] = [
+                        {"path": item.path, "content": item.content}
+                        for item in ftbquests_result.output_files
+                    ]
+            if updated:
+                refresh_retry_report_exports(out_dir, result)
             result["api_debug_log_lines"] = read_jsonl(Path(job.get("api_debug_log_path", "")), limit=300)
             update_job(job_id, result=result)
             return {"ok": True, "retried": updated, "remaining": still_failed, "elapsed_seconds": round(elapsed_seconds, 2), "result": result}
@@ -9622,6 +10888,118 @@ def saved_glossary_path_if_present(workdir: Path) -> Path | None:
     return path if path.is_file() and read_user_glossary(workdir) else None
 
 
+PRESET_SCHEMA_VERSION = 1
+PRESET_ALLOWED_KEYS = {
+    "provider",
+    "api_url",
+    "model",
+    "api_key_env",
+    "api_concurrency",
+    "api_retries",
+    "api_batch_size",
+    "api_timeout",
+    "pack_format",
+    "overwrite_existing",
+    "skip_translated",
+    "ignore_cache",
+    "ignore_preflight_blockers",
+    "scan_hardcoded",
+}
+
+
+def presets_dir(workdir: Path) -> Path:
+    return workdir / "presets"
+
+
+def normalize_preset_name(name: str) -> str:
+    normalized = re.sub(r"\s+", " ", str(name or "").strip())
+    if not normalized:
+        raise ValueError("预设名称不能为空")
+    if len(normalized) > 80:
+        raise ValueError("预设名称不能超过 80 个字符")
+    return normalized
+
+
+def preset_slug(name: str) -> str:
+    normalized = normalize_preset_name(name)
+    slug = re.sub(r"[^a-zA-Z0-9._-]+", "-", normalized).strip(".-_").lower()
+    if not slug:
+        slug = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
+    return slug[:80]
+
+
+def normalize_preset_config(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError("预设配置必须是对象")
+    config = {key: value[key] for key in PRESET_ALLOWED_KEYS if key in value}
+    config.pop("api_key", None)
+    for key in ("api_concurrency", "api_retries", "api_batch_size", "api_timeout", "pack_format"):
+        if key in config:
+            config[key] = int(config[key] or 0)
+    for key in ("overwrite_existing", "skip_translated", "ignore_cache", "ignore_preflight_blockers", "scan_hardcoded"):
+        if key in config:
+            config[key] = bool(config[key])
+    for key in ("provider", "api_url", "model", "api_key_env"):
+        if key in config:
+            config[key] = str(config[key] or "").strip()
+    return config
+
+
+def preset_path(workdir: Path, name: str) -> Path:
+    return presets_dir(workdir) / f"{preset_slug(name)}.json"
+
+
+def read_config_preset(workdir: Path, name: str) -> dict[str, Any]:
+    path = preset_path(workdir, name)
+    if not path.is_file():
+        raise ValueError("预设不存在")
+    payload = json.loads(path.read_text(encoding="utf-8-sig"))
+    return {
+        "schema": int(payload.get("schema", PRESET_SCHEMA_VERSION) or PRESET_SCHEMA_VERSION),
+        "name": normalize_preset_name(str(payload.get("name", name))),
+        "config": normalize_preset_config(payload.get("config", {})),
+    }
+
+
+def list_config_presets(workdir: Path) -> list[dict[str, Any]]:
+    root = presets_dir(workdir)
+    if not root.is_dir():
+        return []
+    presets: list[dict[str, Any]] = []
+    for path in sorted(root.glob("*.json")):
+        try:
+            preset = json.loads(path.read_text(encoding="utf-8-sig"))
+            presets.append(
+                {
+                    "name": normalize_preset_name(str(preset.get("name", path.stem))),
+                    "config": normalize_preset_config(preset.get("config", {})),
+                }
+            )
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+    return sorted(presets, key=lambda item: item["name"].lower())
+
+
+def write_config_preset(workdir: Path, name: str, config: Any) -> dict[str, Any]:
+    normalized_name = normalize_preset_name(name)
+    preset = {
+        "schema": PRESET_SCHEMA_VERSION,
+        "name": normalized_name,
+        "config": normalize_preset_config(config),
+    }
+    root = presets_dir(workdir)
+    root.mkdir(parents=True, exist_ok=True)
+    preset_path(workdir, normalized_name).write_text(json.dumps(preset, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return preset
+
+
+def delete_config_preset(workdir: Path, name: str) -> None:
+    path = preset_path(workdir, name)
+    if not path.is_file():
+        raise ValueError("预设不存在")
+    path.unlink()
+
+
 def glossary_upload_or_saved(parts: list[MultipartPart], upload_dir: Path, workdir: Path) -> Path | None:
     for part in parts:
         if part.name == "glossary" and part.filename and part.data:
@@ -9679,6 +11057,61 @@ def clear_cache_directory(cache_root: Path, workdir: Path) -> int:
 
 def translation_memory_path(cache_root: Path) -> Path:
     return cache_root / "translation-memory.jsonl"
+
+
+def read_translation_memory_rows(cache_root: Path) -> list[dict[str, str]]:
+    path = translation_memory_path(cache_root)
+    if not path.is_file():
+        return []
+    rows: list[dict[str, str]] = []
+    for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(row, dict) and isinstance(row.get("scope"), str) and isinstance(row.get("source"), str) and isinstance(row.get("target"), str):
+            rows.append({"scope": row["scope"], "source": row["source"], "target": row["target"]})
+    return rows
+
+
+def translation_memory_stats(cache_root: Path) -> dict[str, Any]:
+    path = translation_memory_path(cache_root)
+    rows = read_translation_memory_rows(cache_root)
+    scopes = {row["scope"] for row in rows}
+    return {
+        "cache_dir": str(cache_root),
+        "path": str(path),
+        "exists": path.is_file(),
+        "entries": len(rows),
+        "scopes": len(scopes),
+        "size_bytes": path.stat().st_size if path.is_file() else 0,
+    }
+
+
+def clear_translation_memory(cache_root: Path) -> int:
+    path = translation_memory_path(cache_root)
+    rows = read_translation_memory_rows(cache_root)
+    if path.is_file():
+        path.unlink()
+    return len(rows)
+
+
+def compact_translation_memory(cache_root: Path) -> int:
+    path = translation_memory_path(cache_root)
+    rows = read_translation_memory_rows(cache_root)
+    latest: dict[tuple[str, str], dict[str, str]] = {}
+    for row in rows:
+        latest[(row["scope"], row["source"])] = row
+    compacted = list(latest.values())
+    removed = max(0, len(rows) - len(compacted))
+    if compacted:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(json.dumps(row, ensure_ascii=False) for row in compacted) + "\n", encoding="utf-8")
+    elif path.is_file():
+        path.unlink()
+    return removed
 
 
 def shared_cache_scope_dir(cache_root: Path, args: argparse.Namespace) -> Path:
@@ -9871,6 +11304,255 @@ def process_json_language_file(
     return output_name, root, report, translated_count, failed_count, skipped
 
 
+def successful_retry_entries(failed_entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        entry
+        for entry in failed_entries
+        if isinstance(entry, dict) and str(entry.get("status") or "") == "translated"
+    ]
+
+
+def successful_retry_result_entries(result: dict[str, Any], failed_entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    retried_ids = {entry_id(entry) for entry in failed_entries if isinstance(entry, dict)}
+    entries = result.get("entries") if isinstance(result.get("entries"), list) else []
+    return [
+        entry
+        for entry in entries
+        if isinstance(entry, dict)
+        and entry_id(entry) in retried_ids
+        and str(entry.get("status") or "") == "translated"
+    ]
+
+
+def report_entries_from_dicts(entries: list[Any]) -> list[ReportEntry]:
+    fields = {"jar", "mod_id", "file", "key", "source", "target", "status", "message"}
+    report_entries: list[ReportEntry] = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        payload = {field: str(entry.get(field) or "") for field in fields}
+        report_entries.append(ReportEntry(**payload))
+    return report_entries
+
+
+def refresh_retry_report_exports(out_dir: Path, result: dict[str, Any]) -> None:
+    entries = report_entries_from_dicts(result.get("entries", []))
+    if not entries:
+        return
+    summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
+    metadata = {
+        "job_id": str(result.get("job_id") or ""),
+        "kind": str(result.get("kind") or "jar"),
+        "provider": str(result.get("provider") or ""),
+        "model": str(result.get("model") or ""),
+        "elapsed_seconds": result.get("elapsed_seconds", 0),
+        "retry_elapsed_seconds": result.get("retry_elapsed_seconds", 0),
+        "cache_hits": result.get("cache_hits", 0),
+        "cache_misses": result.get("cache_misses", 0),
+        "memory_hits": result.get("memory_hits", 0),
+    }
+    write_report_exports(
+        out_dir,
+        entries,
+        {str(key): int(value) for key, value in summary.items() if isinstance(value, int)},
+        metadata,
+    )
+
+
+def ftbquests_result_from_retry_payload(result: dict[str, Any]) -> FTBQuestsResult | None:
+    output_files = result.get("ftbquests_output_files")
+    if not isinstance(output_files, list):
+        return None
+    return FTBQuestsResult(
+        source_label=str(result.get("source_label") or ""),
+        mode=str(result.get("mode") or ""),
+        source_locale=str(result.get("source_locale") or ""),
+        target_locale=str(result.get("target_locale") or ""),
+        source_hash=str(result.get("source_hash") or ""),
+        output_files=[
+            FTBQuestsOutputFile(path=str(item.get("path") or ""), content=str(item.get("content") or ""))
+            for item in output_files
+            if isinstance(item, dict)
+        ],
+        report_entries=report_entries_from_dicts(result.get("entries", [])),
+        legacy_files=[str(item) for item in result.get("legacy_files", [])] if isinstance(result.get("legacy_files"), list) else [],
+    )
+
+
+def update_json_retry_outputs(out_dir: Path, successful_entries: list[dict[str, Any]]) -> int:
+    updates_by_file: dict[str, dict[str, str]] = {}
+    for entry in successful_entries:
+        file_name = str(entry.get("file") or "")
+        key = str(entry.get("key") or "")
+        if not file_name or not key:
+            continue
+        updates_by_file.setdefault(file_name, {})[key] = str(entry.get("target") or "")
+    if not updates_by_file:
+        return 0
+
+    updated = 0
+    for file_name, updates in updates_by_file.items():
+        target = safe_run_path(out_dir, file_name)
+        if target.is_file() and update_json_retry_file(target, updates):
+            updated += 1
+
+    for archive in sorted(out_dir.glob("*.zip")):
+        if update_json_retry_zip(archive, updates_by_file):
+            updated += 1
+    return updated
+
+
+def update_json_retry_file(path: Path, updates: dict[str, str]) -> bool:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return False
+    changed = apply_json_retry_updates(data, updates)
+    if changed:
+        path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return changed
+
+
+def apply_json_retry_updates(data: Any, updates: dict[str, str]) -> bool:
+    if not isinstance(data, dict):
+        return False
+    target = data.get("messages") if isinstance(data.get("messages"), dict) else data
+    changed = False
+    for key, value in updates.items():
+        if key in target:
+            target[key] = value
+            changed = True
+    return changed
+
+
+def update_json_retry_zip(path: Path, updates_by_file: dict[str, dict[str, str]]) -> bool:
+    try:
+        with ZipFile(path) as zf:
+            members = [(info, zf.read(info.filename)) for info in zf.infolist()]
+    except (OSError, BadZipFile):
+        return False
+
+    changed = False
+    replacement: list[tuple[Any, bytes]] = []
+    for info, data in members:
+        updates = updates_by_file.get(Path(info.filename).name) or updates_by_file.get(info.filename)
+        if updates:
+            try:
+                payload = json.loads(data.decode("utf-8-sig"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                replacement.append((info, data))
+                continue
+            if apply_json_retry_updates(payload, updates):
+                data = (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+                changed = True
+        replacement.append((info, data))
+
+    if changed:
+        with ZipFile(path, "w") as zf:
+            for info, data in replacement:
+                zf.writestr(info, data)
+    return changed
+
+
+def update_ftbquests_retry_outputs(out_dir: Path, result: FTBQuestsResult, successful_entries: list[dict[str, Any]]) -> int:
+    updates_by_file: dict[str, dict[str, str]] = {}
+    for entry in successful_entries:
+        file_name = str(entry.get("file") or "")
+        key = str(entry.get("key") or "")
+        if not file_name or not key:
+            continue
+        updates_by_file.setdefault(file_name, {})[key] = str(entry.get("target") or "")
+    if not updates_by_file:
+        return 0
+
+    full_path_updates: dict[str, dict[str, str]] = {}
+    for output_file in result.output_files:
+        matched = retry_updates_for_ftbquests_path(output_file.path, updates_by_file)
+        if not matched:
+            continue
+        new_content = apply_ftbquests_retry_updates_to_text(output_file.content, matched)
+        if new_content != output_file.content:
+            object.__setattr__(output_file, "content", new_content)
+        full_path_updates[output_file.path] = matched
+
+    updated = 0
+    for output_path, updates in full_path_updates.items():
+        target = safe_run_path(out_dir / "ftbquests", output_path)
+        if target.is_file() and update_ftbquests_retry_file(target, updates):
+            updated += 1
+
+    for archive in sorted(out_dir.glob("ftbquests-*-patch.zip")):
+        if update_ftbquests_retry_zip(archive, full_path_updates):
+            updated += 1
+    return updated
+
+
+def retry_updates_for_ftbquests_path(path: str, updates_by_file: dict[str, dict[str, str]]) -> dict[str, str]:
+    normalized = path.replace("\\", "/").strip("/")
+    basename = Path(normalized).name
+    matches: dict[str, str] = {}
+    for file_name, updates in updates_by_file.items():
+        requested = file_name.replace("\\", "/").strip("/")
+        if normalized == requested or normalized.endswith(f"/{requested}") or basename == requested:
+            matches.update(updates)
+    return matches
+
+
+def update_ftbquests_retry_file(path: Path, updates: dict[str, str]) -> bool:
+    try:
+        original = path.read_text(encoding="utf-8-sig")
+    except OSError:
+        return False
+    updated = apply_ftbquests_retry_updates_to_text(original, updates)
+    if updated == original:
+        return False
+    path.write_text(updated, encoding="utf-8")
+    return True
+
+
+def apply_ftbquests_retry_updates_to_text(content: str, updates: dict[str, str]) -> str:
+    try:
+        root = parse_snbt(content)
+    except ValueError:
+        return content
+    changed = False
+    for leaf in collect_string_leaves(root):
+        if leaf.key in updates:
+            set_snbt_string(root, leaf.path, updates[leaf.key])
+            changed = True
+    return render_snbt(root) if changed else content
+
+
+def update_ftbquests_retry_zip(path: Path, updates_by_path: dict[str, dict[str, str]]) -> bool:
+    try:
+        with ZipFile(path) as zf:
+            members = [(info, zf.read(info.filename)) for info in zf.infolist()]
+    except (OSError, BadZipFile):
+        return False
+
+    changed = False
+    replacement: list[tuple[Any, bytes]] = []
+    for info, data in members:
+        updates = retry_updates_for_ftbquests_path(info.filename, updates_by_path)
+        if updates:
+            try:
+                original = data.decode("utf-8-sig")
+            except UnicodeDecodeError:
+                replacement.append((info, data))
+                continue
+            updated = apply_ftbquests_retry_updates_to_text(original, updates)
+            if updated != original:
+                data = updated.encode("utf-8")
+                changed = True
+        replacement.append((info, data))
+
+    if changed:
+        with ZipFile(path, "w") as zf:
+            for info, data in replacement:
+                zf.writestr(info, data)
+    return changed
+
+
 def run_json_translate_job(
     job_id: str,
     json_paths: list[Path],
@@ -9921,6 +11603,20 @@ def run_json_translate_job(
         for entry in report_entries:
             summary[entry.status] = summary.get(entry.status, 0) + 1
         elapsed_seconds = time.perf_counter() - started_at
+        export_paths = write_report_exports(
+            out_dir,
+            report_entries,
+            summary,
+            {
+                "job_id": job_id,
+                "kind": "json",
+                "provider": args.provider,
+                "elapsed_seconds": round(elapsed_seconds, 2),
+                "cache_hits": 0,
+                "cache_misses": translated_total,
+                "memory_hits": getattr(translator, "memory_hits", 0),
+            },
+        )
         result = {
             "kind": "json",
             "job_id": job_id,
@@ -9929,7 +11625,10 @@ def run_json_translate_job(
             "generated_files": len(output_paths),
             "json_url": f"/download/{job_id}/out/{download_path.name}",
             "json_filename": download_path.name,
-            "report_url": "",
+            "report_url": f"/download/{job_id}/out/report.json",
+            "report_json_url": f"/download/{job_id}/out/{export_paths['report_json'].name}",
+            "report_csv_url": f"/download/{job_id}/out/{export_paths['report_csv'].name}",
+            "failed_items_url": f"/download/{job_id}/out/{export_paths['failed_json'].name}",
             "api_debug_log_url": f"/report/{job_id}/out/api-debug.jsonl" if api_debug_log_path.is_file() else "",
             "api_debug_log_lines": read_jsonl(api_debug_log_path, limit=300),
             "elapsed_seconds": round(elapsed_seconds, 2),
@@ -10019,6 +11718,21 @@ def run_ftbquests_job(
         for entry in result.report_entries:
             summary[entry.status] = summary.get(entry.status, 0) + 1
         elapsed_seconds = time.perf_counter() - started_at
+        export_paths = write_report_exports(
+            out_dir,
+            result.report_entries,
+            summary,
+            {
+                "job_id": job_id,
+                "kind": "ftbquests",
+                "provider": args.provider,
+                "mode": result.mode,
+                "elapsed_seconds": round(elapsed_seconds, 2),
+                "cache_hits": 1 if cache_hit else 0,
+                "cache_misses": 0 if cache_hit else 1,
+                "memory_hits": memory_hits,
+            },
+        )
         patch_url = f"/download/{job_id}/out/{patch_path.name}" if patch_path and patch_path.is_file() else ""
         result_payload = {
             "ok": True,
@@ -10028,11 +11742,18 @@ def run_ftbquests_job(
             "processed_sources": 1,
             "generated_files": len(result.output_files),
             "mode": result.mode,
+            "source_label": result.source_label,
+            "source_locale": result.source_locale,
+            "target_locale": result.target_locale,
+            "source_hash": result.source_hash,
             "legacy_files": len(result.legacy_files),
             "ftbquests_patch_url": patch_url,
             "ftbquests_directory": str(directory_path) if directory_path else "",
             "report_url": f"/report/{job_id}/out/ftbquests-report.html",
             "ftbquests_json_report_url": f"/download/{job_id}/out/ftbquests-report.json",
+            "report_json_url": f"/download/{job_id}/out/{export_paths['report_json'].name}",
+            "report_csv_url": f"/download/{job_id}/out/{export_paths['report_csv'].name}",
+            "failed_items_url": f"/download/{job_id}/out/{export_paths['failed_json'].name}",
             "api_debug_log_url": f"/report/{job_id}/out/api-debug.jsonl" if api_debug_log_path.is_file() else "",
             "hardcoded_count": 0,
             "hardcoded_map": {},
@@ -10046,6 +11767,10 @@ def run_ftbquests_job(
             "api_failure_count": summary.get("api_failed", 0),
             "api_failed_entries": [entry.__dict__ for entry in result.report_entries if entry.status == "api_failed"],
             "entries": [entry.__dict__ for entry in result.report_entries],
+            "ftbquests_output_files": [
+                {"path": item.path, "content": item.content}
+                for item in result.output_files
+            ],
             "api_debug_log_lines": read_jsonl(api_debug_log_path, limit=300),
         }
         update_job(job_id, status="done", stage="done", result=result_payload)
@@ -10213,6 +11938,20 @@ def run_translate_job(
         for entry in report_entries:
             summary[entry.status] = summary.get(entry.status, 0) + 1
         elapsed_seconds = time.perf_counter() - started_at
+        export_paths = write_report_exports(
+            out_dir,
+            report_entries,
+            summary,
+            {
+                "job_id": job_id,
+                "kind": "jar",
+                "provider": args.provider,
+                "elapsed_seconds": round(elapsed_seconds, 2),
+                "cache_hits": cache_hits,
+                "cache_misses": cache_misses,
+                "memory_hits": getattr(translator, "memory_hits", 0),
+            },
+        )
 
         result = {
             "ok": True,
@@ -10223,6 +11962,9 @@ def run_translate_job(
             "pack_url": f"/download/{job_id}/out/{pack_filename}" if output_documents else "",
             "pack_filename": pack_filename,
             "report_url": f"/report/{job_id}/out/report.html",
+            "report_json_url": f"/download/{job_id}/out/{export_paths['report_json'].name}",
+            "report_csv_url": f"/download/{job_id}/out/{export_paths['report_csv'].name}",
+            "failed_items_url": f"/download/{job_id}/out/{export_paths['failed_json'].name}",
             "hardcoded_report_url": f"/report/{job_id}/out/hardcoded-report.html" if args.scan_hardcoded else "",
             "hardcoded_map_url": f"/download/{job_id}/out/hardcoded-map.template.json" if args.scan_hardcoded else "",
             "api_debug_log_url": f"/report/{job_id}/out/api-debug.jsonl" if api_debug_log_path.is_file() else "",
@@ -10382,6 +12124,36 @@ def read_jsonl(path: Path, limit: int = 300) -> list[dict[str, Any]]:
     return rows
 
 
+def report_entry_dicts(entries: list[ReportEntry]) -> list[dict[str, str]]:
+    return [entry.__dict__ for entry in entries]
+
+
+def report_failure_dicts(entries: list[ReportEntry]) -> list[dict[str, str]]:
+    return [entry.__dict__ for entry in entries if entry.status in {"failed", "api_failed", "incomplete", "jar_failed"}]
+
+
+def write_report_exports(out_dir: Path, report_entries: list[ReportEntry], summary: dict[str, int], metadata: dict[str, Any]) -> dict[str, Path]:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    report_json = out_dir / "report.json"
+    report_csv = out_dir / "report.csv"
+    failed_json = out_dir / "failed-items.json"
+    payload = {
+        **metadata,
+        "summary": summary,
+        "entries": report_entry_dicts(report_entries),
+    }
+    report_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    failed_json.write_text(
+        json.dumps({**metadata, "summary": summary, "entries": report_failure_dicts(report_entries)}, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    with report_csv.open("w", encoding="utf-8-sig", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=["jar", "mod_id", "file", "key", "source", "target", "status", "message"])
+        writer.writeheader()
+        writer.writerows(report_entry_dicts(report_entries))
+    return {"report_json": report_json, "report_csv": report_csv, "failed_json": failed_json}
+
+
 def build_job_history_record(job_id: str, job: dict[str, Any]) -> dict[str, Any]:
     result = job.get("result") if isinstance(job.get("result"), dict) else {}
     summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
@@ -10408,6 +12180,7 @@ def build_job_history_record(job_id: str, job: dict[str, Any]) -> dict[str, Any]
         "failure_count": failure_count,
         "summary": sanitize_history_value(summary),
         "downloads": history_downloads(result),
+        "download_files": history_download_files(job_id, result),
         "error": str(job.get("error") or ""),
     }
 
@@ -10418,6 +12191,9 @@ def history_downloads(result: dict[str, Any]) -> dict[str, str]:
         "json": "json_url",
         "ftbquests_patch": "ftbquests_patch_url",
         "report": "report_url",
+        "report_json": "report_json_url",
+        "report_csv": "report_csv_url",
+        "failed_items": "failed_items_url",
         "hardcoded_report": "hardcoded_report_url",
         "hardcoded_map": "hardcoded_map_url",
         "api_debug_log": "api_debug_log_url",
@@ -10427,6 +12203,40 @@ def history_downloads(result: dict[str, Any]) -> dict[str, str]:
         for label, key in mapping.items()
         if result.get(key)
     }
+
+
+def history_download_files(job_id: str, result: dict[str, Any]) -> dict[str, str]:
+    files: dict[str, str] = {}
+    for label, url in history_downloads(result).items():
+        relative = history_download_relative_path(job_id, url)
+        if relative:
+            files[label] = relative
+    return files
+
+
+def history_download_relative_path(job_id: str, url: str) -> str:
+    path = urlparse(str(url or "")).path
+    for prefix in (f"/download/{job_id}/", f"/report/{job_id}/"):
+        if path.startswith(prefix):
+            return path.removeprefix(prefix)
+    return ""
+
+
+def history_download_status(workdir: Path, record: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    job_id = str(record.get("job_id") or "")
+    downloads = record.get("downloads") if isinstance(record.get("downloads"), dict) else {}
+    files = record.get("download_files") if isinstance(record.get("download_files"), dict) else {}
+    status: dict[str, dict[str, Any]] = {}
+    for label, url in downloads.items():
+        relative = str(files.get(label) or history_download_relative_path(job_id, str(url or "")) or "")
+        exists = False
+        if relative:
+            try:
+                exists = safe_run_path(workdir, f"{job_id}/{relative}" if not relative.startswith(f"{job_id}/") else relative).is_file()
+            except ValueError:
+                exists = False
+        status[str(label)] = {"exists": exists, "relative_path": relative}
+    return status
 
 
 def sanitize_history_value(value: Any) -> Any:
@@ -10452,6 +12262,8 @@ def append_job_history(workdir: Path, record: dict[str, Any], limit: int = 100) 
     existing = list(reversed(read_job_history(workdir, limit=max(limit * 2, limit + 1))))
     existing = [item for item in existing if item.get("job_id") != record.get("job_id")]
     existing.append(record)
+    for item in existing:
+        item.pop("download_status", None)
     if limit > 0:
         existing = existing[-limit:]
     index_path.write_text(
@@ -10473,6 +12285,7 @@ def read_job_history(workdir: Path, limit: int = 100) -> list[dict[str, Any]]:
         except json.JSONDecodeError:
             continue
         if isinstance(value, dict):
+            value["download_status"] = history_download_status(workdir, value)
             records.append(value)
     return list(reversed(records[-limit:])) if limit > 0 else list(reversed(records))
 

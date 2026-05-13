@@ -148,4 +148,6 @@ Web UI 处理完成后会显示“硬编码映射工作台”：
 - 导出时只写入已填写译文的条目，文件名为 `hardcoded-map.json`
 - 导出前会校验 `%s`、`%1$s`、`{0}`、`§a` 和换行等占位符
 
-`hardcoded-map.json` 不是资源包文件，单独放进资源包不会让 Java 代码里写死的英文生效。它的用途是作为运行时补丁 Mod / Mixin / 配置模板生成器的输入：补丁在游戏显示文本的入口处按原文查表替换，或把可配置的注释/模板写成目标模组能读取的格式。当前工具负责扫描、分类、翻译和导出映射；真正运行时替换需要配套补丁读取该 JSON。
+`hardcoded-map.json` 不是资源包文件，单独放进资源包不会让 Java 代码里写死的英文生效。它的用途是作为运行时补丁 Mod / Mixin / 配置模板生成器的输入：补丁在游戏显示文本的入口处按原文查表替换，或把可配置的注释/模板写成目标模组能读取的格式。
+
+仓库内置一个最小 NeoForge 1.21.1 起步模板：`templates/neoforge-hardcoded-patch`。它会读取 `config/mc-mod-i18n/hardcoded-map.json`，并先通过 `ItemTooltipEvent` 替换物品 tooltip 中与原文完全匹配的文本。后续可以在这个模板上继续补 Screen、Ponder、配置注释等入口。

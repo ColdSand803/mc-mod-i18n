@@ -7,6 +7,7 @@ import tempfile
 from pathlib import Path
 import unittest
 
+from mc_mod_i18n.ui_i18n import merged_catalog
 from mc_mod_i18n.web import INDEX_HTML, normalize_models_url, parse_models_response
 
 
@@ -31,6 +32,12 @@ class WebUiContractTest(unittest.TestCase):
         self.assertIn("pageerror", script)
         self.assertIn("console", script)
         self.assertIn("aria-expanded", script)
+        self.assertIn("launchSystemBrowserSmoke", script)
+        self.assertIn("findSystemBrowserExecutable", script)
+        self.assertIn("--remote-debugging-port=0", script)
+        self.assertIn("Browser.getVersion", script)
+        self.assertIn("document.querySelectorAll('#settings-page .settings-section')", script)
+        self.assertIn("Settings cards overlap", script)
 
     def test_sidebar_brand_uses_translation_workbench_name(self) -> None:
         self.assertIn('alt="翻译工作台"', INDEX_HTML)
@@ -97,6 +104,17 @@ class WebUiContractTest(unittest.TestCase):
         self.assertIn('type="hidden" name="model" id="model"', INDEX_HTML)
         self.assertNotIn("<label>API URL", INDEX_HTML)
 
+    def test_model_dropdown_stays_open_after_model_list_refresh(self) -> None:
+        self.assertIn("function isMenuOpen(shell, menu)", INDEX_HTML)
+        self.assertIn("if (isMenuOpen(modelSelectShell, modelMenu))", INDEX_HTML)
+        self.assertIn("openSelectMenu(modelSelectShell, modelMenu, modelTrigger);", INDEX_HTML)
+        self.assertIn("menu.style.position = 'fixed';", INDEX_HTML)
+        self.assertIn("menu.style.left =", INDEX_HTML)
+        self.assertIn("menu.style.top =", INDEX_HTML)
+        self.assertIn("modelTrigger.addEventListener('click'", INDEX_HTML)
+        self.assertIn("modelSearch.addEventListener('input'", INDEX_HTML)
+        self.assertIn("document.addEventListener('click', (event) => {\n        if (!modelSelectShell.contains(event.target) && !modelMenu.contains(event.target))", INDEX_HTML)
+
     def test_advanced_api_settings_expose_provider_connection_test(self) -> None:
         self.assertIn('id="provider-test"', INDEX_HTML)
         self.assertIn('id="provider-test-status"', INDEX_HTML)
@@ -138,22 +156,99 @@ class WebUiContractTest(unittest.TestCase):
     def test_settings_menu_exposes_glossary_management(self) -> None:
         self.assertIn('id="settings-glossary-section"', INDEX_HTML)
         self.assertIn('id="settings-glossary-editor"', INDEX_HTML)
+        self.assertIn('id="settings-glossary-table"', INDEX_HTML)
+        self.assertIn('id="settings-glossary-search"', INDEX_HTML)
+        self.assertIn('id="settings-glossary-add-row"', INDEX_HTML)
+        self.assertIn('id="settings-glossary-toggle-json"', INDEX_HTML)
+        self.assertIn('id="settings-glossary-conflicts"', INDEX_HTML)
         self.assertIn('id="settings-glossary-save"', INDEX_HTML)
         self.assertIn('id="glossary-import-file"', INDEX_HTML)
         self.assertIn("loadGlossarySettings", INDEX_HTML)
         self.assertIn("saveGlossarySettings", INDEX_HTML)
+        self.assertIn("renderGlossaryTable", INDEX_HTML)
+        self.assertIn("collectGlossaryTermsFromTable", INDEX_HTML)
+        self.assertIn("renderGlossaryConflicts", INDEX_HTML)
         self.assertIn("fetch('/api/glossary'", INDEX_HTML)
         self.assertIn("settings.glossary_section", INDEX_HTML)
+
+    def test_settings_menu_exposes_config_presets_without_api_key_storage(self) -> None:
+        self.assertIn('id="settings-presets-section"', INDEX_HTML)
+        self.assertIn('id="settings-preset-name"', INDEX_HTML)
+        self.assertIn('id="settings-preset-select"', INDEX_HTML)
+        self.assertIn('id="settings-preset-save"', INDEX_HTML)
+        self.assertIn('id="settings-preset-apply"', INDEX_HTML)
+        self.assertIn('id="settings-preset-delete"', INDEX_HTML)
+        self.assertIn("currentPresetConfig", INDEX_HTML)
+        self.assertIn("data.delete('api_key')", INDEX_HTML)
+        self.assertIn("fetch('/api/presets'", INDEX_HTML)
+        self.assertIn("settings.presets_section", INDEX_HTML)
+
+    def test_settings_menu_exposes_translation_memory_management(self) -> None:
+        self.assertIn('id="settings-memory-section"', INDEX_HTML)
+        self.assertIn('id="settings-memory-summary"', INDEX_HTML)
+        self.assertIn('id="settings-memory-export"', INDEX_HTML)
+        self.assertIn('id="settings-memory-compact"', INDEX_HTML)
+        self.assertIn('id="settings-memory-clear"', INDEX_HTML)
+        self.assertIn("/api/translation-memory", INDEX_HTML)
+        self.assertIn("loadTranslationMemorySettings", INDEX_HTML)
+        self.assertIn("mutateTranslationMemory", INDEX_HTML)
+        self.assertIn("settings.memory_section", INDEX_HTML)
+
+    def test_settings_layout_uses_content_sized_rows_to_prevent_zoom_overlap(self) -> None:
+        self.assertIn("grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));", INDEX_HTML)
+        self.assertIn("grid-auto-flow: row;", INDEX_HTML)
+        self.assertIn("align-content: start;", INDEX_HTML)
+        self.assertIn("min-width: 0;", INDEX_HTML)
+        self.assertIn("height: fit-content;", INDEX_HTML)
+        self.assertIn("@media (max-width: 1120px)", INDEX_HTML)
 
     def test_task_history_view_is_exposed(self) -> None:
         self.assertIn('data-view="history"', INDEX_HTML)
         self.assertIn('id="history-panel"', INDEX_HTML)
+        self.assertIn('id="history-status-filter-shell"', INDEX_HTML)
         self.assertIn('id="history-status-filter"', INDEX_HTML)
+        self.assertIn('id="history-status-filter-menu"', INDEX_HTML)
+        self.assertIn('id="history-kind-filter-shell"', INDEX_HTML)
         self.assertIn('id="history-kind-filter"', INDEX_HTML)
+        self.assertIn('id="history-kind-filter-menu"', INDEX_HTML)
+        self.assertIn("bindSelectMenu(historyStatusFilterShell", INDEX_HTML)
+        self.assertIn('data-select-trigger="history_status" role="combobox" tabindex="0" aria-haspopup="listbox"', INDEX_HTML)
+        self.assertIn('data-select-trigger="history_kind" role="combobox" tabindex="0" aria-haspopup="listbox"', INDEX_HTML)
+        self.assertIn('data-select-value="${escapeHtml(name)}" data-value="${escapeHtml(option.value)}" role="option"', INDEX_HTML)
         self.assertIn("loadJobHistory", INDEX_HTML)
         self.assertIn("renderJobHistory", INDEX_HTML)
         self.assertIn("fetch('/api/jobs'", INDEX_HTML)
         self.assertIn("nav.history", INDEX_HTML)
+        self.assertIn("download_status", INDEX_HTML)
+        self.assertIn("history-download-missing", INDEX_HTML)
+        self.assertIn("history.file_missing", INDEX_HTML)
+
+    def test_history_dropdowns_can_escape_card_clipping(self) -> None:
+        self.assertIn(".history-page {\n      overflow: visible;", INDEX_HTML)
+        self.assertIn(".history-card {\n      overflow: visible;", INDEX_HTML)
+        self.assertIn(".history-card .settings-layout,\n    .history-card .settings-section {\n      overflow: visible;", INDEX_HTML)
+        self.assertIn(".history-card .ghost-select.open {\n      z-index:", INDEX_HTML)
+        self.assertIn(".ghost-menu.is-floating", INDEX_HTML)
+        self.assertIn("positionFloatingMenu", INDEX_HTML)
+        self.assertIn("menu.style.position = 'fixed';", INDEX_HTML)
+        self.assertIn("menu.style.left =", INDEX_HTML)
+        self.assertIn("menu.style.top =", INDEX_HTML)
+        self.assertIn("menu.style.maxHeight =", INDEX_HTML)
+        self.assertIn("menu.style.removeProperty('position')", INDEX_HTML)
+        self.assertIn("menu.style.removeProperty('max-height')", INDEX_HTML)
+        self.assertNotIn("menu.style.setProperty('--dropdown-left'", INDEX_HTML)
+        self.assertNotIn("menu.style.setProperty('--dropdown-max-height'", INDEX_HTML)
+        self.assertIn("const openAbove = belowSpace < 180 && aboveSpace > belowSpace", INDEX_HTML)
+
+    def test_ghost_dropdowns_have_consistent_motion(self) -> None:
+        self.assertIn("--dropdown-motion-offset", INDEX_HTML)
+        self.assertIn("transition: opacity var(--motion-base) ease, visibility var(--motion-base) ease, transform var(--motion-base) ease", INDEX_HTML)
+        self.assertIn(".ghost-select.open .ghost-menu", INDEX_HTML)
+        self.assertIn("scheduleMenuHide", INDEX_HTML)
+        self.assertIn("cancelMenuHide", INDEX_HTML)
+        self.assertIn(".ghost-menu.is-closing", INDEX_HTML)
+        self.assertIn(".ghost-select .chevron", INDEX_HTML)
+        self.assertIn("@media (prefers-reduced-motion: reduce)", INDEX_HTML)
 
     def test_failed_retry_controls_and_status_trace_are_exposed(self) -> None:
         self.assertIn('id="retry-api-failures"', INDEX_HTML)
@@ -163,20 +258,63 @@ class WebUiContractTest(unittest.TestCase):
         self.assertIn("retry_previous_status", INDEX_HTML)
         self.assertIn("result.retry_status_detail", INDEX_HTML)
 
+    def test_result_report_export_actions_are_exposed(self) -> None:
+        self.assertIn('id="export-report-json"', INDEX_HTML)
+        self.assertIn('id="export-report-csv"', INDEX_HTML)
+        self.assertIn('id="export-failed-json"', INDEX_HTML)
+        self.assertIn("exportReportJson", INDEX_HTML)
+        self.assertIn("exportReportCsv", INDEX_HTML)
+        self.assertIn("exportFailedItemsJson", INDEX_HTML)
+        self.assertIn("result.export_report_json", INDEX_HTML)
+        self.assertIn("result.export_report_csv", INDEX_HTML)
+        self.assertIn("result.export_failed_json", INDEX_HTML)
+
     def test_hardcoded_workbench_explains_runtime_patch_requirement(self) -> None:
         self.assertIn("result.hardcoded_runtime_note", INDEX_HTML)
         self.assertIn("运行时补丁 Mod", INDEX_HTML)
 
     def test_output_preview_exposes_status_filter_diff_summary_and_json_metadata(self) -> None:
         self.assertIn('id="language-status-filter"', INDEX_HTML)
+        self.assertIn('id="language-condition-filter"', INDEX_HTML)
+        self.assertIn("languageConditionFilter", INDEX_HTML)
+        self.assertIn("data-language-condition", INDEX_HTML)
+        self.assertIn("data-language-row-issue", INDEX_HTML)
+        self.assertIn("['failed', 'api_failed', 'incomplete', 'jar_failed'].includes(entry.status)", INDEX_HTML)
         self.assertIn("data-language-status", INDEX_HTML)
         self.assertIn("languageStatusFilter", INDEX_HTML)
         self.assertIn("renderLanguageStatusFilters", INDEX_HTML)
+        self.assertIn("renderLanguageConditionFilters", INDEX_HTML)
         self.assertIn('id="language-preview-summary"', INDEX_HTML)
         self.assertIn("renderLanguagePreviewSummary", INDEX_HTML)
         self.assertIn("diff-badge", INDEX_HTML)
+        self.assertIn("issue-badge", INDEX_HTML)
         self.assertIn("json_metadata_preview", INDEX_HTML)
         self.assertIn('id="json-metadata-preview"', INDEX_HTML)
+
+    def test_output_policy_can_ignore_preflight_blockers(self) -> None:
+        self.assertIn('name="ignore_preflight_blockers"', INDEX_HTML)
+        self.assertIn("output.ignore_preflight_blockers", INDEX_HTML)
+        self.assertIn("preflight.ignored_blockers", INDEX_HTML)
+        self.assertIn("ignorePreflightBlockers", INDEX_HTML)
+
+    def test_new_workspace_filters_have_builtin_i18n_messages(self) -> None:
+        zh_messages = merged_catalog("zh_cn")
+        en_messages = merged_catalog("en_us")
+        for key in (
+            "output.ignore_preflight_blockers",
+            "preflight.ignored_blockers",
+            "preflight.message_total",
+            "preflight.blocking_count",
+            "preflight.warning_count",
+            "preflight.more_messages",
+            "result.condition_filter",
+            "result.condition_issues",
+            "result.issue_badge",
+            "result.condition_changed",
+            "result.condition_unchanged",
+        ):
+            self.assertIn(key, zh_messages)
+            self.assertIn(key, en_messages)
 
     def test_result_performance_summary_exposes_translation_memory_hits(self) -> None:
         self.assertIn("payload.memory_hits", INDEX_HTML)
@@ -244,6 +382,13 @@ class WebUiContractTest(unittest.TestCase):
         self.assertIn("jar.startsWith(`${jarFilter}::`)", INDEX_HTML)
         self.assertIn("ri-corner-down-right-line", INDEX_HTML)
 
+    def test_language_jar_filter_dropdown_uses_floating_menu_state(self) -> None:
+        self.assertIn('id="language-jar-filter-menu" role="listbox"', INDEX_HTML)
+        self.assertIn("function bindJarFilterMenu(shell)", INDEX_HTML)
+        self.assertIn("if (isMenuOpen(shell, menu)) {\n          closeMenu();", INDEX_HTML)
+        self.assertIn("if (!shell.contains(event.target) && !menu.contains(event.target))", INDEX_HTML)
+        self.assertIn("menu.style.minWidth =", INDEX_HTML)
+
     def test_results_actions_include_workspace_before_pack_download(self) -> None:
         workspace_index = INDEX_HTML.index("<button type=\"button\" data-view=\"language\"><i class=\"ri-folder-open-line\"></i><span>${escapeHtml(ui('result.workspace', '工作区'))}</span></button>")
         download_index = INDEX_HTML.index('id="download-pack"')
@@ -288,9 +433,13 @@ class WebUiContractTest(unittest.TestCase):
         self.assertIn("/api/ui-locales/export/", INDEX_HTML)
         self.assertIn("/api/ui-locales/check", INDEX_HTML)
         self.assertIn("/api/ui-locales/missing-template/", INDEX_HTML)
+        self.assertIn("/api/ui-locales/fill/", INDEX_HTML)
         self.assertIn('id="settings-ui-locale-check-summary"', INDEX_HTML)
         self.assertIn('id="settings-ui-locale-check"', INDEX_HTML)
         self.assertIn('id="settings-ui-locale-missing-template"', INDEX_HTML)
+        self.assertIn('id="settings-ui-locale-fill-en"', INDEX_HTML)
+        self.assertIn('id="settings-ui-locale-fill-zh"', INDEX_HTML)
+        self.assertIn("downloadFilledUiLocale", INDEX_HTML)
 
     def test_ui_locale_switch_refreshes_dynamic_selects_and_settings_defaults(self) -> None:
         self.assertIn("function refreshSelectMenusForCurrentLocale()", INDEX_HTML)
@@ -311,6 +460,10 @@ class WebUiContractTest(unittest.TestCase):
     def test_preflight_summary_is_exposed_before_translation(self) -> None:
         self.assertIn('id="preflight-panel"', INDEX_HTML)
         self.assertIn('id="preflight-run"', INDEX_HTML)
+        self.assertIn('id="preflight-message-summary"', INDEX_HTML)
+        self.assertIn("PREVIEW_PREFLIGHT_MESSAGE_LIMIT", INDEX_HTML)
+        self.assertIn("renderPreflightMessageSummary", INDEX_HTML)
+        self.assertIn("preflight-list-collapsed", INDEX_HTML)
         self.assertIn("runPreflight", INDEX_HTML)
         self.assertIn("renderPreflight", INDEX_HTML)
         self.assertIn("fetch('/api/preflight'", INDEX_HTML)

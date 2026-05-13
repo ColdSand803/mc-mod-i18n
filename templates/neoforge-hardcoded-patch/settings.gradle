@@ -1,0 +1,16 @@
+pluginManagement {
+    repositories {
+        gradlePluginPortal()
+        maven { url = "https://maven.neoforged.net/releases" }
+    }
+}
+
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        mavenCentral()
+        maven { url = "https://maven.neoforged.net/releases" }
+    }
+}
+
+rootProject.name = "mc-mod-i18n-hardcoded-patch"

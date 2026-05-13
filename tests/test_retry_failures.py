@@ -1,8 +1,25 @@
 from __future__ import annotations
 
 import unittest
+import tempfile
+import json
+from pathlib import Path
+from zipfile import ZipFile
 
-from mc_mod_i18n.web import entry_id, merge_retry_result, successful_retry_updates
+from mc_mod_i18n.ftbquests import (
+    FTBQuestsOutputFile,
+    FTBQuestsResult,
+    collect_string_leaves,
+    parse_snbt,
+)
+from mc_mod_i18n.report import ReportEntry
+from mc_mod_i18n.web import (
+    entry_id,
+    merge_retry_result,
+    successful_retry_updates,
+    update_ftbquests_retry_outputs,
+    update_json_retry_outputs,
+)
 
 
 def report_entry(key: str, source: str, target: str = "") -> dict[str, str]:
@@ -94,6 +111,90 @@ class RetryFailuresTest(unittest.TestCase):
             {"assets/example/lang/zh_cn.json": {"item.example.copper": "铜锭"}},
             updates,
         )
+
+    def test_json_retry_updates_single_file_and_zip_downloads(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp)
+            single = out_dir / "zh_cn.json"
+            single.write_text(json.dumps({"item.example.copper": "Copper"}), encoding="utf-8")
+            zipped = out_dir / "json-locales-zh_cn.zip"
+            with ZipFile(zipped, "w") as zf:
+                zf.writestr("zh_cn.json", json.dumps({"item.example.copper": "Copper"}))
+                zf.writestr("extra.json", json.dumps({"item.example.tin": "Tin"}))
+
+            updated = update_json_retry_outputs(
+                out_dir,
+                [
+                    {
+                        "file": "zh_cn.json",
+                        "key": "item.example.copper",
+                        "target": "铜",
+                    }
+                ],
+            )
+
+            self.assertEqual(2, updated)
+            self.assertEqual("铜", json.loads(single.read_text(encoding="utf-8"))["item.example.copper"])
+            with ZipFile(zipped) as zf:
+                self.assertEqual("铜", json.loads(zf.read("zh_cn.json").decode("utf-8"))["item.example.copper"])
+                self.assertEqual("Tin", json.loads(zf.read("extra.json").decode("utf-8"))["item.example.tin"])
+
+    def test_ftbquests_retry_updates_directory_patch_and_result_outputs(self) -> None:
+        result = FTBQuestsResult(
+            source_label="pack.zip",
+            mode="lang",
+            source_locale="en_us",
+            target_locale="zh_cn",
+            source_hash="",
+            output_files=[
+                FTBQuestsOutputFile(
+                    path="config/ftbquests/quests/lang/zh_cn.snbt",
+                    content='{ "quest.title": "Start" }',
+                )
+            ],
+            report_entries=[
+                ReportEntry(
+                    "pack.zip",
+                    "ftbquests",
+                    "lang/zh_cn.snbt",
+                    "quest.title",
+                    "Start",
+                    "开始",
+                    "translated",
+                    "",
+                )
+            ],
+            legacy_files=[],
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = Path(tmp)
+            target = out_dir / "ftbquests" / "config" / "ftbquests" / "quests" / "lang" / "zh_cn.snbt"
+            target.parent.mkdir(parents=True)
+            target.write_text('{ "quest.title": "Start" }', encoding="utf-8")
+            patch = out_dir / "ftbquests-zh_cn-patch.zip"
+            with ZipFile(patch, "w") as zf:
+                zf.writestr("config/ftbquests/quests/lang/zh_cn.snbt", '{ "quest.title": "Start" }')
+
+            updated = update_ftbquests_retry_outputs(
+                out_dir,
+                result,
+                [
+                    {
+                        "file": "lang/zh_cn.snbt",
+                        "key": "quest.title",
+                        "target": "开始",
+                    }
+                ],
+            )
+
+            self.assertEqual(2, updated)
+            self.assertEqual(
+                "开始",
+                {leaf.key: leaf.text for leaf in collect_string_leaves(parse_snbt(target.read_text(encoding="utf-8")))}["quest.title"],
+            )
+            self.assertIn("开始", result.output_files[0].content)
+            with ZipFile(patch) as zf:
+                self.assertIn("开始", zf.read("config/ftbquests/quests/lang/zh_cn.snbt").decode("utf-8"))
 
 
 if __name__ == "__main__":

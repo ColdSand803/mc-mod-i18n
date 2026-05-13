@@ -22,6 +22,9 @@ class JobHistoryTest(unittest.TestCase):
                     "processed_sources": 2,
                     "summary": {"translated": 3, "api_failed": 1},
                     "json_url": "/download/abc123/out/json-locales-zh_cn.zip",
+                    "report_json_url": "/download/abc123/out/report.json",
+                    "report_csv_url": "/download/abc123/out/report.csv",
+                    "failed_items_url": "/download/abc123/out/failed-items.json",
                     "api_key": "sk-secret",
                 },
             },
@@ -33,6 +36,11 @@ class JobHistoryTest(unittest.TestCase):
         self.assertEqual(3, record["success_count"])
         self.assertEqual(1, record["failure_count"])
         self.assertEqual("/download/abc123/out/json-locales-zh_cn.zip", record["downloads"]["json"])
+        self.assertEqual("/download/abc123/out/report.json", record["downloads"]["report_json"])
+        self.assertEqual("/download/abc123/out/report.csv", record["downloads"]["report_csv"])
+        self.assertEqual("/download/abc123/out/failed-items.json", record["downloads"]["failed_items"])
+        self.assertEqual("out/report.json", record["download_files"]["report_json"])
+        self.assertEqual("out/report.csv", record["download_files"]["report_csv"])
         self.assertNotIn("sk-secret", json.dumps(record, ensure_ascii=False))
 
     def test_history_roundtrip_keeps_newest_with_limit(self) -> None:
@@ -48,6 +56,34 @@ class JobHistoryTest(unittest.TestCase):
             records = read_job_history(root, limit=10)
 
         self.assertEqual(["2", "1"], [record["job_id"] for record in records])
+
+    def test_read_history_marks_missing_download_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            existing = root / "abc123" / "out" / "report.json"
+            existing.parent.mkdir(parents=True)
+            existing.write_text("{}", encoding="utf-8")
+            append_job_history(
+                root,
+                {
+                    "job_id": "abc123",
+                    "status": "done",
+                    "created_at": "2026-05-13T10:00:00+08:00",
+                    "downloads": {
+                        "report_json": "/download/abc123/out/report.json",
+                        "report_csv": "/download/abc123/out/report.csv",
+                    },
+                    "download_files": {
+                        "report_json": "out/report.json",
+                        "report_csv": "out/report.csv",
+                    },
+                },
+            )
+
+            record = read_job_history(root)[0]
+
+        self.assertTrue(record["download_status"]["report_json"]["exists"])
+        self.assertFalse(record["download_status"]["report_csv"]["exists"])
 
 
 if __name__ == "__main__":
