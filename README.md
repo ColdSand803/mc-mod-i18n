@@ -45,6 +45,7 @@ python -m mc_mod_i18n translate ./example.jar --out ./dist
 
 - `copy`：复制原文，适合测试流程
 - `glossary`：使用内置术语和可选 `glossary.json` 做规则翻译
+- `deep-free`：基于免费公共翻译源的零配置试用入口，无需 API Key，但可能受网络、限流和第三方服务变动影响
 - `openai-compatible`：兼容 OpenAI Chat Completions 的接口
 - `anthropic-compatible`：兼容 Anthropic Messages 的接口
 
@@ -75,6 +76,13 @@ python -m mc_mod_i18n translate ./mods --provider anthropic-compatible --model c
 ```
 
 Web UI 可以直接填写 API Key；如果留空，则读取对应环境变量，例如 `OPENAI_API_KEY`、`ANTHROPIC_API_KEY`。高级 API 设置里的 `BaseURL` 填到 `/v1` 即可，模型下拉会通过本地代理请求 `/models` 获取可选模型；完整 `/chat/completions` 或 `/messages` 地址也兼容。
+
+如果使用 `deep-free`：
+
+- 无需 API Key
+- 当前通过 `google + mymemory` 两个免费句子级引擎回退
+- 仅对一部分可稳定映射的 Minecraft locale 提供翻译
+- 第三方免费源失败时会回退为原文，并在报告中标记为失败项
 
 默认输出：
 

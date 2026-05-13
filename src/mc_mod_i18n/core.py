@@ -9,6 +9,7 @@ import sys
 from zipfile import BadZipFile, ZipFile
 
 from .detector import detect_mod
+from .deep_translator_adapter import DeepFreeTranslator
 from .hardcoded import _NESTED_JAR_PREFIXES
 from .lang import collect_lang_documents, extract_plain_text, target_path_for
 from .pack import OutputLangDocument
@@ -207,6 +208,12 @@ def wrap_with_translation_memory(translator, args: argparse.Namespace):
 def create_translator(args: argparse.Namespace):
     if args.provider == "copy":
         translator = CopyTranslator()
+    elif args.provider == "deep-free":
+        translator = DeepFreeTranslator(
+            source_locale=getattr(args, "source_locale", "en_us"),
+            target_locale=getattr(args, "target_locale", "zh_cn"),
+            request_timeout=max(1.0, getattr(args, "api_timeout", 10.0)),
+        )
     elif args.provider == "glossary":
         translator = GlossaryTranslator(load_glossary(args.glossary))
     else:

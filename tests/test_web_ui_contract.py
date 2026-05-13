@@ -48,6 +48,9 @@ class WebUiContractTest(unittest.TestCase):
         self.assertIn("高级 API 设置", INDEX_HTML)
         self.assertIn("输出策略", INDEX_HTML)
         self.assertIn("data-advanced-panel", INDEX_HTML)
+        self.assertIn("workflow-step", INDEX_HTML)
+        self.assertIn("步骤 1", INDEX_HTML)
+        self.assertIn("步骤 4", INDEX_HTML)
 
     def test_header_has_single_navigation_system(self) -> None:
         self.assertNotIn('<div class="top-tabs">', INDEX_HTML)
@@ -82,6 +85,7 @@ class WebUiContractTest(unittest.TestCase):
     def test_provider_list_is_limited_to_manual_and_compatible_api_options(self) -> None:
         self.assertIn('<option value="glossary">离线术语表（有限）</option>', INDEX_HTML)
         self.assertIn('<option value="copy">复制原文</option>', INDEX_HTML)
+        self.assertIn('<option value="deep-free">Deep Translator（免费试用）</option>', INDEX_HTML)
         self.assertIn('<option value="openai-compatible">兼容 OpenAI</option>', INDEX_HTML)
         self.assertIn('<option value="anthropic-compatible">兼容 Anthropic</option>', INDEX_HTML)
         self.assertNotIn('<option value="deepseek">', INDEX_HTML)
@@ -118,7 +122,9 @@ class WebUiContractTest(unittest.TestCase):
     def test_advanced_api_settings_expose_provider_connection_test(self) -> None:
         self.assertIn('id="provider-test"', INDEX_HTML)
         self.assertIn('id="provider-test-status"', INDEX_HTML)
+        self.assertIn('id="provider-risk-banner"', INDEX_HTML)
         self.assertIn("testProviderConnection", INDEX_HTML)
+        self.assertIn("renderProviderRiskBanner", INDEX_HTML)
         self.assertIn("fetch('/api/test-provider'", INDEX_HTML)
         self.assertIn("advanced.test_provider", INDEX_HTML)
         self.assertIn("advanced.test_provider_success", INDEX_HTML)
@@ -186,12 +192,16 @@ class WebUiContractTest(unittest.TestCase):
     def test_settings_menu_exposes_translation_memory_management(self) -> None:
         self.assertIn('id="settings-memory-section"', INDEX_HTML)
         self.assertIn('id="settings-memory-summary"', INDEX_HTML)
+        self.assertIn('id="settings-memory-preview"', INDEX_HTML)
         self.assertIn('id="settings-memory-export"', INDEX_HTML)
         self.assertIn('id="settings-memory-compact"', INDEX_HTML)
+        self.assertIn('id="settings-memory-clear-scope"', INDEX_HTML)
         self.assertIn('id="settings-memory-clear"', INDEX_HTML)
         self.assertIn("/api/translation-memory", INDEX_HTML)
         self.assertIn("loadTranslationMemorySettings", INDEX_HTML)
         self.assertIn("mutateTranslationMemory", INDEX_HTML)
+        self.assertIn("renderTranslationMemoryPreview", INDEX_HTML)
+        self.assertIn("currentTranslationMemoryScopePayload", INDEX_HTML)
         self.assertIn("settings.memory_section", INDEX_HTML)
 
     def test_settings_layout_uses_content_sized_rows_to_prevent_zoom_overlap(self) -> None:
@@ -276,14 +286,19 @@ class WebUiContractTest(unittest.TestCase):
     def test_output_preview_exposes_status_filter_diff_summary_and_json_metadata(self) -> None:
         self.assertIn('id="language-status-filter"', INDEX_HTML)
         self.assertIn('id="language-condition-filter"', INDEX_HTML)
+        self.assertIn('id="language-view-mode"', INDEX_HTML)
         self.assertIn("languageConditionFilter", INDEX_HTML)
+        self.assertIn("languageViewMode", INDEX_HTML)
         self.assertIn("data-language-condition", INDEX_HTML)
+        self.assertIn("data-language-view", INDEX_HTML)
         self.assertIn("data-language-row-issue", INDEX_HTML)
         self.assertIn("['failed', 'api_failed', 'incomplete', 'jar_failed'].includes(entry.status)", INDEX_HTML)
         self.assertIn("data-language-status", INDEX_HTML)
         self.assertIn("languageStatusFilter", INDEX_HTML)
         self.assertIn("renderLanguageStatusFilters", INDEX_HTML)
         self.assertIn("renderLanguageConditionFilters", INDEX_HTML)
+        self.assertIn("renderLanguageDiffCards", INDEX_HTML)
+        self.assertIn("language-diff-card", INDEX_HTML)
         self.assertIn('id="language-preview-summary"', INDEX_HTML)
         self.assertIn("renderLanguagePreviewSummary", INDEX_HTML)
         self.assertIn("diff-badge", INDEX_HTML)
@@ -312,6 +327,11 @@ class WebUiContractTest(unittest.TestCase):
             "result.issue_badge",
             "result.condition_changed",
             "result.condition_unchanged",
+            "result.view_mode_table",
+            "result.view_mode_diff",
+            "settings.memory_clear_scope",
+            "settings.memory_clear_confirm",
+            "settings.memory_scope_empty",
         ):
             self.assertIn(key, zh_messages)
             self.assertIn(key, en_messages)
@@ -461,14 +481,22 @@ class WebUiContractTest(unittest.TestCase):
         self.assertIn('id="preflight-panel"', INDEX_HTML)
         self.assertIn('id="preflight-run"', INDEX_HTML)
         self.assertIn('id="preflight-message-summary"', INDEX_HTML)
+        self.assertIn('id="preflight-callout"', INDEX_HTML)
         self.assertIn("PREVIEW_PREFLIGHT_MESSAGE_LIMIT", INDEX_HTML)
         self.assertIn("renderPreflightMessageSummary", INDEX_HTML)
+        self.assertIn("syncSubmitStateFromPreflight", INDEX_HTML)
         self.assertIn("preflight-list-collapsed", INDEX_HTML)
         self.assertIn("runPreflight", INDEX_HTML)
         self.assertIn("renderPreflight", INDEX_HTML)
         self.assertIn("fetch('/api/preflight'", INDEX_HTML)
         self.assertIn("preflight.blocked", INDEX_HTML)
         self.assertIn("preflight.summary", INDEX_HTML)
+
+    def test_results_prioritize_failures_and_risk_actions(self) -> None:
+        self.assertIn('id="result-priority-actions"', INDEX_HTML)
+        self.assertIn("renderResultPriorityActions", INDEX_HTML)
+        self.assertIn("result.priority_failed", INDEX_HTML)
+        self.assertIn("result.priority_risk", INDEX_HTML)
 
     def test_advanced_api_help_uses_focus_popover_motion(self) -> None:
         self.assertIn(".api-box label:focus-within .field-help", INDEX_HTML)

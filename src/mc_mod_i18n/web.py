@@ -2791,6 +2791,49 @@ INDEX_HTML = r"""<!doctype html>
       color: var(--text);
       font-size: 12px;
     }
+    .workflow-step {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: .08em;
+    }
+    .workflow-step strong {
+      color: var(--text);
+      font-size: 13px;
+      text-transform: none;
+      letter-spacing: 0;
+    }
+    .provider-risk-banner,
+    .preflight-callout,
+    .result-priority-actions {
+      display: grid;
+      gap: 8px;
+      margin-top: 12px;
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      background: var(--card-surface-soft);
+    }
+    .provider-risk-banner strong,
+    .preflight-callout strong,
+    .result-priority-actions strong {
+      color: var(--text);
+      font-size: 13px;
+    }
+    .provider-risk-banner p,
+    .preflight-callout p,
+    .result-priority-actions p {
+      margin: 0;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1.5;
+    }
     .status-filter {
       display: inline-flex;
       flex-wrap: wrap;
@@ -2846,6 +2889,124 @@ INDEX_HTML = r"""<!doctype html>
       background:
         linear-gradient(0deg, color-mix(in srgb, var(--danger-bg) 92%, transparent), color-mix(in srgb, var(--danger-bg) 92%, transparent)),
         var(--table-hover);
+    }
+    .memory-preview {
+      display: grid;
+      gap: 8px;
+    }
+    .memory-preview-card {
+      display: grid;
+      gap: 8px;
+      padding: 12px;
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius-sm);
+      background: var(--card-surface-soft);
+      box-shadow: var(--card-shadow-soft);
+    }
+    .memory-preview-head {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .memory-preview-list {
+      display: grid;
+      gap: 8px;
+    }
+    .memory-preview-item {
+      display: grid;
+      gap: 4px;
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: var(--panel);
+    }
+    .memory-preview-source {
+      font-weight: 700;
+      color: var(--text);
+      overflow-wrap: anywhere;
+    }
+    .memory-preview-target,
+    .memory-preview-meta {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      overflow-wrap: anywhere;
+    }
+    .language-view-mode {
+      display: inline-flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      align-items: center;
+    }
+    .language-diff-list {
+      display: grid;
+      gap: 12px;
+    }
+    .language-diff-card {
+      display: grid;
+      gap: 10px;
+      padding: 14px;
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius-md);
+      background: var(--card-surface);
+      box-shadow: var(--card-shadow-soft);
+    }
+    .language-diff-card.issue {
+      border-color: var(--danger-line);
+      background:
+        linear-gradient(0deg, color-mix(in srgb, var(--danger-bg) 72%, transparent), color-mix(in srgb, var(--danger-bg) 72%, transparent)),
+        var(--card-surface);
+    }
+    .language-diff-head {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: flex-start;
+      justify-content: space-between;
+    }
+    .language-diff-key {
+      display: grid;
+      gap: 4px;
+      min-width: 0;
+    }
+    .language-diff-key strong,
+    .language-diff-block code {
+      overflow-wrap: anywhere;
+      word-break: break-word;
+    }
+    .language-diff-badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      justify-content: flex-end;
+    }
+    .language-diff-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 10px;
+    }
+    .language-diff-block {
+      display: grid;
+      gap: 6px;
+      padding: 12px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--panel);
+    }
+    .language-diff-block span {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .language-diff-block code {
+      font-family: "Fira Code", Consolas, monospace;
+      white-space: pre-wrap;
+      color: var(--text);
+    }
+    .language-diff-edit textarea {
+      min-height: 110px;
     }
     .pager {
       display: flex;
@@ -3770,6 +3931,7 @@ INDEX_HTML = r"""<!doctype html>
       </div>
       <form id="translate-form">
         <div class="form-card">
+          <div class="workflow-step"><span>步骤 1</span><strong>选择输入</strong></div>
           <h3><i class="ri-archive-2-line"></i><span data-i18n="input.title">输入类型</span></h3>
           <input type="hidden" name="input_kind" id="input_kind" value="jar">
           <div class="mode-switch" role="radiogroup" aria-label="处理类型" data-i18n-aria-label="input.title">
@@ -3795,6 +3957,7 @@ INDEX_HTML = r"""<!doctype html>
         </label>
         </div>
         <div class="form-card">
+          <div class="workflow-step"><span>步骤 2</span><strong>选择语言与翻译器</strong></div>
           <h3><i class="ri-translate-2"></i><span data-i18n="language.title">Language Settings</span></h3>
         <div class="grid-2">
           <label class="ghost-select locale-select" id="source-locale-select"><span data-i18n="language.source">源语言</span>
@@ -3831,6 +3994,7 @@ INDEX_HTML = r"""<!doctype html>
             <select name="provider" id="provider" tabindex="-1" aria-hidden="true">
               <option value="glossary">离线术语表（有限）</option>
               <option value="copy">复制原文</option>
+              <option value="deep-free">Deep Translator（免费试用）</option>
               <option value="openai-compatible">兼容 OpenAI</option>
               <option value="anthropic-compatible">兼容 Anthropic</option>
             </select>
@@ -3887,8 +4051,10 @@ INDEX_HTML = r"""<!doctype html>
           <span class="control"><span class="value" id="glossary-display">可选 .json 术语表</span><i class="ri-file-list-3-line icon"></i></span>
           <input name="glossary" type="file" accept=".json">
         </label>
+        <div id="provider-risk-banner" class="provider-risk-banner"></div>
         </div>
         <div class="form-card preflight-card" id="preflight-panel">
+          <div class="workflow-step"><span>步骤 3</span><strong>运行预检</strong></div>
           <div class="preflight-head">
             <div>
               <h3><i class="ri-shield-check-line"></i><span data-i18n="preflight.title">翻译前预检</span></h3>
@@ -3896,6 +4062,7 @@ INDEX_HTML = r"""<!doctype html>
             </div>
             <button type="button" class="secondary" id="preflight-run"><i class="ri-scan-2-line"></i><span data-i18n="preflight.run">运行预检</span></button>
           </div>
+          <div id="preflight-callout" class="preflight-callout"><strong>步骤 4</strong><p>建议先运行预检，再开始生成。</p></div>
           <div id="preflight-summary" class="preflight-summary" hidden></div>
           <div id="preflight-message-summary" class="preflight-message-summary" hidden></div>
           <ul id="preflight-messages" class="preflight-list"></ul>
@@ -4107,10 +4274,12 @@ INDEX_HTML = r"""<!doctype html>
               <span data-i18n="settings.current">当前</span>
               <strong id="settings-memory-summary" data-i18n="settings.memory_empty">未发现翻译记忆</strong>
             </div>
+            <div class="memory-preview" id="settings-memory-preview"></div>
             <div class="settings-section-actions">
               <button type="button" class="secondary" id="settings-memory-refresh"><i class="ri-refresh-line"></i><span data-i18n="settings.memory_refresh">刷新记忆</span></button>
               <button type="button" class="secondary" id="settings-memory-export"><i class="ri-download-2-line"></i><span data-i18n="settings.memory_export">导出 JSONL</span></button>
               <button type="button" class="secondary" id="settings-memory-compact"><i class="ri-contract-left-right-line"></i><span data-i18n="settings.memory_compact">压缩去重</span></button>
+              <button type="button" class="secondary" id="settings-memory-clear-scope"><i class="ri-filter-off-line"></i><span data-i18n="settings.memory_clear_scope">清理当前配置</span></button>
               <button type="button" class="danger" id="settings-memory-clear"><i class="ri-delete-bin-6-line"></i><span data-i18n="settings.memory_clear">清理记忆</span></button>
             </div>
           </section>
@@ -4253,9 +4422,11 @@ INDEX_HTML = r"""<!doctype html>
     const settingsPresetSave = document.getElementById('settings-preset-save');
     const settingsPresetDelete = document.getElementById('settings-preset-delete');
     const settingsMemorySummary = document.getElementById('settings-memory-summary');
+    const settingsMemoryPreview = document.getElementById('settings-memory-preview');
     const settingsMemoryRefresh = document.getElementById('settings-memory-refresh');
     const settingsMemoryExport = document.getElementById('settings-memory-export');
     const settingsMemoryCompact = document.getElementById('settings-memory-compact');
+    const settingsMemoryClearScope = document.getElementById('settings-memory-clear-scope');
     const settingsMemoryClear = document.getElementById('settings-memory-clear');
     const settingsUiLocaleRefresh = document.getElementById('settings-ui-locale-refresh');
     const settingsUiLocaleDefault = document.getElementById('settings-ui-locale-default');
@@ -4301,6 +4472,7 @@ INDEX_HTML = r"""<!doctype html>
       languageJarFilter: '全部',
       languageStatusFilter: 'all',
       languageConditionFilter: 'all',
+      languageViewMode: 'table',
       languageFilteredCacheKey: '',
       languageFilteredEntries: [],
       languageEdits: {},
@@ -4329,6 +4501,7 @@ INDEX_HTML = r"""<!doctype html>
     let modelFetchDebounce = 0;
     let modelFetchSequence = 0;
     let modelOptions = [];
+    let lastPreflightPayload = null;
     const PREVIEW_PREFLIGHT_MESSAGE_LIMIT = 8;
     const themePicker = document.getElementById('theme-picker');
     const themeToggle = document.getElementById('theme-toggle');
@@ -4415,6 +4588,7 @@ INDEX_HTML = r"""<!doctype html>
     const systemThemeQuery = window.matchMedia('(prefers-color-scheme: dark)');
     const apiBox = document.getElementById('api-box');
     const providerHelp = document.getElementById('provider-help');
+    const providerRiskBanner = document.getElementById('provider-risk-banner');
     const providerBadge = document.getElementById('provider-badge');
     const apiBaseUrl = document.getElementById('api_base_url');
     const apiKey = document.getElementById('api_key');
@@ -4431,6 +4605,7 @@ INDEX_HTML = r"""<!doctype html>
     const providerTest = document.getElementById('provider-test');
     const providerTestStatus = document.getElementById('provider-test-status');
     const preflightRun = document.getElementById('preflight-run');
+    const preflightCallout = document.getElementById('preflight-callout');
     const preflightSummary = document.getElementById('preflight-summary');
     const preflightMessageSummary = document.getElementById('preflight-message-summary');
     const preflightMessages = document.getElementById('preflight-messages');
@@ -4581,6 +4756,14 @@ INDEX_HTML = r"""<!doctype html>
       ["zlm_arab", "بهاس ملايو"]
     ];
     const providerPresets = {
+      'deep-free': {
+        label: 'Deep Translator（免费试用）',
+        url: '',
+        model: 'deep-free',
+        env: '',
+        help: '免费公共翻译源，无需 API Key。可能因网络或第三方限制失败；失败条目会回退为原文并在报告中标记。',
+        keyUrl: ''
+      },
       'openai-compatible': {
         label: '兼容 OpenAI',
         url: 'https://api.openai.com/v1',
@@ -4597,6 +4780,28 @@ INDEX_HTML = r"""<!doctype html>
         help: '适用于 Anthropic Messages API 或兼容该格式的服务。',
         keyUrl: ''
       }
+    };
+    const providerRiskMeta = {
+      'copy': {
+        title: '复制原文',
+        body: '不调用任何翻译服务，适合验证流程和排查输出链路。',
+      },
+      'glossary': {
+        title: '离线规则翻译',
+        body: '无需联网、结果稳定，但覆盖范围有限，更适合术语替换和基础规则翻译。',
+      },
+      'deep-free': {
+        title: '免费公共翻译源',
+        body: '无需 API Key，适合零配置试用。可能受网络、限流和第三方服务变动影响；失败条目会回退为原文。',
+      },
+      'openai-compatible': {
+        title: 'AI 接口',
+        body: '通常质量和稳定性更好，但需要 API Key，且可能产生费用。',
+      },
+      'anthropic-compatible': {
+        title: 'AI 接口',
+        body: '通常质量和稳定性更好，但需要 API Key，且可能产生费用。',
+      },
     };
     const hardcodedState = {
       entries: [],
@@ -5470,11 +5675,52 @@ INDEX_HTML = r"""<!doctype html>
       settingsMemorySummary.textContent = count
         ? formatUi('settings.memory_summary', '已保存 {count} 条，{size}', { count, size: formatBytes(size) })
         : ui('settings.memory_empty', '未发现翻译记忆');
+      renderTranslationMemoryPreview(payload);
+    }
+
+    function renderTranslationMemoryPreview(payload) {
+      if (!settingsMemoryPreview) {
+        return;
+      }
+      const scopeCount = Number(payload.scope_entries || 0);
+      const scopeRows = Array.isArray(payload.scope_rows) ? payload.scope_rows : [];
+      const recentRows = Array.isArray(payload.recent_rows) ? payload.recent_rows : [];
+      const rows = scopeRows.length ? scopeRows : recentRows;
+      const items = rows.map(row => `
+        <div class="memory-preview-item">
+          <div class="memory-preview-source">${escapeHtml(row.source || '')}</div>
+          <div class="memory-preview-target">${escapeHtml(row.target || '')}</div>
+          <div class="memory-preview-meta">${escapeHtml(row.scope || '')}</div>
+        </div>
+      `).join('');
+      settingsMemoryPreview.innerHTML = `
+        <div class="memory-preview-card">
+          <div class="memory-preview-head">
+            <strong>${escapeHtml(scopeCount ? formatUi('settings.memory_scope_summary', '当前配置命中 {count} 条', { count: scopeCount }) : ui('settings.memory_scope_empty', '当前配置下暂无翻译记忆'))}</strong>
+            <span class="muted">${escapeHtml(formatUi('settings.memory_scope_total', '总记录 {count} 条 / Scope {scopes} 个', { count: payload.entries || 0, scopes: payload.scopes || 0 }))}</span>
+          </div>
+          <div class="memory-preview-list">${items || `<div class="glossary-empty">${escapeHtml(ui('settings.memory_preview_empty', '暂无可预览的翻译记忆条目。'))}</div>`}</div>
+        </div>
+      `;
+    }
+
+    function currentTranslationMemoryScopePayload() {
+      return {
+        provider: provider.value || 'glossary',
+        source_locale: sourceLocale.value || 'en_us',
+        target_locale: targetLocale.value || 'zh_cn',
+        api_url: document.getElementById('api_base_url')?.value || '',
+        model: document.getElementById('model')?.value || '',
+        pack_format: Number(packFormat?.value || '15'),
+        overwrite_existing: Boolean(form.querySelector('input[name="overwrite_existing"]')?.checked),
+        skip_translated: Boolean(form.querySelector('input[name="skip_translated"]')?.checked),
+      };
     }
 
     async function loadTranslationMemorySettings() {
       const cacheDir = applyCacheDirSetting(settingsCacheDir ? settingsCacheDir.value : '', true);
-      const response = await fetch(`/api/translation-memory?cache_dir=${encodeURIComponent(cacheDir)}`);
+      const scopePayload = encodeURIComponent(JSON.stringify(currentTranslationMemoryScopePayload()));
+      const response = await fetch(`/api/translation-memory?cache_dir=${encodeURIComponent(cacheDir)}&scope_config=${scopePayload}`);
       const payload = await response.json();
       if (!response.ok || !payload.ok) {
         throw new Error(payload.error || ui('settings.memory_load_failed', '翻译记忆读取失败'));
@@ -5483,12 +5729,12 @@ INDEX_HTML = r"""<!doctype html>
       return payload;
     }
 
-    async function mutateTranslationMemory(action) {
+    async function mutateTranslationMemory(action, extra = {}) {
       const cacheDir = applyCacheDirSetting(settingsCacheDir ? settingsCacheDir.value : '', true);
       const response = await fetch('/api/translation-memory', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cache_dir: cacheDir, action })
+        body: JSON.stringify({ cache_dir: cacheDir, action, ...extra })
       });
       const payload = await response.json();
       if (!response.ok || !payload.ok) {
@@ -5841,8 +6087,29 @@ INDEX_HTML = r"""<!doctype html>
           }
         });
       }
+      if (settingsMemoryClearScope) {
+        settingsMemoryClearScope.addEventListener('click', async () => {
+          const confirmed = window.confirm(ui('settings.memory_clear_confirm', '确定要清理当前配置对应的翻译记忆吗？'));
+          if (!confirmed) {
+            return;
+          }
+          settingsMemoryClearScope.disabled = true;
+          try {
+            const payload = await mutateTranslationMemory('clear', { scope_config: currentTranslationMemoryScopePayload() });
+            setSettingsStatus(formatUi('settings.memory_scope_cleared', '已清理当前配置下的 {removed} 条翻译记忆。', { removed: payload.removed || 0 }));
+          } catch (error) {
+            setSettingsStatus(error.message || ui('settings.memory_save_failed', '翻译记忆操作失败'), true);
+          } finally {
+            settingsMemoryClearScope.disabled = false;
+          }
+        });
+      }
       if (settingsMemoryClear) {
         settingsMemoryClear.addEventListener('click', async () => {
+          const confirmed = window.confirm(ui('settings.memory_clear_confirm_all', '确定要清理全部翻译记忆吗？'));
+          if (!confirmed) {
+            return;
+          }
           settingsMemoryClear.disabled = true;
           try {
             const payload = await mutateTranslationMemory('clear');
@@ -6426,11 +6693,16 @@ INDEX_HTML = r"""<!doctype html>
       }
       providerBadge.textContent = ui(`provider.${provider.value}`, preset.label);
       providerHelp.textContent = ui(`provider.${provider.value}.help`, preset.help);
+      renderProviderRiskBanner();
       if (resetPreset) {
         apiBaseUrl.value = preset.url;
         apiKeyEnv.value = preset.env;
         syncModelPreset(preset.model);
         scheduleModelFetch(250);
+        if (provider.value === 'deep-free') {
+          apiConcurrency.value = '1';
+          document.getElementById('api_batch_size').value = '20';
+        }
       }
       if (preset.keyUrl) {
         keyLink.href = preset.keyUrl;
@@ -6512,6 +6784,7 @@ INDEX_HTML = r"""<!doctype html>
       if (!preflightSummary || !preflightMessages) {
         return;
       }
+      lastPreflightPayload = payload;
       const summary = payload.summary || {};
       const messages = payload.messages || [];
       preflightSummary.hidden = false;
@@ -6541,6 +6814,49 @@ INDEX_HTML = r"""<!doctype html>
       statusBox.textContent = payload.ok
         ? ui('preflight.summary', '预检完成，可以开始生成。')
         : ui('preflight.blocked', '预检发现阻断项，请修正后再开始生成。');
+      if (preflightCallout) {
+        const blockingCount = messages.filter(item => item.level === 'blocking').length;
+        const headline = payload.ok ? '步骤 4' : '预检阻断';
+        const body = payload.ok
+          ? `预检已通过，可开始生成。待处理 ${summary.output_files || 0} 个预计输出，消息 ${messages.length} 条。`
+          : `预检发现 ${blockingCount} 条阻断消息，请先修正后再继续。`;
+        preflightCallout.innerHTML = `<strong>${escapeHtml(headline)}</strong><p>${escapeHtml(body)}</p>`;
+      }
+      syncSubmitStateFromPreflight(payload);
+    }
+
+    function syncSubmitStateFromPreflight(payload = lastPreflightPayload) {
+      if (!submit) {
+        return;
+      }
+      if (!payload) {
+        submit.disabled = false;
+        submit.innerHTML = `<i class="ri-rocket-2-line"></i><span>${escapeHtml(ui('action.start', '开始生成'))}</span>`;
+        return;
+      }
+      if (payload.ok) {
+        submit.disabled = false;
+        submit.innerHTML = `<i class="ri-rocket-2-line"></i><span>开始生成（已通过预检）</span>`;
+        return;
+      }
+      if (ignorePreflightBlockers()) {
+        submit.disabled = false;
+        submit.innerHTML = `<i class="ri-alert-line"></i><span>忽略阻断并继续</span>`;
+        return;
+      }
+      submit.disabled = true;
+      submit.innerHTML = `<i class="ri-close-circle-line"></i><span>存在阻断，需先处理</span>`;
+    }
+
+    function renderProviderRiskBanner() {
+      if (!providerRiskBanner) {
+        return;
+      }
+      const meta = providerRiskMeta[provider.value] || {
+        title: '当前翻译器',
+        body: '请根据当前任务规模和稳定性要求选择合适的翻译方案。',
+      };
+      providerRiskBanner.innerHTML = `<strong>${escapeHtml(meta.title)}</strong><p>${escapeHtml(meta.body)}</p>`;
     }
 
     async function runPreflight() {
@@ -7242,6 +7558,7 @@ INDEX_HTML = r"""<!doctype html>
       statusBox.className = 'status';
       statusBox.textContent = t('status.uploading');
       submit.disabled = true;
+      submit.innerHTML = `<i class="ri-loader-4-line"></i><span>正在提交任务...</span>`;
       startLoading();
       job.textContent = '';
       activeJobId = '';
@@ -7272,7 +7589,7 @@ INDEX_HTML = r"""<!doctype html>
         statusBox.className = 'status error';
         statusBox.textContent = error.message;
         results.innerHTML = `<div class="empty">${escapeHtml(t('status.failed'))}</div>`;
-        submit.disabled = false;
+        syncSubmitStateFromPreflight();
         stopLoading();
       }
     });
@@ -7554,6 +7871,7 @@ INDEX_HTML = r"""<!doctype html>
           <button type="button" data-view="api-log"><i class="ri-bug-line"></i><span>${escapeHtml(ui('result.api_log', 'API 调试日志'))}</span></button>
           ${apiFailureCount && !isFtbquestsResult && !isJsonResult ? `<button type="button" id="retry-api-failures"><i class="ri-refresh-line"></i><span>${escapeHtml(ui('result.retry_failed', '重试失败项'))}</span></button>` : ''}
         </div>
+        ${renderResultPriorityActions(payload)}
         ${apiFailureCount ? `
           <div class="status error">
             ${escapeHtml(formatUi('result.api_failure_notice', '汉化翻译存在异常缺失 {count} 条。可打开 API 调试日志查看报错记录，或手动重试失败项。', { count: apiFailureCount }))}
@@ -7623,6 +7941,31 @@ INDEX_HTML = r"""<!doctype html>
           bindLanguageResults();
         }
       }
+    }
+
+    function renderResultPriorityActions(payload) {
+      const summary = payload.summary || {};
+      const failed = (summary.api_failed || 0) + (summary.failed || 0) + (summary.incomplete || 0) + (summary.jar_failed || 0);
+      const risky = (payload.entries || []).filter(entry => ['failed', 'api_failed', 'incomplete', 'jar_failed'].includes(entry.status)).length;
+      if (!failed && !risky) {
+        return '';
+      }
+      const title = failed
+        ? formatUi('result.priority_failed', '优先处理 {count} 条失败项', { count: failed })
+        : formatUi('result.priority_risk', '优先复核 {count} 条风险项', { count: risky });
+      const body = failed
+        ? '建议先查看失败项或直接重试失败项，再决定是否下载最终产物。'
+        : '当前任务没有硬失败，但存在需要人工复核的风险项。';
+      return `
+        <div class="result-priority-actions" id="result-priority-actions">
+          <strong>${escapeHtml(title)}</strong>
+          <p>${escapeHtml(body)}</p>
+          <div class="settings-section-actions">
+            <button type="button" data-priority-filter="issues" class="secondary"><i class="ri-focus-3-line"></i><span>只看风险项</span></button>
+            ${failed ? `<button type="button" id="priority-retry-failures"><i class="ri-refresh-line"></i><span>${escapeHtml(ui('result.retry_failed', '重试失败项'))}</span></button>` : ''}
+          </div>
+        </div>
+      `;
     }
 
     function splitJarPath(value) {
@@ -7721,6 +8064,10 @@ INDEX_HTML = r"""<!doctype html>
           <div class="status-filter" id="language-condition-filter" aria-label="${escapeHtml(ui('result.condition_filter', '条件筛选'))}">
             ${renderLanguageConditionFilters(payload)}
           </div>
+          <div class="language-view-mode status-filter" id="language-view-mode" aria-label="${escapeHtml(ui('result.view_mode', '查看模式'))}">
+            <button type="button" data-language-view="table" class="${resultState.languageViewMode === 'table' ? 'active' : ''}">${escapeHtml(ui('result.view_mode_table', '表格'))}</button>
+            <button type="button" data-language-view="diff" class="${resultState.languageViewMode === 'diff' ? 'active' : ''}">${escapeHtml(ui('result.view_mode_diff', '对比'))}</button>
+          </div>
           <input id="language-search" value="${escapeHtml(resultState.languageSearch)}" placeholder="${escapeHtml(ui('result.search_language', '搜索状态、Mod ID、Key、原文或译文'))}">
           ${isJsonResult ? '' : `<button type="button" id="export-language-edits"><i class="ri-download-2-line"></i><span>${escapeHtml(ui('result.export_edits', '导出已修改译文'))}</span></button>`}
         </div>
@@ -7815,6 +8162,9 @@ INDEX_HTML = r"""<!doctype html>
 
     function renderLanguageResultTable(payload) {
       const entries = getFilteredLanguageEntries(payload);
+      if (resultState.languageViewMode === 'diff') {
+        return renderLanguageDiffCards(entries);
+      }
       const pageInfo = paginate(entries, resultState.languagePage, 50);
       resultState.languagePage = pageInfo.page;
       const rows = pageInfo.rows.map(entry => {
@@ -7841,6 +8191,52 @@ INDEX_HTML = r"""<!doctype html>
           <thead><tr><th>${escapeHtml(ui('result.status', '状态'))}</th><th>${escapeHtml(ui('result.jar', 'JAR'))}</th><th>${escapeHtml(ui('result.mod_id', 'Mod ID'))}</th><th>${escapeHtml(ui('result.key', 'Key'))}</th><th>${escapeHtml(ui('result.source', '原文'))}</th><th>${escapeHtml(ui('result.target', '译文'))}</th></tr></thead>
           <tbody>${rows || `<tr><td colspan="6">${escapeHtml(ui('result.no_rows', '无条目'))}</td></tr>`}</tbody>
         </table>
+        ${renderPager('language', pageInfo)}
+      `;
+    }
+
+    function renderLanguageDiffCards(entries) {
+      const pageInfo = paginate(entries, resultState.languagePage, 20);
+      resultState.languagePage = pageInfo.page;
+      const cards = pageInfo.rows.map(entry => {
+        const editId = languageEditId(entry);
+        const target = Object.prototype.hasOwnProperty.call(resultState.languageEdits, editId)
+          ? resultState.languageEdits[editId]
+          : entry.target;
+        const retryDetail = retryStatusDetail(entry);
+        const changed = String(target ?? '') !== String(entry.source ?? '');
+        const issue = ['failed', 'api_failed', 'incomplete', 'jar_failed'].includes(entry.status);
+        return `
+          <article class="language-diff-card ${issue ? 'issue' : ''}" data-language-row-issue="${issue ? 'true' : 'false'}">
+            <div class="language-diff-head">
+              <div class="language-diff-key">
+                <strong>${escapeHtml(entry.key)}</strong>
+                <span class="muted">${escapeHtml(entry.jar || '')}${entry.mod_id ? ` · ${escapeHtml(entry.mod_id)}` : ''}</span>
+                ${retryDetail ? `<span class="muted">${escapeHtml(retryDetail)}</span>` : ''}
+              </div>
+              <div class="language-diff-badges">
+                <span class="preview-chip">${escapeHtml(statusLabel(entry.status))}</span>
+                ${issue ? `<span class="diff-badge issue-badge">${escapeHtml(ui('result.issue_badge', '需处理'))}</span>` : ''}
+                ${changed ? `<span class="diff-badge">${escapeHtml(ui('result.diff_changed', '与原文不同'))}</span>` : ''}
+              </div>
+            </div>
+            <div class="language-diff-grid">
+              <div class="language-diff-block">
+                <span>${escapeHtml(ui('result.source', '原文'))}</span>
+                <code>${escapeHtml(entry.source)}</code>
+              </div>
+              <label class="language-diff-block language-diff-edit">
+                <span>${escapeHtml(ui('result.target', '译文'))}</span>
+                <textarea data-language-edit="${escapeHtml(editId)}" placeholder="${escapeHtml(ui('result.target', '译文'))}">${escapeHtml(target)}</textarea>
+              </label>
+            </div>
+          </article>
+        `;
+      }).join('');
+      return `
+        <div class="language-diff-list">
+          ${cards || `<div class="glossary-empty">${escapeHtml(ui('result.no_rows', '无条目'))}</div>`}
+        </div>
         ${renderPager('language', pageInfo)}
       `;
     }
@@ -7914,6 +8310,16 @@ INDEX_HTML = r"""<!doctype html>
       results.querySelectorAll('button[data-view]').forEach(button => {
         button.addEventListener('click', () => switchView(button.dataset.view));
       });
+      document.querySelectorAll('[data-priority-filter="issues"]').forEach(button => {
+        button.addEventListener('click', () => {
+          resultState.activeView = 'language';
+          resultState.activeTab = 'language';
+          resultState.languageConditionFilter = 'issues';
+          resultState.languageViewMode = 'diff';
+          resultState.languagePage = 1;
+          renderResultShell();
+        });
+      });
       const reportSearch = document.getElementById('report-search');
       if (reportSearch) {
         reportSearch.addEventListener('input', () => {
@@ -7971,6 +8377,10 @@ INDEX_HTML = r"""<!doctype html>
       const retryFailures = document.getElementById('retry-api-failures');
       if (retryFailures) {
         retryFailures.addEventListener('click', retryApiFailures);
+      }
+      const priorityRetryFailures = document.getElementById('priority-retry-failures');
+      if (priorityRetryFailures) {
+        priorityRetryFailures.addEventListener('click', retryApiFailures);
       }
       const downloadPack = document.getElementById('download-pack');
       if (downloadPack) {
@@ -8640,6 +9050,13 @@ INDEX_HTML = r"""<!doctype html>
       document.querySelectorAll('[data-page-view="language"]').forEach(button => {
         button.addEventListener('click', () => {
           resultState.languagePage = Number(button.dataset.page || '1');
+          renderLanguageResultContent();
+        });
+      });
+      document.querySelectorAll('[data-language-view]').forEach(button => {
+        button.addEventListener('click', () => {
+          resultState.languageViewMode = button.dataset.languageView === 'diff' ? 'diff' : 'table';
+          resultState.languagePage = 1;
           renderLanguageResultContent();
         });
       });
@@ -9585,7 +10002,10 @@ def make_handler(workdir: Path):
 
         def _handle_translation_memory(self, query: str) -> dict[str, Any]:
             cache_root = self._cache_root_from_query(query)
-            return {"ok": True, **translation_memory_stats(cache_root)}
+            values = parse_qs(query or "")
+            scope_config = values.get("scope_config", [""])[0]
+            scope = translation_memory_scope_from_config(json.loads(scope_config)) if scope_config else ""
+            return {"ok": True, **translation_memory_stats(cache_root, scope=scope)}
 
         def _send_translation_memory_export(self, query: str) -> None:
             cache_root = self._cache_root_from_query(query)
@@ -9604,13 +10024,15 @@ def make_handler(workdir: Path):
             payload = json.loads(body.decode("utf-8") or "{}")
             cache_root = resolve_cache_root(workdir, str(payload.get("cache_dir", "") or ""))
             action = str(payload.get("action", "") or "")
+            scope_payload = payload.get("scope_config")
+            scope = translation_memory_scope_from_config(scope_payload) if scope_payload else ""
             if action == "clear":
-                removed = clear_translation_memory(cache_root)
+                removed = clear_translation_memory(cache_root, scope=scope)
             elif action == "compact":
                 removed = compact_translation_memory(cache_root)
             else:
                 raise ValueError("未知翻译记忆操作")
-            return {"ok": True, "removed": removed, **translation_memory_stats(cache_root)}
+            return {"ok": True, "removed": removed, **translation_memory_stats(cache_root, scope=scope)}
 
         def _ui_locale_root_from_query(self, query: str) -> Path:
             values = parse_qs(query or "")
@@ -11076,10 +11498,30 @@ def read_translation_memory_rows(cache_root: Path) -> list[dict[str, str]]:
     return rows
 
 
-def translation_memory_stats(cache_root: Path) -> dict[str, Any]:
+def translation_memory_scope_from_config(value: Any) -> str:
+    if not isinstance(value, dict):
+        raise ValueError("翻译记忆 scope 配置必须是对象")
+    namespace = argparse.Namespace(
+        source_locale=str(value.get("source_locale", "en_us") or "en_us"),
+        target_locale=str(value.get("target_locale", "zh_cn") or "zh_cn"),
+        provider=str(value.get("provider", "glossary") or "glossary"),
+        model=str(value.get("model", "") or ""),
+        api_url=str(value.get("api_url", "") or ""),
+        overwrite_existing=bool(value.get("overwrite_existing", False)),
+        skip_translated=bool(value.get("skip_translated", False)),
+        pack_format=str(value.get("pack_format", "") or ""),
+        glossary=None,
+    )
+    return compute_translation_config_hash(namespace)
+
+
+def translation_memory_stats(cache_root: Path, scope: str = "", limit: int = 5) -> dict[str, Any]:
     path = translation_memory_path(cache_root)
     rows = read_translation_memory_rows(cache_root)
     scopes = {row["scope"] for row in rows}
+    recent_rows = list(reversed(rows[-max(0, limit):])) if limit > 0 else []
+    scope_rows_all = [row for row in rows if row["scope"] == scope] if scope else []
+    scope_rows = list(reversed(scope_rows_all[-max(0, limit):])) if limit > 0 else list(reversed(scope_rows_all))
     return {
         "cache_dir": str(cache_root),
         "path": str(path),
@@ -11087,15 +11529,28 @@ def translation_memory_stats(cache_root: Path) -> dict[str, Any]:
         "entries": len(rows),
         "scopes": len(scopes),
         "size_bytes": path.stat().st_size if path.is_file() else 0,
+        "scope": scope,
+        "scope_entries": len(scope_rows_all),
+        "scope_rows": scope_rows,
+        "recent_rows": recent_rows,
     }
 
 
-def clear_translation_memory(cache_root: Path) -> int:
+def clear_translation_memory(cache_root: Path, scope: str = "") -> int:
     path = translation_memory_path(cache_root)
     rows = read_translation_memory_rows(cache_root)
-    if path.is_file():
+    if not scope:
+        if path.is_file():
+            path.unlink()
+        return len(rows)
+    kept = [row for row in rows if row["scope"] != scope]
+    removed = len(rows) - len(kept)
+    if kept:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("\n".join(json.dumps(row, ensure_ascii=False) for row in kept) + "\n", encoding="utf-8")
+    elif path.is_file():
         path.unlink()
-    return len(rows)
+    return max(0, removed)
 
 
 def compact_translation_memory(cache_root: Path) -> int:

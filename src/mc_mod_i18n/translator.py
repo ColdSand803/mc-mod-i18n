@@ -45,6 +45,12 @@ class ProviderPreset:
 
 
 AI_PROVIDER_PRESETS: dict[str, ProviderPreset] = {
+    "deep-free": ProviderPreset(
+        label="Deep Translator（免费试用）",
+        api_url="",
+        model="deep-free",
+        api_key_env="",
+    ),
     "openai-compatible": ProviderPreset(
         label="兼容 OpenAI",
         api_url="https://api.openai.com/v1",
