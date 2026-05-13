@@ -4609,6 +4609,7 @@ INDEX_HTML = r"""<!doctype html>
     const preflightSummary = document.getElementById('preflight-summary');
     const preflightMessageSummary = document.getElementById('preflight-message-summary');
     const preflightMessages = document.getElementById('preflight-messages');
+    const ignorePreflightBlockersToggle = form.querySelector('input[name="ignore_preflight_blockers"]');
     const apiConcurrency = document.getElementById('api_concurrency');
     const apiConcurrencyHelp = document.getElementById('api-concurrency-help');
     const uiLocaleSelectShell = document.getElementById('ui-locale-select');
@@ -7048,6 +7049,11 @@ INDEX_HTML = r"""<!doctype html>
       });
     }
     glossaryInput.addEventListener('change', syncFiles);
+    if (ignorePreflightBlockersToggle) {
+      ignorePreflightBlockersToggle.addEventListener('change', () => {
+        syncSubmitStateFromPreflight();
+      });
+    }
     document.querySelectorAll('[data-input-kind]').forEach(button => {
       button.addEventListener('click', () => {
         inputKind.value = button.dataset.inputKind || 'jar';

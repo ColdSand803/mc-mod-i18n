@@ -485,6 +485,7 @@ class WebUiContractTest(unittest.TestCase):
         self.assertIn("PREVIEW_PREFLIGHT_MESSAGE_LIMIT", INDEX_HTML)
         self.assertIn("renderPreflightMessageSummary", INDEX_HTML)
         self.assertIn("syncSubmitStateFromPreflight", INDEX_HTML)
+        self.assertIn("ignorePreflightBlockersToggle.addEventListener('change'", INDEX_HTML)
         self.assertIn("preflight-list-collapsed", INDEX_HTML)
         self.assertIn("runPreflight", INDEX_HTML)
         self.assertIn("renderPreflight", INDEX_HTML)
