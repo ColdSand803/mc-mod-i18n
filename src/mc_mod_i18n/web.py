@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import argparse
 import csv
 import hashlib
+import html
 import json
 import mimetypes
 import os
@@ -25,6 +26,10 @@ from zipfile import BadZipFile, ZipFile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from .core import compute_translation_config_hash, compute_zip_source_hash, create_translator, process_jar, report_has_uncacheable_failures, translate_batch_with_failures
+from .argos_adapter import ArgosTranslator
+from .azure_translator_adapter import AzureTranslatorTranslator
+from .deep_translator_adapter import DeepFreeTranslator
+from .libretranslate_adapter import LibreTranslateTranslator
 from .ftbquests import (
     FTBQuestsResult,
     FTBQuestsOutputFile,
@@ -79,6 +84,8 @@ from .validator import validate_translation
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SIDEBAR_LOGO_PATH = PROJECT_ROOT / "ui优化方案" / "logo" / "minecraft.svg"
 CO1DSAND_PACK_LOGO_PATHS = (Path.cwd() / "co1dsand_logo.png", PROJECT_ROOT / "co1dsand_logo.png")
+HELP_DOCS_DIRNAME = "docs/help"
+HELP_DOCS_INDEX_FILENAME = "index.json"
 
 
 INDEX_HTML = r"""<!doctype html>
@@ -2062,8 +2069,443 @@ INDEX_HTML = r"""<!doctype html>
     .history-card .settings-section {
       overflow: visible;
     }
+    #history-list.results {
+      max-height: min(62vh, 640px);
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      padding-right: 4px;
+    }
     .history-card .ghost-select.open {
       z-index: 90;
+    }
+    .docs-layout {
+      align-content: start;
+    }
+    .docs-page-shell {
+      display: grid;
+      gap: 18px;
+      min-height: 0;
+      padding: 18px 22px 22px;
+      overflow: auto;
+      background: linear-gradient(180deg, var(--panel), color-mix(in srgb, var(--panel) 84%, var(--surface)));
+      scrollbar-width: thin;
+      scrollbar-color: var(--scroll-thumb) transparent;
+    }
+    .docs-stage {
+      min-height: 0;
+      display: grid;
+      grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+      gap: 16px;
+      align-items: stretch;
+    }
+    .docs-sidebar {
+      min-height: 0;
+      min-width: 0;
+      display: grid;
+      align-content: start;
+      gap: 0;
+      border: 1px solid var(--card-border);
+      border-radius: calc(var(--radius-lg) + 2px);
+      background: var(--panel);
+      box-shadow: var(--card-shadow-soft);
+      overflow: hidden;
+    }
+    .docs-detail {
+      min-height: 0;
+      min-width: 0;
+      display: grid;
+      align-content: start;
+      gap: 0;
+      border: 1px solid var(--card-border);
+      border-radius: calc(var(--radius-lg) + 2px);
+      background: var(--panel);
+      box-shadow: var(--card-shadow-soft);
+      overflow: hidden;
+    }
+    .help-preview-card {
+      min-height: 0;
+      min-width: 0;
+      display: grid;
+      align-content: start;
+      gap: 0;
+      border: 1px solid var(--card-border);
+      border-radius: calc(var(--radius-lg) + 2px);
+      background: var(--panel);
+      box-shadow: var(--card-shadow-soft);
+      overflow: hidden;
+    }
+    .docs-sidebar-head,
+    .docs-detail-head,
+    .help-preview-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--line);
+      background: color-mix(in srgb, var(--panel) 76%, var(--field-bg-soft));
+    }
+    .docs-sidebar-head strong,
+    .docs-detail-head strong,
+    .help-preview-head strong {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text);
+      font-size: 15px;
+      line-height: 1.3;
+    }
+    .docs-sidebar-head span,
+    .docs-detail-head span,
+    .help-preview-head span {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .docs-sidebar-body {
+      min-height: 0;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      gap: 14px;
+      padding: 16px;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
+    .docs-search {
+      margin-bottom: 0;
+    }
+    .docs-list {
+      display: grid;
+      gap: 12px;
+    }
+    .docs-list.compact {
+      gap: 8px;
+    }
+    .docs-search {
+      margin-bottom: 12px;
+    }
+    .docs-link {
+      display: grid;
+      gap: 4px;
+      justify-items: start;
+      text-align: left;
+      padding: 10px 14px;
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      background: var(--field-bg);
+      box-shadow: var(--card-shadow-soft);
+      transition: border-color var(--motion-fast) ease, background var(--motion-fast) ease, box-shadow var(--motion-fast) ease, transform var(--motion-fast) ease;
+    }
+    .docs-link:hover:not(:disabled) {
+      border-color: var(--field-border-hover);
+      background: var(--card-surface-soft);
+      box-shadow: var(--card-shadow-soft);
+      transform: translateY(-2px);
+    }
+    .docs-link.active {
+      border-color: var(--control-active-border);
+      background: var(--control-active-bg);
+      color: var(--control-active-text);
+      box-shadow: var(--control-active-shadow);
+    }
+    .docs-link.active span {
+      color: color-mix(in srgb, var(--control-active-text) 78%, transparent);
+    }
+    .docs-link strong {
+      font-size: 14px;
+      line-height: 1.35;
+      margin: 0;
+    }
+    .docs-link span {
+      color: var(--text);
+      font-size: 12px;
+      line-height: 1.5;
+      opacity: .72;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      display: -webkit-box;
+      -webkit-line-clamp: 1;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .docs-link.active strong,
+    .docs-link.active span {
+      color: var(--control-active-text);
+    }
+    .docs-detail {
+      grid-template-rows: auto minmax(0, 1fr);
+    }
+    .docs-body {
+      display: grid;
+      gap: 18px;
+      min-height: 0;
+      padding: 20px 22px 22px;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+    }
+    .docs-meta {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .docs-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 28px;
+      padding: 5px 10px;
+      border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--line));
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--accent-soft) 64%, var(--panel));
+      color: color-mix(in srgb, var(--accent) 76%, var(--text));
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1.35;
+    }
+    .docs-content {
+      display: grid;
+      gap: 14px;
+      line-height: 1.7;
+      padding-top: 4px;
+    }
+    .docs-content h1,
+    .docs-content h2,
+    .docs-content h3 {
+      margin: 0;
+      color: var(--text);
+      padding-bottom: 10px;
+      border-bottom: 1px solid color-mix(in srgb, var(--line) 82%, transparent);
+    }
+    .docs-content h1 {
+      font-size: 26px;
+      line-height: 1.2;
+    }
+    .docs-content h2 {
+      font-size: 22px;
+      line-height: 1.26;
+    }
+    .docs-content h3 {
+      font-size: 17px;
+      line-height: 1.35;
+    }
+    .docs-content p,
+    .docs-content ul,
+    .docs-content ol {
+      margin: 0;
+    }
+    .docs-content p,
+    .docs-content li {
+      color: color-mix(in srgb, var(--text) 94%, var(--muted));
+    }
+    .docs-content ul,
+    .docs-content ol {
+      padding-left: 20px;
+    }
+    .docs-content ol {
+      display: grid;
+      gap: 8px;
+      list-style: decimal;
+    }
+    .docs-content ul {
+      display: grid;
+      gap: 8px;
+    }
+    .docs-content li {
+      color: var(--text);
+    }
+    .docs-content pre {
+      margin: 2px 0 4px;
+      overflow-x: auto;
+      padding: 12px 14px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--field-bg-soft);
+      box-shadow: var(--card-shadow-soft);
+    }
+    .docs-content code {
+      font-family: "Fira Code", Consolas, monospace;
+      font-size: 12px;
+    }
+    .docs-content pre code {
+      white-space: pre;
+    }
+    .docs-content a {
+      color: var(--accent);
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .docs-content a:hover {
+      text-decoration: underline;
+    }
+    .docs-related-block {
+      display: grid;
+      gap: 12px;
+      padding-top: 2px;
+      border-top: 1px solid color-mix(in srgb, var(--line) 78%, transparent);
+    }
+    .docs-related-block strong {
+      color: var(--text);
+      font-size: 13px;
+      line-height: 1.4;
+    }
+    .docs-related {
+      display: flex;
+      align-items: flex-start;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .docs-related button {
+      padding: 0;
+      border: 0;
+      background: transparent;
+      box-shadow: none;
+    }
+    .docs-related button:hover:not(:disabled) {
+      transform: none;
+    }
+    .doc-jump-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .doc-jump-row .secondary,
+    .provider-test-status.error.with-help button {
+      padding: 10px 14px;
+      border: 1px solid var(--accent-soft-line);
+      background: var(--accent-soft);
+      color: var(--accent);
+      box-shadow: 0 10px 24px rgba(37, 99, 235, .12);
+    }
+    .doc-jump-row .secondary:hover:not(:disabled),
+    .provider-test-status.error.with-help button:hover:not(:disabled) {
+      background: var(--accent-soft-hover);
+      border-color: var(--accent-active-line);
+      color: var(--control-hover-text);
+      box-shadow: 0 14px 28px rgba(37, 99, 235, .16);
+    }
+    .doc-jump-row .secondary span,
+    .provider-test-status.error.with-help button span {
+      color: inherit;
+      opacity: 1;
+    }
+    .help-topic-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+      align-items: stretch;
+    }
+    .help-topic-column {
+      min-width: 0;
+      display: grid;
+      align-content: start;
+      gap: 16px;
+    }
+    .help-topic-column .settings-section {
+      height: 100%;
+    }
+    .help-topic-list {
+      display: grid;
+      gap: 12px;
+    }
+    .help-topic-link {
+      position: relative;
+      gap: 10px;
+      padding-right: 42px;
+    }
+    .help-topic-category {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 22px;
+      padding: 3px 8px;
+      border: 1px solid color-mix(in srgb, var(--line) 88%, transparent);
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--field-bg-soft) 84%, var(--panel));
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 700;
+      line-height: 1.3;
+    }
+    .help-topic-link.active .help-topic-category {
+      border-color: color-mix(in srgb, var(--control-active-text) 24%, transparent);
+      background: color-mix(in srgb, var(--control-active-text) 16%, transparent);
+      color: color-mix(in srgb, var(--control-active-text) 84%, transparent);
+    }
+    .help-topic-link::after {
+      content: "\ea6e";
+      position: absolute;
+      top: 16px;
+      right: 14px;
+      font-family: "remixicon";
+      font-size: 16px;
+      line-height: 1;
+      color: color-mix(in srgb, var(--accent) 70%, var(--muted));
+      opacity: .82;
+      transition: transform var(--motion-fast) ease, color var(--motion-fast) ease;
+    }
+    .help-topic-link.active::after {
+      color: color-mix(in srgb, var(--control-active-text) 82%, transparent);
+    }
+    .help-topic-link:hover:not(:disabled)::after {
+      transform: translateX(2px);
+      color: var(--accent);
+    }
+    .help-preview-card {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+    }
+    .help-preview-body {
+      display: grid;
+      gap: 16px;
+      min-height: 0;
+      padding: 18px;
+    }
+    .help-preview-body.compact {
+      gap: 14px;
+    }
+    .help-preview-kicker {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--accent);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+    .help-preview-body h3 {
+      margin: 0;
+      color: var(--text);
+      font-size: 22px;
+      line-height: 1.2;
+    }
+    .help-preview-body p,
+    .help-preview-summary {
+      margin: 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.65;
+    }
+    .help-preview-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .help-preview-actions.compact {
+      gap: 8px;
+    }
+    .help-preview-actions .secondary {
+      border: 1px solid var(--accent-soft-line);
+      background: var(--accent-soft);
+      color: var(--accent);
+    }
+    .help-preview-actions .secondary span {
+      color: inherit;
+      opacity: 1;
     }
     .pack-name-head,
     .settings-head {
@@ -2426,6 +2868,14 @@ INDEX_HTML = r"""<!doctype html>
     }
     .provider-test-status.success {
       color: var(--success);
+    }
+    .provider-test-status.error.with-help {
+      display: grid;
+      gap: 8px;
+      align-items: start;
+    }
+    .provider-test-status.error.with-help button {
+      justify-self: start;
     }
     #retry-api-failures {
       min-width: 132px;
@@ -3890,8 +4340,8 @@ INDEX_HTML = r"""<!doctype html>
       </nav>
       <div class="nav-footer">
         <button type="button" class="nav-item" id="settings-open" data-view="settings"><i class="ri-settings-3-line"></i><span data-i18n="nav.settings">设置</span></button>
-        <div class="nav-item"><i class="ri-file-list-3-line"></i><span data-i18n="nav.docs">文档</span></div>
-        <div class="nav-item"><i class="ri-question-line"></i><span data-i18n="nav.help">帮助</span></div>
+        <button type="button" class="nav-item" data-view="docs"><i class="ri-file-list-3-line"></i><span data-i18n="nav.docs">文档</span></button>
+        <button type="button" class="nav-item" data-view="help"><i class="ri-question-line"></i><span data-i18n="nav.help">帮助</span></button>
       </div>
     </aside>
     <div class="content-shell">
@@ -3994,7 +4444,10 @@ INDEX_HTML = r"""<!doctype html>
             <select name="provider" id="provider" tabindex="-1" aria-hidden="true">
               <option value="glossary">离线术语表（有限）</option>
               <option value="copy">复制原文</option>
+              <option value="argos">Argos Translate（离线）</option>
               <option value="deep-free">Deep Translator（免费试用）</option>
+              <option value="libretranslate">LibreTranslate（自托管/托管）</option>
+              <option value="azure-translator">Azure Translator</option>
               <option value="openai-compatible">兼容 OpenAI</option>
               <option value="anthropic-compatible">兼容 Anthropic</option>
             </select>
@@ -4062,22 +4515,25 @@ INDEX_HTML = r"""<!doctype html>
             </div>
             <button type="button" class="secondary" id="preflight-run"><i class="ri-scan-2-line"></i><span data-i18n="preflight.run">运行预检</span></button>
           </div>
-          <div id="preflight-callout" class="preflight-callout"><strong>步骤 4</strong><p>建议先运行预检，再开始生成。</p></div>
+          <div id="preflight-callout" class="preflight-callout"><strong>步骤 4</strong><p>建议先运行预检，再开始生成。</p><div class="doc-jump-row"><button type="button" class="secondary" id="preflight-doc-link" data-doc-target="preflight"><i class="ri-book-open-line"></i><span>查看预检说明</span></button></div></div>
           <div id="preflight-summary" class="preflight-summary" hidden></div>
           <div id="preflight-message-summary" class="preflight-message-summary" hidden></div>
           <ul id="preflight-messages" class="preflight-list"></ul>
         </div>
         <details class="form-card" data-advanced-panel>
           <summary><span><i class="ri-flashlight-line"></i><span data-i18n="advanced.title">高级 API 设置</span></span></summary>
-        <div id="api-box" class="api-box" hidden>
-          <div class="api-box-head api-box-title">
+          <div id="api-box" class="api-box" hidden>
+            <div class="api-box-head api-box-title">
+              <div>
+                <strong data-i18n="advanced.api_title">AI 接口配置</strong>
+                <span id="provider-badge" class="pill provider-badge">AI</span>
+                <a id="api-key-link" href="#" target="_blank" rel="noopener" class="btn-key-apply" hidden>申请 Key <i class="ri-external-link-line"></i></a>
+              </div>
             <div>
-              <strong data-i18n="advanced.api_title">AI 接口配置</strong>
-              <span id="provider-badge" class="pill provider-badge">AI</span>
-              <a id="api-key-link" href="#" target="_blank" rel="noopener" class="btn-key-apply" hidden>申请 Key <i class="ri-external-link-line"></i></a>
+              <div id="provider-help" class="field-help" data-i18n="advanced.provider_help">选择翻译器后会自动填入推荐 BaseURL 和模型。</div>
+              <div class="doc-jump-row"><button type="button" class="secondary" id="provider-doc-link" data-doc-target="providers"><i class="ri-book-open-line"></i><span>查看翻译器说明</span></button></div>
             </div>
-            <div id="provider-help" class="field-help" data-i18n="advanced.provider_help">选择翻译器后会自动填入推荐 BaseURL 和模型。</div>
-          </div>
+            </div>
           <label class="model-field"><span data-i18n="advanced.model">模型</span>
             <div class="model-row">
               <span class="ghost-select model-select" id="model-select">
@@ -4098,6 +4554,10 @@ INDEX_HTML = r"""<!doctype html>
           <label><span data-i18n="advanced.base_url">BaseURL</span>
             <input name="api_url" id="api_base_url" value="https://api.openai.com/v1">
             <span class="field-help" data-i18n="advanced.base_url_help">填写接口 BaseURL，例如 https://api.openai.com/v1；完整 /chat/completions 或 /messages 也兼容。</span>
+          </label>
+          <label><span>Region</span>
+            <input name="api_region" id="api_region" value="">
+            <span class="field-help">Azure Translator 等服务需要 region，例如 global、eastasia。</span>
           </label>
           <label><span data-i18n="advanced.api_key_env">API Key 环境变量</span>
             <input name="api_key_env" id="api_key_env" value="OPENAI_API_KEY">
@@ -4147,9 +4607,14 @@ INDEX_HTML = r"""<!doctype html>
           <span data-i18n="output.ignore_cache">忽略缓存并重新翻译</span>
         </label>
         <label class="checkline">
+          <input name="ignore_translation_memory" type="checkbox">
+          <span data-i18n="output.ignore_translation_memory">忽略翻译记忆命中</span>
+        </label>
+        <label class="checkline">
           <input name="ignore_preflight_blockers" type="checkbox">
           <span data-i18n="output.ignore_preflight_blockers">忽略预检阻断并继续</span>
         </label>
+        <div class="doc-jump-row"><button type="button" class="secondary" id="output-doc-link" data-doc-target="output-strategy"><i class="ri-book-open-line"></i><span>查看输出策略说明</span></button></div>
         <input type="hidden" name="cache_dir" id="cache_dir">
         <input type="hidden" name="ui_locale" id="ui_locale_field" value="zh_cn">
         <input type="hidden" name="ui_locale_dir" id="ui_locale_dir">
@@ -4185,6 +4650,7 @@ INDEX_HTML = r"""<!doctype html>
             <span data-i18n="history.subtitle">找回最近任务的下载、报告和日志。</span>
           </div>
           <div class="settings-actions">
+            <button type="button" class="secondary" id="history-doc-link" data-doc-target="history-and-report"><i class="ri-book-open-line"></i><span>查看历史说明</span></button>
             <button type="button" class="secondary" id="history-refresh"><i class="ri-refresh-line"></i><span data-i18n="history.refresh">刷新</span></button>
           </div>
         </div>
@@ -4222,6 +4688,75 @@ INDEX_HTML = r"""<!doctype html>
             </div>
             <div id="history-list" class="results"></div>
           </section>
+        </div>
+      </div>
+    </section>
+    <section class="settings-page" id="docs-panel" data-main-view="docs" hidden>
+      <div class="settings-card">
+        <div class="settings-head">
+          <div>
+            <strong data-i18n="nav.docs">文档</strong>
+            <span>快速开始、翻译器选择与关键流程说明。</span>
+          </div>
+        </div>
+        <div class="docs-page-shell docs-layout">
+          <div class="docs-stage">
+            <aside class="docs-sidebar">
+              <div class="docs-sidebar-head">
+                <strong><i class="ri-menu-search-line"></i><span>文档目录</span></strong>
+                <span>按标题、摘要、关键词和适用范围筛选。</span>
+              </div>
+              <div class="docs-sidebar-body">
+                <label class="settings-field docs-search"><span>搜索文档</span>
+                  <input class="ghost-input" id="docs-search" placeholder="按标题、摘要或关键词筛选" autocomplete="off" spellcheck="false">
+                </label>
+                <div id="docs-list" class="docs-list compact"></div>
+              </div>
+            </aside>
+            <section class="docs-detail">
+              <div class="docs-detail-head">
+                <strong><i class="ri-file-text-line"></i><span id="docs-title">请选择文档</span></strong>
+                <span>文档详情</span>
+              </div>
+              <div class="docs-body">
+                <div id="docs-meta" class="docs-meta"></div>
+                <div id="docs-content" class="docs-content"></div>
+                <div class="docs-related-block">
+                  <strong>相关主题</strong>
+                  <div id="docs-related" class="docs-related"></div>
+                </div>
+              </div>
+            </section>
+          </div>
+        </div>
+      </div>
+    </section>
+    <section class="settings-page" id="help-panel" data-main-view="help" hidden>
+      <div class="settings-card">
+        <div class="settings-head">
+          <div>
+            <strong data-i18n="nav.help">帮助</strong>
+            <span>按场景快速找到最常见的问题与对应文档。</span>
+          </div>
+        </div>
+        <div class="docs-page-shell">
+          <div class="help-topic-grid">
+            <div class="help-topic-column">
+              <section class="settings-section">
+                <div class="settings-section-title"><i class="ri-questionnaire-line"></i><span data-i18n="nav.help">问题场景</span></div>
+                <div id="help-topics" class="help-topic-list"></div>
+              </section>
+            </div>
+            <div class="help-topic-column">
+              <section class="help-preview-card">
+                <div class="help-preview-head">
+                  <strong><i class="ri-compass-3-line"></i><span>推荐阅读</span></strong>
+                  <span>从高频问题开始</span>
+                </div>
+                <div id="help-doc-preview"></div>
+              </section>
+            </div>
+          </div>
         </div>
       </div>
     </section>
@@ -4282,6 +4817,7 @@ INDEX_HTML = r"""<!doctype html>
               <button type="button" class="secondary" id="settings-memory-clear-scope"><i class="ri-filter-off-line"></i><span data-i18n="settings.memory_clear_scope">清理当前配置</span></button>
               <button type="button" class="danger" id="settings-memory-clear"><i class="ri-delete-bin-6-line"></i><span data-i18n="settings.memory_clear">清理记忆</span></button>
             </div>
+            <div class="doc-jump-row"><button type="button" class="secondary" id="memory-doc-link" data-doc-target="translation-memory"><i class="ri-book-open-line"></i><span>查看翻译记忆说明</span></button></div>
           </section>
           <section class="settings-section" id="settings-locale-section" aria-labelledby="settings-locale-title">
             <div class="settings-section-title" id="settings-locale-title"><i class="ri-translate-2"></i><span data-i18n="settings.language_section">界面语言</span></div>
@@ -4400,6 +4936,8 @@ INDEX_HTML = r"""<!doctype html>
     const settingsOpen = document.getElementById('settings-open');
     const settingsDialog = document.getElementById('settings-page');
     const historyPanel = document.getElementById('history-panel');
+    const docsPanel = document.getElementById('docs-panel');
+    const helpPanel = document.getElementById('help-panel');
     const historyList = document.getElementById('history-list');
     const historyCount = document.getElementById('history-count');
     const historyRefresh = document.getElementById('history-refresh');
@@ -4428,6 +4966,14 @@ INDEX_HTML = r"""<!doctype html>
     const settingsMemoryCompact = document.getElementById('settings-memory-compact');
     const settingsMemoryClearScope = document.getElementById('settings-memory-clear-scope');
     const settingsMemoryClear = document.getElementById('settings-memory-clear');
+    const docsSearch = document.getElementById('docs-search');
+    const docsList = document.getElementById('docs-list');
+    const docsTitle = document.getElementById('docs-title');
+    const docsMeta = document.getElementById('docs-meta');
+    const docsContent = document.getElementById('docs-content');
+    const docsRelated = document.getElementById('docs-related');
+    const helpTopics = document.getElementById('help-topics');
+    const helpDocPreview = document.getElementById('help-doc-preview');
     const settingsUiLocaleRefresh = document.getElementById('settings-ui-locale-refresh');
     const settingsUiLocaleDefault = document.getElementById('settings-ui-locale-default');
     const settingsUiLocaleImport = document.getElementById('settings-ui-locale-import');
@@ -4493,6 +5039,9 @@ INDEX_HTML = r"""<!doctype html>
       nextRowId: 1
     };
     let historyRecords = [];
+    let docsIndex = [];
+    let activeDocSlug = '';
+    let activeHelpSlug = 'quick-start';
     let languageSearchDebounce = 0;
     let reportSearchDebounce = 0;
     let hardcodedReportSearchDebounce = 0;
@@ -4593,6 +5142,7 @@ INDEX_HTML = r"""<!doctype html>
     const apiBaseUrl = document.getElementById('api_base_url');
     const apiKey = document.getElementById('api_key');
     const apiKeyToggle = document.getElementById('api-key-toggle');
+    const apiRegion = document.getElementById('api_region');
     const apiKeyEnv = document.getElementById('api_key_env');
     const model = document.getElementById('model');
     const modelSelectShell = document.getElementById('model-select');
@@ -4757,12 +5307,36 @@ INDEX_HTML = r"""<!doctype html>
       ["zlm_arab", "بهاس ملايو"]
     ];
     const providerPresets = {
+      'argos': {
+        label: 'Argos Translate（离线）',
+        url: '',
+        model: 'argos',
+        env: '',
+        help: '本地离线翻译，无需联网和 API Key，但需要预先安装 argostranslate 和对应语言包。',
+        keyUrl: ''
+      },
+      'azure-translator': {
+        label: 'Azure Translator',
+        url: 'https://api.cognitive.microsofttranslator.com',
+        model: 'azure-translator',
+        env: 'AZURE_TRANSLATOR_KEY',
+        help: 'Azure 官方翻译服务，需要 API Key，某些资源类型还需要 region。',
+        keyUrl: ''
+      },
       'deep-free': {
         label: 'Deep Translator（免费试用）',
         url: '',
         model: 'deep-free',
         env: '',
         help: '免费公共翻译源，无需 API Key。可能因网络或第三方限制失败；失败条目会回退为原文并在报告中标记。',
+        keyUrl: ''
+      },
+      'libretranslate': {
+        label: 'LibreTranslate（自托管/托管）',
+        url: 'http://127.0.0.1:5000',
+        model: 'libretranslate',
+        env: '',
+        help: '开源翻译服务，可连接自托管或托管实例；适合做可控的免费 provider。',
         keyUrl: ''
       },
       'openai-compatible': {
@@ -4791,9 +5365,21 @@ INDEX_HTML = r"""<!doctype html>
         title: '离线规则翻译',
         body: '无需联网、结果稳定，但覆盖范围有限，更适合术语替换和基础规则翻译。',
       },
+      'argos': {
+        title: '本地离线翻译',
+        body: '不依赖在线服务，但必须预先安装 Argos Translate 依赖与语言包，覆盖范围和质量受本地模型限制。',
+      },
+      'azure-translator': {
+        title: 'Azure 官方翻译服务',
+        body: '稳定性较好，需要 Azure Key，部分资源类型还需要正确填写 region。',
+      },
       'deep-free': {
         title: '免费公共翻译源',
         body: '无需 API Key，适合零配置试用。可能受网络、限流和第三方服务变动影响；失败条目会回退为原文。',
+      },
+      'libretranslate': {
+        title: '开源翻译服务',
+        body: '适合连接自托管或固定托管实例，可控性高于公共免费网页源，但实例可用性取决于部署环境。',
       },
       'openai-compatible': {
         title: 'AI 接口',
@@ -5563,6 +6149,7 @@ INDEX_HTML = r"""<!doctype html>
       return {
         provider: provider.value,
         api_url: document.getElementById('api_base_url')?.value || '',
+        api_region: document.getElementById('api_region')?.value || '',
         model: document.getElementById('model')?.value || '',
         api_key_env: document.getElementById('api_key_env')?.value || '',
         api_concurrency: Number(data.get('api_concurrency') || '2'),
@@ -5573,6 +6160,7 @@ INDEX_HTML = r"""<!doctype html>
         overwrite_existing: data.get('overwrite_existing') === 'on',
         skip_translated: data.get('skip_translated') === 'on',
         ignore_cache: data.get('ignore_cache') === 'on',
+        ignore_translation_memory: data.get('ignore_translation_memory') === 'on',
         ignore_preflight_blockers: data.get('ignore_preflight_blockers') === 'on',
         scan_hardcoded: data.get('scan_hardcoded') === 'on'
       };
@@ -5618,6 +6206,9 @@ INDEX_HTML = r"""<!doctype html>
       if (config.api_url !== undefined) {
         document.getElementById('api_base_url').value = config.api_url || '';
       }
+      if (config.api_region !== undefined && document.getElementById('api_region')) {
+        document.getElementById('api_region').value = config.api_region || '';
+      }
       if (config.api_key_env !== undefined) {
         document.getElementById('api_key_env').value = config.api_key_env || '';
       }
@@ -5643,6 +6234,7 @@ INDEX_HTML = r"""<!doctype html>
       setCheckbox('overwrite_existing', config.overwrite_existing);
       setCheckbox('skip_translated', config.skip_translated);
       setCheckbox('ignore_cache', config.ignore_cache);
+      setCheckbox('ignore_translation_memory', config.ignore_translation_memory);
       setCheckbox('ignore_preflight_blockers', config.ignore_preflight_blockers);
       setCheckbox('scan_hardcoded', config.scan_hardcoded);
       refreshSelectMenusForCurrentLocale();
@@ -5715,6 +6307,7 @@ INDEX_HTML = r"""<!doctype html>
         pack_format: Number(packFormat?.value || '15'),
         overwrite_existing: Boolean(form.querySelector('input[name="overwrite_existing"]')?.checked),
         skip_translated: Boolean(form.querySelector('input[name="skip_translated"]')?.checked),
+        ignore_translation_memory: Boolean(form.querySelector('input[name="ignore_translation_memory"]')?.checked),
       };
     }
 
@@ -6563,13 +7156,47 @@ INDEX_HTML = r"""<!doctype html>
       modelFetchDebounce = window.setTimeout(() => refreshModelList(true), delay);
     }
 
-    function setProviderTestStatus(message, kind = '') {
+    function providerTestHelpSlug(payload) {
+      if (!payload || payload.ok) {
+        return '';
+      }
+      const providerName = String(payload.provider || '');
+      const errorType = String(payload.error_type || '').toLowerCase();
+      if (providerName === 'argos' && (errorType === 'missing_dependency' || errorType === 'missing_package')) {
+        return 'providers';
+      }
+      if (errorType === 'auth' || errorType === 'model_not_found') {
+        return 'providers';
+      }
+      if (providerName === 'deep-free' && errorType === 'network') {
+        return 'faq';
+      }
+      if (providerName === 'libretranslate' && errorType === 'network') {
+        return 'providers';
+      }
+      if (providerName === 'azure-translator' && errorType === 'runtime') {
+        return 'providers';
+      }
+      return 'faq';
+    }
+
+    function renderProviderTestStatus(message, kind = '', helpSlug = '') {
       if (!providerTestStatus) {
         return;
       }
-      providerTestStatus.textContent = message || '';
+      if (kind === 'error' && helpSlug) {
+        providerTestStatus.innerHTML = `<span>${escapeHtml(message || '')}</span><button type="button" class="secondary" data-provider-test-help data-doc-target="${escapeHtml(helpSlug)}"><i class="ri-book-open-line"></i><span>查看处理说明</span></button>`;
+      } else {
+        providerTestStatus.textContent = message || '';
+      }
       providerTestStatus.classList.toggle('success', kind === 'success');
       providerTestStatus.classList.toggle('error', kind === 'error');
+      providerTestStatus.classList.toggle('with-help', kind === 'error' && Boolean(helpSlug));
+      bindDocTriggers();
+    }
+
+    function setProviderTestStatus(message, kind = '', helpSlug = '') {
+      renderProviderTestStatus(message, kind, helpSlug);
     }
 
     async function testProviderConnection() {
@@ -6591,13 +7218,16 @@ INDEX_HTML = r"""<!doctype html>
             base_url: apiBaseUrl.value,
             api_key: apiKey.value,
             api_key_env: apiKeyEnv.value,
+            api_region: apiRegion ? apiRegion.value : '',
             model: model.value,
             api_timeout: document.getElementById('api_timeout')?.value || '10'
           })
         });
         const payload = await response.json();
         if (!response.ok || !payload.ok) {
-          throw new Error(payload.message || payload.error || ui('advanced.test_provider_failed', '连接测试失败'));
+          const error = new Error(payload.message || payload.error || ui('advanced.test_provider_failed', '连接测试失败'));
+          error.helpSlug = providerTestHelpSlug(payload);
+          throw error;
         }
         setProviderTestStatus(
           formatUi('advanced.test_provider_success', '{provider} / {model} 连接正常，耗时 {latency}ms', {
@@ -6610,7 +7240,8 @@ INDEX_HTML = r"""<!doctype html>
       } catch (error) {
         setProviderTestStatus(
           formatUi('advanced.test_provider_failed', '连接测试失败：{message}', { message: error.message || String(error) }),
-          'error'
+          'error',
+          error.helpSlug || 'faq'
         );
       } finally {
         providerTest.disabled = false;
@@ -6697,6 +7328,9 @@ INDEX_HTML = r"""<!doctype html>
       renderProviderRiskBanner();
       if (resetPreset) {
         apiBaseUrl.value = preset.url;
+        if (apiRegion) {
+          apiRegion.value = provider.value === 'azure-translator' ? 'global' : '';
+        }
         apiKeyEnv.value = preset.env;
         syncModelPreset(preset.model);
         scheduleModelFetch(250);
@@ -6821,7 +7455,8 @@ INDEX_HTML = r"""<!doctype html>
         const body = payload.ok
           ? `预检已通过，可开始生成。待处理 ${summary.output_files || 0} 个预计输出，消息 ${messages.length} 条。`
           : `预检发现 ${blockingCount} 条阻断消息，请先修正后再继续。`;
-        preflightCallout.innerHTML = `<strong>${escapeHtml(headline)}</strong><p>${escapeHtml(body)}</p>`;
+        preflightCallout.innerHTML = `<strong>${escapeHtml(headline)}</strong><p>${escapeHtml(body)}</p><div class="doc-jump-row"><button type="button" class="secondary" id="preflight-doc-link" data-doc-target="preflight"><i class="ri-book-open-line"></i><span>查看预检说明</span></button></div>`;
+        bindDocTriggers();
       }
       syncSubmitStateFromPreflight(payload);
     }
@@ -6857,7 +7492,8 @@ INDEX_HTML = r"""<!doctype html>
         title: '当前翻译器',
         body: '请根据当前任务规模和稳定性要求选择合适的翻译方案。',
       };
-      providerRiskBanner.innerHTML = `<strong>${escapeHtml(meta.title)}</strong><p>${escapeHtml(meta.body)}</p>`;
+      providerRiskBanner.innerHTML = `<strong>${escapeHtml(meta.title)}</strong><p>${escapeHtml(meta.body)}</p><div class="doc-jump-row"><button type="button" class="secondary" data-doc-target="providers"><i class="ri-book-open-line"></i><span>查看翻译器说明</span></button></div>`;
+      bindDocTriggers();
     }
 
     async function runPreflight() {
@@ -7093,7 +7729,9 @@ INDEX_HTML = r"""<!doctype html>
       closeAllSelectMenus();
       const isSettingsView = view === 'settings';
       const isHistoryView = view === 'history';
-      const isMainUtilityView = isSettingsView || isHistoryView;
+      const isDocsView = view === 'docs';
+      const isHelpView = view === 'help';
+      const isMainUtilityView = isSettingsView || isHistoryView || isDocsView || isHelpView;
       const settingsPage = document.getElementById('settings-page');
       document.querySelector('.config-panel')?.toggleAttribute('hidden', isMainUtilityView);
       document.querySelector('.results-panel')?.toggleAttribute('hidden', isMainUtilityView);
@@ -7104,6 +7742,18 @@ INDEX_HTML = r"""<!doctype html>
         historyPanel.hidden = !isHistoryView;
         if (isHistoryView) {
           loadJobHistory();
+        }
+      }
+      if (docsPanel) {
+        docsPanel.hidden = !isDocsView;
+        if (isDocsView) {
+          loadDocsIndex();
+        }
+      }
+      if (helpPanel) {
+        helpPanel.hidden = !isHelpView;
+        if (isHelpView) {
+          loadDocsIndex().then(() => renderHelpTopics());
         }
       }
       document.querySelectorAll('.side-nav button[data-view], .top-tabs button[data-view]').forEach(button => {
@@ -7126,9 +7776,257 @@ INDEX_HTML = r"""<!doctype html>
         renderResultShell();
       }
     }
+
+    async function openDocView(slug) {
+      switchView('docs');
+      await loadDocsIndex();
+      await loadDocDetail(slug);
+    }
+
+    async function loadDocsIndex() {
+      const response = await fetch('/api/docs');
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error || '文档读取失败');
+      }
+      docsIndex = Array.isArray(payload.docs) ? payload.docs : [];
+      renderDocsList(docsSearch.value);
+      if (docsIndex.length && !activeDocSlug) {
+        await loadDocDetail(docsIndex[0].slug);
+      }
+      if (helpPanel && !helpPanel.hidden) {
+        renderHelpTopics();
+      }
+    }
+
+    function docCategoryLabel(category) {
+      const labels = {
+        start: '快速上手',
+        providers: '翻译器',
+        workflow: '工作流',
+        operations: '结果与运维',
+        support: '常见问题',
+      };
+      return labels[String(category || '').trim()] || '帮助文档';
+    }
+
+    function appliesToLabel(value) {
+      const text = String(value || '').trim();
+      if (!text) {
+        return '';
+      }
+      const direct = {
+        workspace: '工作区',
+        history: '任务历史',
+        report: '翻译报告',
+        'api-log': 'API 日志',
+        settings: '设置',
+        hardcoded: '硬编码',
+        'feature:preflight': '预检',
+        'feature:output-policy': '输出策略',
+        'feature:translation-memory': '翻译记忆',
+        'feature:hardcoded-scan': '硬编码扫描',
+      };
+      if (direct[text]) {
+        return direct[text];
+      }
+      if (text.startsWith('provider:')) {
+        const providerValue = text.slice('provider:'.length);
+        return `翻译器 · ${ui(`provider.${providerValue}`, providerValue)}`;
+      }
+      return text;
+    }
+
+    function findDocBySlug(slug) {
+      return docsIndex.find(item => item.slug === slug) || null;
+    }
+
+    function renderDocsList(query = '') {
+      if (!docsList) {
+        return;
+      }
+      const normalizedQuery = String(query || '').trim().toLowerCase();
+      const rows = docsIndex.filter(item => {
+        if (!normalizedQuery) {
+          return true;
+        }
+        const haystack = [
+          item.title || '',
+          item.summary || '',
+          ...(Array.isArray(item.keywords) ? item.keywords : []),
+          ...(Array.isArray(item.related_topics) ? item.related_topics : []),
+          ...(Array.isArray(item.applies_to) ? item.applies_to : []),
+        ].join(' ').toLowerCase();
+        return haystack.includes(normalizedQuery);
+      });
+      docsList.innerHTML = rows.map(item => `
+        <button type="button" class="secondary docs-link ${item.slug === activeDocSlug ? 'active' : ''}" data-doc-slug="${escapeHtml(item.slug)}">
+          <strong>${escapeHtml(item.title || item.slug)}</strong>
+          <span>${escapeHtml(item.summary || '')}</span>
+        </button>
+      `).join('') || `<div class="empty">暂无匹配文档。</div>`;
+      docsList.querySelectorAll('[data-doc-slug]').forEach(button => {
+        button.addEventListener('click', () => loadDocDetail(button.dataset.docSlug));
+      });
+    }
+
+    function renderDocMeta(payload) {
+      if (!docsMeta) {
+        return;
+      }
+      const chips = [];
+      if (payload?.category) {
+        chips.push(`<span class="docs-chip"><i class="ri-folders-line"></i><span>${escapeHtml(docCategoryLabel(payload.category))}</span></span>`);
+      }
+      (Array.isArray(payload?.applies_to) ? payload.applies_to.slice(0, 4) : []).forEach(value => {
+        chips.push(`<span class="docs-chip"><i class="ri-focus-3-line"></i><span>${escapeHtml(appliesToLabel(value))}</span></span>`);
+      });
+      docsMeta.innerHTML = chips.join('') || `<span class="docs-chip"><i class="ri-book-open-line"></i><span>内置文档</span></span>`;
+    }
+
+    function renderRelatedDocs(relatedTopics = []) {
+      if (!docsRelated) {
+        return;
+      }
+      const rows = (Array.isArray(relatedTopics) ? relatedTopics : [])
+        .map(slug => findDocBySlug(slug))
+        .filter(Boolean);
+      docsRelated.innerHTML = rows.length
+        ? rows.map(item => `<button type="button" class="docs-chip" data-related-doc="${escapeHtml(item.slug)}"><i class="ri-links-line"></i><span>${escapeHtml(item.title)}</span></button>`).join('')
+        : `<span class="docs-chip"><i class="ri-information-line"></i><span>当前文档没有额外关联主题</span></span>`;
+      docsRelated.querySelectorAll('[data-related-doc]').forEach(button => {
+        button.addEventListener('click', () => loadDocDetail(button.dataset.relatedDoc));
+      });
+    }
+
+    async function loadDocDetail(slug) {
+      const response = await fetch(`/api/docs/${encodeURIComponent(slug)}`);
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error || '文档读取失败');
+      }
+      activeDocSlug = payload.slug || slug;
+      if (docsTitle) {
+        docsTitle.textContent = payload.title || slug;
+      }
+      renderDocMeta(payload);
+      if (docsContent) {
+        docsContent.innerHTML = payload.html || '';
+        docsContent.querySelectorAll('a[href^="#/docs/"]').forEach(link => {
+          link.addEventListener('click', event => {
+            event.preventDefault();
+            const href = link.getAttribute('href') || '';
+            const nextSlug = href.replace(/^#\/docs\//, '').trim();
+            if (nextSlug) {
+              openDocView(nextSlug).catch(error => {
+                statusBox.className = 'status error';
+                statusBox.textContent = error.message || '文档读取失败';
+              });
+            }
+          });
+        });
+      }
+      renderRelatedDocs(payload.related_topics);
+      renderDocsList(docsSearch.value);
+    }
+
+    function renderHelpPreview(slug = 'quick-start') {
+      if (!helpDocPreview) {
+        return;
+      }
+      activeHelpSlug = slug || 'quick-start';
+      const item = findDocBySlug(slug) || docsIndex[0];
+      if (!item) {
+        helpDocPreview.innerHTML = `<div class="empty">暂无帮助预览。</div>`;
+        return;
+      }
+      const applies = (Array.isArray(item.applies_to) ? item.applies_to.slice(0, 3) : [])
+        .map(value => `<span class="docs-chip"><i class="ri-focus-3-line"></i><span>${escapeHtml(appliesToLabel(value))}</span></span>`)
+        .join('');
+      const related = (Array.isArray(item.related_topics) ? item.related_topics : [])
+        .map(nextSlug => findDocBySlug(nextSlug))
+        .filter(Boolean)
+        .slice(0, 2)
+        .map(next => `<button type="button" class="docs-chip" data-help-related="${escapeHtml(next.slug)}"><i class="ri-links-line"></i><span>${escapeHtml(next.title)}</span></button>`)
+        .join('');
+      helpDocPreview.innerHTML = `
+        <div class="help-preview-body compact">
+          <span class="help-preview-kicker"><i class="ri-compass-3-line"></i><span>${escapeHtml(docCategoryLabel(item.category))}</span></span>
+          <h3>${escapeHtml(item.title)}</h3>
+          <p class="help-preview-summary">${escapeHtml(item.summary || '从这里进入对应文档，查看完整说明和处理步骤。')}</p>
+          <div class="docs-meta">${applies || `<span class="docs-chip"><i class="ri-book-open-line"></i><span>${escapeHtml(docCategoryLabel(item.category))}</span></span>`}</div>
+          <div class="help-preview-actions compact">
+            <button type="button" class="secondary" data-help-open="${escapeHtml(item.slug)}"><i class="ri-book-open-line"></i><span>打开完整文档</span></button>
+          </div>
+          <div class="docs-related-block">
+            <strong>继续查看</strong>
+            <div class="docs-related">${related || `<span class="docs-chip"><i class="ri-information-line"></i><span>暂无更多推荐</span></span>`}</div>
+          </div>
+        </div>
+      `;
+      helpDocPreview.querySelectorAll('[data-help-open]').forEach(button => {
+        button.addEventListener('click', () => openDocView(button.dataset.helpOpen));
+      });
+      helpDocPreview.querySelectorAll('[data-help-related]').forEach(button => {
+        button.addEventListener('click', () => openDocView(button.dataset.helpRelated));
+      });
+    }
+
+    function renderHelpTopics() {
+      if (!helpTopics) {
+        return;
+      }
+      const topics = [
+        { title: '第一次使用', summary: '先看快速开始，按最小流程跑通。', slug: 'quick-start' },
+        { title: '我不知道选哪个翻译器', summary: '对比 glossary、deep-free、Argos、Azure 和 AI 接口。', slug: 'providers' },
+        { title: '我看不懂输出策略', summary: '理解缓存、翻译记忆和硬编码扫描等选项。', slug: 'output-strategy' },
+        { title: '预检为什么阻断', summary: '先理解预检、阻断和警告分别代表什么。', slug: 'preflight' },
+        { title: '为什么结果没变化', summary: '先检查缓存、翻译记忆和当前配置 scope。', slug: 'translation-memory' },
+        { title: '历史任务和报告怎么看', summary: '找回下载、报告和 API 日志，判断是否需要重试。', slug: 'history-and-report' },
+        { title: '硬编码英文为什么没进资源包', summary: '确认是否属于资源包外文本，以及后续补丁路线。', slug: 'hardcoded' },
+        { title: '常见问题', summary: '集中查看连接失败、结果缺失和文件不存在的常见原因。', slug: 'faq' },
+      ];
+      helpTopics.innerHTML = topics.map(item => `
+        <button type="button" class="secondary docs-link help-topic-link ${item.slug === activeHelpSlug ? 'active' : ''}" data-help-doc="${escapeHtml(item.slug)}">
+          <span class="help-topic-category">${escapeHtml(docCategoryLabel(findDocBySlug(item.slug)?.category || ''))}</span>
+          <strong>${escapeHtml(item.title)}</strong>
+          <span>${escapeHtml(item.summary)}</span>
+        </button>
+      `).join('');
+      helpTopics.querySelectorAll('[data-help-doc]').forEach(button => {
+        button.addEventListener('click', () => {
+          activeHelpSlug = button.dataset.helpDoc || 'quick-start';
+          renderHelpTopics();
+          openDocView(button.dataset.helpDoc);
+        });
+      });
+      renderHelpPreview(activeHelpSlug || topics[0]?.slug || 'quick-start');
+    }
+    function bindDocTriggers() {
+      document.querySelectorAll('[data-doc-target]').forEach(button => {
+        if (button.dataset.docBound === 'true') {
+          return;
+        }
+        button.dataset.docBound = 'true';
+        button.addEventListener('click', () => {
+          const slug = button.dataset.docTarget || '';
+          if (!slug) {
+            return;
+          }
+          openDocView(slug).catch(error => {
+            statusBox.className = 'status error';
+            statusBox.textContent = error.message || '文档读取失败';
+          });
+        });
+      });
+    }
     document.querySelectorAll('[data-view]').forEach(button => {
       button.addEventListener('click', () => switchView(button.dataset.view));
     });
+    bindDocTriggers();
+    if (docsSearch) {
+      docsSearch.addEventListener('input', () => renderDocsList(docsSearch.value));
+    }
     if (historyRefresh) {
       historyRefresh.addEventListener('click', loadJobHistory);
     }
@@ -7171,10 +8069,11 @@ INDEX_HTML = r"""<!doctype html>
       }
       historyList.innerHTML = `
         <table>
-          <thead><tr><th>${escapeHtml(ui('history.time', '时间'))}</th><th>${escapeHtml(ui('history.kind', '输入类型'))}</th><th>${escapeHtml(ui('history.status', '状态'))}</th><th>${escapeHtml(ui('result.provider', 'Provider'))}</th><th>${escapeHtml(ui('history.counts', '成功/失败'))}</th><th>${escapeHtml(ui('history.downloads', '下载'))}</th></tr></thead>
+          <thead><tr><th>${escapeHtml(ui('history.time', '时间'))}</th><th>${escapeHtml(ui('history.kind', '输入类型'))}</th><th>${escapeHtml(ui('history.status', '状态'))}</th><th>${escapeHtml(ui('result.provider', 'Provider'))}</th><th>${escapeHtml(ui('history.counts', '成功/失败'))}</th><th>${escapeHtml(ui('history.downloads', '下载'))}</th><th>${escapeHtml(ui('nav.help', '帮助'))}</th></tr></thead>
           <tbody>${rows.map(renderJobHistoryRow).join('')}</tbody>
         </table>
       `;
+      bindDocTriggers();
     }
 
     function renderJobHistoryRow(record) {
@@ -7196,6 +8095,7 @@ INDEX_HTML = r"""<!doctype html>
           <td>${escapeHtml(record.provider || '')}<br><span class="muted">${escapeHtml(record.model || '')}</span></td>
           <td>${escapeHtml(record.success_count || 0)} / ${escapeHtml(record.failure_count || 0)}</td>
           <td>${links || escapeHtml(ui('history.no_downloads', '无可用下载'))}</td>
+          <td><button type="button" class="secondary" data-doc-target="history-and-report"><i class="ri-book-open-line"></i><span>查看说明</span></button></td>
         </tr>
       `;
     }
@@ -8422,6 +9322,7 @@ INDEX_HTML = r"""<!doctype html>
       if (exportFailedJsonButton) {
         exportFailedJsonButton.addEventListener('click', () => exportFailedItemsJson());
       }
+      bindDocTriggers();
     }
 
     function renderReportContent() {
@@ -8729,6 +9630,7 @@ INDEX_HTML = r"""<!doctype html>
         <div class="view-frame">
           <div class="view-head">
             <div><strong>${escapeHtml(ui('result.report', '翻译报告'))}</strong><div class="muted">${escapeHtml(ui('result.report_subtitle', '当前任务内嵌报告视图'))}</div></div>
+            <div class="toolbar"><button type="button" class="secondary" id="report-doc-link" data-doc-target="history-and-report"><i class="ri-book-open-line"></i><span>查看报告说明</span></button></div>
           </div>
           <div class="view-body">
             <div class="toolbar">
@@ -8854,6 +9756,7 @@ INDEX_HTML = r"""<!doctype html>
           <div class="view-head">
             <div><strong>${escapeHtml(ui('result.api_log', 'API 调试日志'))}</strong><div class="muted">${escapeHtml(ui('result.api_log_subtitle', '请求、响应和重试记录，密钥已脱敏'))}</div></div>
             <div class="toolbar">
+              <button type="button" class="secondary" id="api-log-doc-link" data-doc-target="history-and-report"><i class="ri-book-open-line"></i><span>查看日志说明</span></button>
               <button type="button" id="export-api-log"><i class="ri-download-2-line"></i><span>${escapeHtml(ui('result.export_json', '导出 JSON'))}</span></button>
             </div>
           </div>
@@ -9748,6 +10651,19 @@ def make_handler(workdir: Path):
             if parsed.path == "/api/jobs":
                 self._send_json({"ok": True, "jobs": read_job_history(workdir)})
                 return
+            if parsed.path == "/api/docs":
+                try:
+                    self._send_json({"ok": True, "docs": list_help_docs(PROJECT_ROOT)})
+                except Exception as exc:
+                    self._send_json({"ok": False, "error": str(exc)}, status=500)
+                return
+            if parsed.path.startswith("/api/docs/"):
+                try:
+                    slug = unquote(parsed.path.removeprefix("/api/docs/"))
+                    self._send_json({"ok": True, **read_help_doc(PROJECT_ROOT, slug)})
+                except Exception as exc:
+                    self._send_json({"ok": False, "error": str(exc)}, status=404)
+                return
             if parsed.path == "/api/glossary":
                 try:
                     terms = read_user_glossary(workdir)
@@ -9992,6 +10908,7 @@ def make_handler(workdir: Path):
                 api_key_env=str(payload.get("api_key_env", preset.api_key_env) or preset.api_key_env),
                 model=str(payload.get("model", preset.model) or preset.model),
                 timeout=max(1.0, min(60.0, float(payload.get("api_timeout", "10") or "10"))),
+                api_region=str(payload.get("api_region", "") or ""),
             )
 
         def _handle_clear_cache(self) -> dict[str, Any]:
@@ -10275,6 +11192,7 @@ def make_handler(workdir: Path):
                 overwrite_existing=fields.get("overwrite_existing") == "on",
                 skip_translated=fields.get("skip_translated") == "on",
                 ignore_cache=fields.get("ignore_cache") == "on",
+                ignore_translation_memory=fields.get("ignore_translation_memory") == "on",
                 scan_hardcoded=fields.get("scan_hardcoded") == "on",
                 hardcoded_limit=5000,
                 pack_format=int(fields.get("pack_format", "15") or "15"),
@@ -10306,6 +11224,7 @@ def make_handler(workdir: Path):
                     "api_timeout": args.api_timeout,
                     "model": args.model,
                     "ignore_cache": args.ignore_cache,
+                    "ignore_translation_memory": args.ignore_translation_memory,
                     "cache_dir": str(cache_root),
                     "translation_memory_path": args.translation_memory_path,
                 },
@@ -10602,6 +11521,7 @@ def make_handler(workdir: Path):
                 glossary=str(glossary_path) if glossary_path else None,
                 overwrite_existing=fields.get("overwrite_existing") == "on",
                 ignore_cache=fields.get("ignore_cache") == "on",
+                ignore_translation_memory=fields.get("ignore_translation_memory") == "on",
                 output_mode=fields.get("ftbquests_output_mode", "both") or "both",
                 api_url=fields.get("api_url", "https://api.openai.com/v1"),
                 api_key_env=fields.get("api_key_env", "OPENAI_API_KEY") or "OPENAI_API_KEY",
@@ -10631,6 +11551,7 @@ def make_handler(workdir: Path):
                     "api_timeout": args.api_timeout,
                     "model": args.model,
                     "ignore_cache": args.ignore_cache,
+                    "ignore_translation_memory": args.ignore_translation_memory,
                     "cache_dir": str(cache_root),
                     "translation_memory_path": args.translation_memory_path,
                 },
@@ -10839,6 +11760,177 @@ def fetch_provider_models(provider: str, base_url: str, api_key: str, api_key_en
     return parse_models_response(response_text)
 
 
+def help_docs_dir(root: Path) -> Path:
+    return root / HELP_DOCS_DIRNAME
+
+
+def _help_docs_index_path(root: Path) -> Path:
+    return help_docs_dir(root) / HELP_DOCS_INDEX_FILENAME
+
+
+def _read_help_docs_index(root: Path) -> list[dict[str, Any]]:
+    path = _help_docs_index_path(root)
+    if not path.is_file():
+        return []
+    payload = json.loads(path.read_text(encoding="utf-8-sig"))
+    docs = payload.get("docs", [])
+    if not isinstance(docs, list):
+        raise ValueError("帮助文档索引格式无效")
+    return [item for item in docs if isinstance(item, dict)]
+
+
+def list_help_docs(root: Path) -> list[dict[str, Any]]:
+    docs: list[dict[str, Any]] = []
+    for item in _read_help_docs_index(root):
+        slug = normalize_help_doc_slug(str(item.get("slug", "") or ""))
+        docs.append(
+            {
+                "slug": slug,
+                "title": str(item.get("title", slug) or slug),
+                "summary": str(item.get("summary", "") or ""),
+                "category": str(item.get("category", "") or ""),
+                "keywords": [str(keyword) for keyword in item.get("keywords", []) if str(keyword or "").strip()],
+                "related_topics": [normalize_help_doc_slug(str(topic)) for topic in item.get("related_topics", []) if str(topic or "").strip()],
+                "applies_to": [str(value) for value in item.get("applies_to", []) if str(value or "").strip()],
+            }
+        )
+    return docs
+
+
+def normalize_help_doc_slug(value: str) -> str:
+    slug = str(value or "").strip().lower()
+    if not re.fullmatch(r"[a-z0-9][a-z0-9._-]*", slug):
+        raise ValueError("文档 slug 无效")
+    return slug
+
+
+def read_help_doc(root: Path, slug: str) -> dict[str, Any]:
+    normalized_slug = normalize_help_doc_slug(slug)
+    for item in list_help_docs(root):
+        if item["slug"] != normalized_slug:
+            continue
+        path = help_docs_dir(root) / f"{normalized_slug}.md"
+        if not path.is_file():
+            raise ValueError("文档不存在")
+        content = path.read_text(encoding="utf-8-sig")
+        return {
+            **item,
+            "content": content,
+            "html": render_help_doc_html(content),
+        }
+    raise ValueError("文档不存在")
+
+
+def render_help_doc_html(markdown_text: str) -> str:
+    lines = str(markdown_text or "").splitlines()
+    parts: list[str] = []
+    in_list = False
+    list_tag = "ul"
+    in_code_block = False
+    code_language = ""
+    code_lines: list[str] = []
+    paragraph: list[str] = []
+
+    def render_inline_markdown(text: str) -> str:
+        escaped = html.escape(text)
+        escaped = re.sub(r"`([^`]+)`", lambda match: f"<code>{match.group(1)}</code>", escaped)
+        escaped = re.sub(
+            r"\[([^\]]+)\]\(([^)]+)\)",
+            lambda match: f'<a href="{html.escape(match.group(2), quote=True)}">{match.group(1)}</a>',
+            escaped,
+        )
+        return escaped
+
+    def flush_paragraph() -> None:
+        nonlocal paragraph
+        if not paragraph:
+            return
+        text = " ".join(item.strip() for item in paragraph if item.strip())
+        if text:
+            parts.append(f"<p>{render_inline_markdown(text)}</p>")
+        paragraph = []
+
+    def close_list() -> None:
+        nonlocal in_list, list_tag
+        if in_list:
+            parts.append(f"</{list_tag}>")
+            in_list = False
+            list_tag = "ul"
+
+    def flush_code_block() -> None:
+        nonlocal in_code_block, code_language, code_lines
+        if not in_code_block:
+            return
+        class_attr = f' class="language-{html.escape(code_language, quote=True)}"' if code_language else ""
+        parts.append(f"<pre><code{class_attr}>{html.escape(chr(10).join(code_lines))}</code></pre>")
+        in_code_block = False
+        code_language = ""
+        code_lines = []
+
+    for raw in lines:
+        line = raw.rstrip()
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            flush_paragraph()
+            close_list()
+            if in_code_block:
+                flush_code_block()
+            else:
+                in_code_block = True
+                code_language = stripped.removeprefix("```").strip()
+                code_lines = []
+            continue
+        if in_code_block:
+            code_lines.append(raw)
+            continue
+        if not stripped:
+            flush_paragraph()
+            close_list()
+            continue
+        if stripped.startswith("# "):
+            flush_paragraph()
+            close_list()
+            parts.append(f"<h1>{html.escape(stripped[2:].strip())}</h1>")
+            continue
+        if stripped.startswith("## "):
+            flush_paragraph()
+            close_list()
+            parts.append(f"<h2>{html.escape(stripped[3:].strip())}</h2>")
+            continue
+        if stripped.startswith("### "):
+            flush_paragraph()
+            close_list()
+            parts.append(f"<h3>{html.escape(stripped[4:].strip())}</h3>")
+            continue
+        if stripped.startswith("- "):
+            flush_paragraph()
+            if in_list and list_tag != "ul":
+                close_list()
+            if not in_list:
+                parts.append("<ul>")
+                in_list = True
+                list_tag = "ul"
+            parts.append(f"<li>{render_inline_markdown(stripped[2:].strip())}</li>")
+            continue
+        numbered_match = re.match(r"^(\d+)\.\s+(.*)$", stripped)
+        if numbered_match:
+            flush_paragraph()
+            if in_list and list_tag != "ol":
+                close_list()
+            if not in_list:
+                parts.append("<ol>")
+                in_list = True
+                list_tag = "ol"
+            parts.append(f"<li>{render_inline_markdown(numbered_match.group(2).strip())}</li>")
+            continue
+        paragraph.append(stripped)
+
+    flush_paragraph()
+    close_list()
+    flush_code_block()
+    return "".join(parts)
+
+
 def test_provider_connection(
     provider: str,
     api_url: str,
@@ -10846,8 +11938,17 @@ def test_provider_connection(
     api_key_env: str,
     model: str,
     timeout: float = 10.0,
+    api_region: str = "",
 ) -> dict[str, Any]:
     started_at = time.perf_counter()
+    if provider == "azure-translator":
+        return azure_translator_smoke_test(api_url, api_key, api_region, timeout)
+    if provider == "argos":
+        return argos_smoke_test(timeout)
+    if provider == "deep-free":
+        return deep_free_smoke_test(timeout)
+    if provider == "libretranslate":
+        return libretranslate_smoke_test(api_url, api_key, timeout)
     key = api_key or os.environ.get(api_key_env, "")
     if not key:
         return provider_test_error(
@@ -10909,6 +12010,141 @@ def test_provider_connection(
         "model": model,
         "latency_ms": elapsed_ms(started_at),
         "message": "连接正常",
+    }
+
+
+def deep_free_smoke_test(timeout: float = 10.0) -> dict[str, Any]:
+    started_at = time.perf_counter()
+    translator = DeepFreeTranslator(
+        source_locale="en_us",
+        target_locale="zh_cn",
+        request_timeout=max(1.0, min(60.0, float(timeout or 10.0))),
+    )
+    item = TranslationItem(id="probe", key="probe", text="Hello world", mod_id="system")
+    translations, failures = translator.translate_batch_with_failures([item])
+    message = failures.get("probe")
+    translated = translations.get("probe", "")
+    if not message and translated:
+        return {
+            "ok": True,
+            "provider": "deep-free",
+            "model": "deep-free",
+            "latency_ms": elapsed_ms(started_at),
+            "message": "连接正常",
+        }
+    return {
+        "ok": False,
+        "provider": "deep-free",
+        "model": "deep-free",
+        "error_type": "network" if message else "unknown",
+        "latency_ms": elapsed_ms(started_at),
+        "message": message or "deep-free smoke test failed",
+    }
+
+
+def argos_smoke_test(timeout: float = 10.0) -> dict[str, Any]:
+    started_at = time.perf_counter()
+    translator = ArgosTranslator(
+        source_locale="en_us",
+        target_locale="zh_cn",
+    )
+    item = TranslationItem(id="probe", key="probe", text="Hello world", mod_id="system")
+    translations, failures = translator.translate_batch_with_failures([item])
+    message = failures.get("probe")
+    translated = translations.get("probe", "")
+    if not message and translated:
+        return {
+            "ok": True,
+            "provider": "argos",
+            "model": "argos",
+            "latency_ms": elapsed_ms(started_at),
+            "message": "连接正常",
+        }
+    lowered = str(message or "").lower()
+    error_type = "runtime"
+    if "dependency is not installed" in lowered:
+        error_type = "missing_dependency"
+    elif "missing argos language package" in lowered:
+        error_type = "missing_package"
+    return {
+        "ok": False,
+        "provider": "argos",
+        "model": "argos",
+        "error_type": error_type,
+        "latency_ms": elapsed_ms(started_at),
+        "message": message or "argos smoke test failed",
+    }
+
+
+def libretranslate_smoke_test(base_url: str, api_key: str, timeout: float = 10.0) -> dict[str, Any]:
+    started_at = time.perf_counter()
+    translator = LibreTranslateTranslator(
+        source_locale="en_us",
+        target_locale="zh_cn",
+        api_url=base_url or "http://127.0.0.1:5000",
+        api_key=api_key,
+        request_timeout=max(1.0, min(60.0, float(timeout or 10.0))),
+    )
+    item = TranslationItem(id="probe", key="probe", text="Hello world", mod_id="system")
+    translations, failures = translator.translate_batch_with_failures([item])
+    message = failures.get("probe")
+    translated = translations.get("probe", "")
+    if not message and translated:
+        return {
+            "ok": True,
+            "provider": "libretranslate",
+            "model": "libretranslate",
+            "latency_ms": elapsed_ms(started_at),
+            "message": "连接正常",
+        }
+    failure_message = message or "libretranslate smoke test failed"
+    lowered = failure_message.lower()
+    error_type = "network"
+    if "unauthorized" in lowered or "forbidden" in lowered or "api key" in lowered:
+        error_type = "auth"
+    return {
+        "ok": False,
+        "provider": "libretranslate",
+        "model": "libretranslate",
+        "error_type": error_type,
+        "latency_ms": elapsed_ms(started_at),
+        "message": failure_message,
+    }
+
+
+def azure_translator_smoke_test(base_url: str, api_key: str, api_region: str, timeout: float = 10.0) -> dict[str, Any]:
+    started_at = time.perf_counter()
+    translator = AzureTranslatorTranslator(
+        source_locale="en_us",
+        target_locale="zh_cn",
+        api_url=base_url or "https://api.cognitive.microsofttranslator.com",
+        api_key=api_key,
+        api_region=api_region,
+        request_timeout=max(1.0, min(60.0, float(timeout or 10.0))),
+    )
+    item = TranslationItem(id="probe", key="probe", text="Hello world", mod_id="system")
+    translations, failures = translator.translate_batch_with_failures([item])
+    message = failures.get("probe")
+    translated = translations.get("probe", "")
+    if not message and translated:
+        return {
+            "ok": True,
+            "provider": "azure-translator",
+            "model": "azure-translator",
+            "latency_ms": elapsed_ms(started_at),
+            "message": "连接正常",
+        }
+    lowered = str(message or "").lower()
+    error_type = "runtime"
+    if "api key is required" in lowered or "401" in lowered or "403" in lowered:
+        error_type = "auth"
+    return {
+        "ok": False,
+        "provider": "azure-translator",
+        "model": "azure-translator",
+        "error_type": error_type,
+        "latency_ms": elapsed_ms(started_at),
+        "message": message or "azure translator smoke test failed",
     }
 
 
@@ -10976,6 +12212,24 @@ def provider_runtime_error_type(message: str) -> str:
     if "连接失败" in message:
         return "network"
     return "request_failed"
+
+
+def provider_test_help_slug(payload: dict[str, Any]) -> str:
+    if not isinstance(payload, dict) or payload.get("ok"):
+        return ""
+    provider_name = str(payload.get("provider", "") or "")
+    error_type = str(payload.get("error_type", "") or "").lower()
+    if provider_name == "argos" and error_type in {"missing_dependency", "missing_package"}:
+        return "providers"
+    if error_type in {"auth", "model_not_found"}:
+        return "providers"
+    if provider_name == "deep-free" and error_type == "network":
+        return "faq"
+    if provider_name == "libretranslate" and error_type == "network":
+        return "providers"
+    if provider_name == "azure-translator" and error_type == "runtime":
+        return "providers"
+    return "faq"
 
 
 def parse_models_response(response_text: str) -> list[dict[str, str]]:
@@ -11320,6 +12574,7 @@ PRESET_SCHEMA_VERSION = 1
 PRESET_ALLOWED_KEYS = {
     "provider",
     "api_url",
+    "api_region",
     "model",
     "api_key_env",
     "api_concurrency",
@@ -11330,6 +12585,7 @@ PRESET_ALLOWED_KEYS = {
     "overwrite_existing",
     "skip_translated",
     "ignore_cache",
+    "ignore_translation_memory",
     "ignore_preflight_blockers",
     "scan_hardcoded",
 }
@@ -11364,10 +12620,10 @@ def normalize_preset_config(value: Any) -> dict[str, Any]:
     for key in ("api_concurrency", "api_retries", "api_batch_size", "api_timeout", "pack_format"):
         if key in config:
             config[key] = int(config[key] or 0)
-    for key in ("overwrite_existing", "skip_translated", "ignore_cache", "ignore_preflight_blockers", "scan_hardcoded"):
+    for key in ("overwrite_existing", "skip_translated", "ignore_cache", "ignore_translation_memory", "ignore_preflight_blockers", "scan_hardcoded"):
         if key in config:
             config[key] = bool(config[key])
-    for key in ("provider", "api_url", "model", "api_key_env"):
+    for key in ("provider", "api_url", "api_region", "model", "api_key_env"):
         if key in config:
             config[key] = str(config[key] or "").strip()
     return config
@@ -11515,6 +12771,7 @@ def translation_memory_scope_from_config(value: Any) -> str:
         api_url=str(value.get("api_url", "") or ""),
         overwrite_existing=bool(value.get("overwrite_existing", False)),
         skip_translated=bool(value.get("skip_translated", False)),
+        ignore_translation_memory=bool(value.get("ignore_translation_memory", False)),
         pack_format=str(value.get("pack_format", "") or ""),
         glossary=None,
     )

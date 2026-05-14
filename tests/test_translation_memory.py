@@ -68,6 +68,12 @@ class TranslationMemoryTest(unittest.TestCase):
             self.assertEqual("开始", TranslationMemory(memory_path, zh_scope).get("Start"))
             self.assertIsNone(TranslationMemory(memory_path, ja_scope).get("Start"))
 
+    def test_memory_scope_changes_when_ignore_translation_memory_changes(self) -> None:
+        self.assertNotEqual(
+            compute_translation_config_hash(args(ignore_translation_memory=False)),
+            compute_translation_config_hash(args(ignore_translation_memory=True)),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

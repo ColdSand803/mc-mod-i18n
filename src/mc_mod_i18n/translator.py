@@ -51,6 +51,24 @@ AI_PROVIDER_PRESETS: dict[str, ProviderPreset] = {
         model="deep-free",
         api_key_env="",
     ),
+    "argos": ProviderPreset(
+        label="Argos Translate（离线）",
+        api_url="",
+        model="argos",
+        api_key_env="",
+    ),
+    "azure-translator": ProviderPreset(
+        label="Azure Translator",
+        api_url="https://api.cognitive.microsofttranslator.com",
+        model="azure-translator",
+        api_key_env="AZURE_TRANSLATOR_KEY",
+    ),
+    "libretranslate": ProviderPreset(
+        label="LibreTranslate（自托管/托管）",
+        api_url="http://127.0.0.1:5000",
+        model="libretranslate",
+        api_key_env="",
+    ),
     "openai-compatible": ProviderPreset(
         label="兼容 OpenAI",
         api_url="https://api.openai.com/v1",

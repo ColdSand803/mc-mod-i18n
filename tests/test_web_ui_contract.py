@@ -138,7 +138,9 @@ class WebUiContractTest(unittest.TestCase):
 
     def test_cache_and_loading_controls_are_exposed(self) -> None:
         self.assertIn('name="ignore_cache"', INDEX_HTML)
+        self.assertIn('name="ignore_translation_memory"', INDEX_HTML)
         self.assertIn("忽略缓存并重新翻译", INDEX_HTML)
+        self.assertIn("忽略翻译记忆命中", INDEX_HTML)
         self.assertIn("progress-full", INDEX_HTML)
         self.assertIn('classList.toggle(\'indeterminate\'', INDEX_HTML)
 
@@ -233,6 +235,125 @@ class WebUiContractTest(unittest.TestCase):
         self.assertIn("history-download-missing", INDEX_HTML)
         self.assertIn("history.file_missing", INDEX_HTML)
 
+    def test_docs_and_help_views_are_exposed(self) -> None:
+        self.assertIn('data-view="docs"', INDEX_HTML)
+        self.assertIn('data-view="help"', INDEX_HTML)
+        self.assertIn('id="docs-panel"', INDEX_HTML)
+        self.assertIn('id="help-panel"', INDEX_HTML)
+        self.assertIn('id="docs-search"', INDEX_HTML)
+        self.assertIn('id="docs-list"', INDEX_HTML)
+        self.assertIn('id="docs-content"', INDEX_HTML)
+        self.assertIn('id="docs-related"', INDEX_HTML)
+        self.assertIn('id="docs-meta"', INDEX_HTML)
+        self.assertIn('id="help-topics"', INDEX_HTML)
+        self.assertIn('id="help-doc-preview"', INDEX_HTML)
+        self.assertIn("loadDocsIndex", INDEX_HTML)
+        self.assertIn("loadDocDetail", INDEX_HTML)
+        self.assertIn("renderDocsList(docsSearch.value)", INDEX_HTML)
+        self.assertIn("openDocView", INDEX_HTML)
+        self.assertIn("renderHelpTopics", INDEX_HTML)
+        self.assertIn("renderDocMeta(payload)", INDEX_HTML)
+        self.assertIn("renderRelatedDocs(payload.related_topics)", INDEX_HTML)
+        self.assertIn("fetch('/api/docs'", INDEX_HTML)
+        self.assertIn("data-doc-target", INDEX_HTML)
+
+    def test_workspace_context_help_links_point_to_docs(self) -> None:
+        self.assertIn('id="provider-doc-link"', INDEX_HTML)
+        self.assertIn('id="preflight-doc-link"', INDEX_HTML)
+        self.assertIn('id="output-doc-link"', INDEX_HTML)
+        self.assertIn('id="memory-doc-link"', INDEX_HTML)
+        self.assertIn("bindDocTriggers()", INDEX_HTML)
+        self.assertIn("providerRiskBanner.innerHTML", INDEX_HTML)
+        self.assertIn("preflightCallout.innerHTML", INDEX_HTML)
+
+    def test_history_report_and_api_log_views_link_to_docs(self) -> None:
+        self.assertIn('id="history-doc-link"', INDEX_HTML)
+        self.assertIn('id="report-doc-link"', INDEX_HTML)
+        self.assertIn('id="api-log-doc-link"', INDEX_HTML)
+        self.assertIn('data-doc-target="history-and-report"', INDEX_HTML)
+        self.assertIn("bindDocTriggers();", INDEX_HTML)
+
+    def test_provider_test_status_can_render_help_action_for_failures(self) -> None:
+        self.assertIn("provider-test-status.error.with-help", INDEX_HTML)
+        self.assertIn("renderProviderTestStatus", INDEX_HTML)
+        self.assertIn("providerTestHelpSlug", INDEX_HTML)
+        self.assertIn("data-provider-test-help", INDEX_HTML)
+
+    def test_docs_help_actions_use_high_contrast_card_and_button_styles(self) -> None:
+        self.assertIn(".docs-link {\n      display: grid;", INDEX_HTML)
+        self.assertIn("padding: 10px 14px;", INDEX_HTML)
+        self.assertIn("border: 1px solid var(--card-border);", INDEX_HTML)
+        self.assertIn("background: var(--field-bg);", INDEX_HTML)
+        self.assertIn("transition: border-color var(--motion-fast) ease, background var(--motion-fast) ease, box-shadow var(--motion-fast) ease, transform var(--motion-fast) ease;", INDEX_HTML)
+        self.assertIn(".docs-link:hover:not(:disabled) {\n      border-color: var(--field-border-hover);", INDEX_HTML)
+        self.assertIn(".docs-link span {\n      color: var(--text);", INDEX_HTML)
+        self.assertIn("opacity: .72;", INDEX_HTML)
+        self.assertIn(".doc-jump-row .secondary,\n    .provider-test-status.error.with-help button {", INDEX_HTML)
+        self.assertIn("background: var(--accent-soft);", INDEX_HTML)
+        self.assertIn("color: var(--accent);", INDEX_HTML)
+        self.assertIn("border: 1px solid var(--accent-soft-line);", INDEX_HTML)
+
+    def test_docs_and_help_center_upgrade_use_theme_driven_workspace_layout(self) -> None:
+        self.assertIn(".docs-page-shell {\n      display: grid;", INDEX_HTML)
+        self.assertIn("background: linear-gradient(180deg, var(--panel), color-mix(in srgb, var(--panel) 84%, var(--surface)));", INDEX_HTML)
+        self.assertIn(".docs-stage {\n      min-height: 0;", INDEX_HTML)
+        self.assertIn("grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);", INDEX_HTML)
+        self.assertIn(".docs-sidebar {\n      min-height: 0;", INDEX_HTML)
+        self.assertIn(".docs-sidebar-body {\n      min-height: 0;", INDEX_HTML)
+        self.assertIn("overflow-y: auto;", INDEX_HTML)
+        self.assertIn(".docs-detail {\n      min-height: 0;", INDEX_HTML)
+        self.assertIn(".docs-body {\n      display: grid;", INDEX_HTML)
+        self.assertIn(".docs-related {\n      display: flex;", INDEX_HTML)
+        self.assertIn(".docs-chip {\n      display: inline-flex;", INDEX_HTML)
+        self.assertIn(".help-topic-grid {\n      display: grid;", INDEX_HTML)
+        self.assertIn(".help-preview-card {\n      display: grid;", INDEX_HTML)
+        self.assertIn(".help-topic-link {\n      position: relative;", INDEX_HTML)
+        self.assertIn(".help-topic-link::after {", INDEX_HTML)
+
+    def test_docs_center_reserves_theme_color_for_active_selection_feedback(self) -> None:
+        self.assertIn("let activeHelpSlug = 'quick-start';", INDEX_HTML)
+        self.assertIn("class=\"secondary docs-link help-topic-link ${item.slug === activeHelpSlug ? 'active' : ''}\"", INDEX_HTML)
+        self.assertIn("activeHelpSlug = slug || 'quick-start';", INDEX_HTML)
+        self.assertIn(".help-topic-link.active::after {\n      color: color-mix(in srgb, var(--control-active-text) 82%, transparent);", INDEX_HTML)
+        self.assertIn(".docs-link.active strong,\n    .docs-link.active span {\n      color: var(--control-active-text);", INDEX_HTML)
+
+    def test_docs_sidebar_and_help_preview_are_tightened_toward_reference_density(self) -> None:
+        self.assertIn(".docs-list.compact {\n      gap: 8px;", INDEX_HTML)
+        self.assertIn(".docs-link {\n      display: grid;\n      gap: 4px;", INDEX_HTML)
+        self.assertIn("padding: 10px 14px;", INDEX_HTML)
+        self.assertIn(".docs-link strong {\n      font-size: 14px;", INDEX_HTML)
+        self.assertIn(".docs-link span {\n      color: var(--text);\n      font-size: 12px;", INDEX_HTML)
+        self.assertIn(".help-preview-body.compact {\n      gap: 14px;", INDEX_HTML)
+        self.assertIn("class=\"help-preview-body compact\"", INDEX_HTML)
+        self.assertIn("class=\"help-preview-kicker\"", INDEX_HTML)
+        self.assertIn("class=\"help-preview-summary\"", INDEX_HTML)
+        self.assertIn("class=\"help-preview-actions compact\"", INDEX_HTML)
+        self.assertIn("slice(0, 2)", INDEX_HTML)
+
+    def test_docs_directory_matches_reference_structure_without_extra_meta_rows(self) -> None:
+        self.assertIn(".docs-link {\n      display: grid;\n      gap: 4px;", INDEX_HTML)
+        self.assertIn("border-radius: 12px;", INDEX_HTML)
+        self.assertIn(".docs-link strong {\n      font-size: 14px;\n      line-height: 1.35;\n      margin: 0;", INDEX_HTML)
+        self.assertIn(".docs-link span {\n      color: var(--text);\n      font-size: 12px;\n      line-height: 1.5;\n      opacity: .72;", INDEX_HTML)
+        self.assertIn("white-space: nowrap;", INDEX_HTML)
+        self.assertIn("text-overflow: ellipsis;", INDEX_HTML)
+        self.assertIn("display: -webkit-box;", INDEX_HTML)
+        self.assertIn("-webkit-line-clamp: 1;", INDEX_HTML)
+        self.assertNotIn("docs-link-meta", INDEX_HTML)
+
+    def test_docs_reading_area_and_help_topic_category_hint_are_refined(self) -> None:
+        self.assertIn(".docs-content {\n      display: grid;\n      gap: 14px;", INDEX_HTML)
+        self.assertIn(".docs-content h1,\n    .docs-content h2,\n    .docs-content h3 {\n      margin: 0;\n      color: var(--text);", INDEX_HTML)
+        self.assertIn("padding-bottom: 10px;", INDEX_HTML)
+        self.assertIn("border-bottom: 1px solid color-mix(in srgb, var(--line) 82%, transparent);", INDEX_HTML)
+        self.assertIn(".docs-content h2 {\n      font-size: 22px;", INDEX_HTML)
+        self.assertIn(".docs-content h3 {\n      font-size: 17px;", INDEX_HTML)
+        self.assertIn(".docs-content p,\n    .docs-content li {\n      color: color-mix(in srgb, var(--text) 94%, var(--muted));", INDEX_HTML)
+        self.assertIn(".docs-content pre {\n      margin: 2px 0 4px;", INDEX_HTML)
+        self.assertIn(".help-topic-category {\n      display: inline-flex;", INDEX_HTML)
+        self.assertIn("class=\"help-topic-category\"", INDEX_HTML)
+        self.assertIn("docCategoryLabel(findDocBySlug(item.slug)?.category || '')", INDEX_HTML)
+
     def test_history_dropdowns_can_escape_card_clipping(self) -> None:
         self.assertIn(".history-page {\n      overflow: visible;", INDEX_HTML)
         self.assertIn(".history-card {\n      overflow: visible;", INDEX_HTML)
@@ -249,6 +370,11 @@ class WebUiContractTest(unittest.TestCase):
         self.assertNotIn("menu.style.setProperty('--dropdown-left'", INDEX_HTML)
         self.assertNotIn("menu.style.setProperty('--dropdown-max-height'", INDEX_HTML)
         self.assertIn("const openAbove = belowSpace < 180 && aboveSpace > belowSpace", INDEX_HTML)
+
+    def test_history_list_uses_scroll_container_inside_card(self) -> None:
+        self.assertIn('#history-list.results {\n      max-height:', INDEX_HTML)
+        self.assertIn('overflow-y: auto;', INDEX_HTML)
+        self.assertIn('overscroll-behavior: contain;', INDEX_HTML)
 
     def test_ghost_dropdowns_have_consistent_motion(self) -> None:
         self.assertIn("--dropdown-motion-offset", INDEX_HTML)

@@ -8,8 +8,11 @@ from pathlib import Path
 import sys
 from zipfile import BadZipFile, ZipFile
 
+from .argos_adapter import ArgosTranslator
+from .azure_translator_adapter import AzureTranslatorTranslator
 from .detector import detect_mod
 from .deep_translator_adapter import DeepFreeTranslator
+from .libretranslate_adapter import LibreTranslateTranslator
 from .hardcoded import _NESTED_JAR_PREFIXES
 from .lang import collect_lang_documents, extract_plain_text, target_path_for
 from .pack import OutputLangDocument
@@ -107,8 +110,10 @@ def compute_translation_config_hash(args: argparse.Namespace) -> str:
         "provider": getattr(args, "provider", "glossary"),
         "model": getattr(args, "model", ""),
         "api_url": getattr(args, "api_url", ""),
+        "api_region": getattr(args, "api_region", ""),
         "overwrite_existing": bool(getattr(args, "overwrite_existing", False)),
         "skip_translated": bool(getattr(args, "skip_translated", False)),
+        "ignore_translation_memory": bool(getattr(args, "ignore_translation_memory", False)),
         "pack_format": str(getattr(args, "pack_format", "")),
         "glossary_hash": glossary_hash,
         "builtin_glossary_hash": builtin_glossary_hash,
@@ -199,7 +204,7 @@ class TranslationMemoryTranslator:
 
 def wrap_with_translation_memory(translator, args: argparse.Namespace):
     memory_path = getattr(args, "translation_memory_path", "")
-    if not memory_path:
+    if not memory_path or bool(getattr(args, "ignore_translation_memory", False)):
         return translator
     scope = compute_translation_config_hash(args)
     return TranslationMemoryTranslator(translator, TranslationMemory(memory_path, scope))
@@ -208,10 +213,32 @@ def wrap_with_translation_memory(translator, args: argparse.Namespace):
 def create_translator(args: argparse.Namespace):
     if args.provider == "copy":
         translator = CopyTranslator()
+    elif args.provider == "argos":
+        translator = ArgosTranslator(
+            source_locale=getattr(args, "source_locale", "en_us"),
+            target_locale=getattr(args, "target_locale", "zh_cn"),
+        )
+    elif args.provider == "azure-translator":
+        translator = AzureTranslatorTranslator(
+            source_locale=getattr(args, "source_locale", "en_us"),
+            target_locale=getattr(args, "target_locale", "zh_cn"),
+            api_url=getattr(args, "api_url", "https://api.cognitive.microsofttranslator.com"),
+            api_key=getattr(args, "api_key", ""),
+            api_region=getattr(args, "api_region", ""),
+            request_timeout=max(1.0, getattr(args, "api_timeout", 10.0)),
+        )
     elif args.provider == "deep-free":
         translator = DeepFreeTranslator(
             source_locale=getattr(args, "source_locale", "en_us"),
             target_locale=getattr(args, "target_locale", "zh_cn"),
+            request_timeout=max(1.0, getattr(args, "api_timeout", 10.0)),
+        )
+    elif args.provider == "libretranslate":
+        translator = LibreTranslateTranslator(
+            source_locale=getattr(args, "source_locale", "en_us"),
+            target_locale=getattr(args, "target_locale", "zh_cn"),
+            api_url=getattr(args, "api_url", "http://127.0.0.1:5000"),
+            api_key=getattr(args, "api_key", ""),
             request_timeout=max(1.0, getattr(args, "api_timeout", 10.0)),
         )
     elif args.provider == "glossary":

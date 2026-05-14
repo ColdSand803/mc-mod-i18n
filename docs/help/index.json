@@ -1,0 +1,76 @@
+{
+  "docs": [
+    {
+      "slug": "quick-start",
+      "title": "快速开始",
+      "summary": "第一次使用时，如何从输入到生成跑通最小流程。",
+      "category": "start",
+      "keywords": ["start", "quick", "preflight", "workspace"],
+      "related_topics": ["providers", "preflight", "faq"],
+      "applies_to": ["workspace"]
+    },
+    {
+      "slug": "providers",
+      "title": "翻译器选择",
+      "summary": "如何在 glossary、deep-free、LibreTranslate、Argos、Azure 和 AI provider 之间选择。",
+      "category": "providers",
+      "keywords": ["provider", "azure", "argos", "libretranslate", "deep-free"],
+      "related_topics": ["quick-start", "preflight", "faq"],
+      "applies_to": ["workspace", "provider:deep-free", "provider:libretranslate", "provider:argos", "provider:azure-translator", "provider:openai-compatible", "provider:anthropic-compatible"]
+    },
+    {
+      "slug": "output-strategy",
+      "title": "输出策略",
+      "summary": "理解覆盖、跳过、缓存、翻译记忆和硬编码扫描等选项。",
+      "category": "workflow",
+      "keywords": ["output", "cache", "memory", "hardcoded"],
+      "related_topics": ["translation-memory", "hardcoded", "preflight"],
+      "applies_to": ["workspace", "feature:output-policy"]
+    },
+    {
+      "slug": "preflight",
+      "title": "预检说明",
+      "summary": "预检会检查什么，阻断和警告分别代表什么。",
+      "category": "workflow",
+      "keywords": ["preflight", "warning", "blocking"],
+      "related_topics": ["quick-start", "output-strategy", "faq"],
+      "applies_to": ["workspace", "feature:preflight"]
+    },
+    {
+      "slug": "translation-memory",
+      "title": "翻译记忆与缓存",
+      "summary": "理解 checkpoint、普通缓存与 translation memory 的区别，以及何时应该忽略记忆。",
+      "category": "workflow",
+      "keywords": ["memory", "cache", "checkpoint", "scope"],
+      "related_topics": ["output-strategy", "history-and-report", "faq"],
+      "applies_to": ["workspace", "settings", "feature:translation-memory"]
+    },
+    {
+      "slug": "history-and-report",
+      "title": "结果、报告与任务历史",
+      "summary": "如何查看下载、翻译报告、失败项、API 日志和最近任务。",
+      "category": "operations",
+      "keywords": ["history", "report", "api-log", "download"],
+      "related_topics": ["translation-memory", "faq"],
+      "applies_to": ["history", "report", "api-log"]
+    },
+    {
+      "slug": "hardcoded",
+      "title": "硬编码扫描与工作台",
+      "summary": "理解资源包之外的英文文本，以及 hardcoded 映射的用途和限制。",
+      "category": "operations",
+      "keywords": ["hardcoded", "ponder", "config", "mapping"],
+      "related_topics": ["output-strategy", "history-and-report", "faq"],
+      "applies_to": ["hardcoded", "feature:hardcoded-scan"]
+    },
+    {
+      "slug": "faq",
+      "title": "常见问题",
+      "summary": "集中查看连接失败、结果没变化、历史文件不存在和硬编码不生效等高频问题。",
+      "category": "support",
+      "keywords": ["faq", "error", "missing", "download", "provider"],
+      "related_topics": ["providers", "translation-memory", "history-and-report", "hardcoded"],
+      "applies_to": ["workspace", "history", "report", "api-log", "hardcoded"]
+    }
+  ]
+}

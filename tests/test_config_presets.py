@@ -39,6 +39,43 @@ class ConfigPresetsTest(unittest.TestCase):
             self.assertEqual(4, raw["config"]["api_concurrency"])
             self.assertTrue(raw["config"]["ignore_cache"])
 
+    def test_write_preset_keeps_api_region_for_azure_translator(self) -> None:
+        with TemporaryDirectory() as tmp:
+            workdir = Path(tmp)
+
+            preset = write_config_preset(
+                workdir,
+                "Azure Global",
+                {
+                    "provider": "azure-translator",
+                    "api_url": "https://api.cognitive.microsofttranslator.com",
+                    "api_region": "global",
+                    "model": "azure-translator",
+                    "api_key_env": "AZURE_TRANSLATOR_KEY",
+                },
+            )
+
+            raw = json.loads(preset_path(workdir, preset["name"]).read_text(encoding="utf-8"))
+            self.assertEqual("global", raw["config"]["api_region"])
+            self.assertEqual("global", read_config_preset(workdir, "Azure Global")["config"]["api_region"])
+
+    def test_write_preset_keeps_ignore_translation_memory_flag(self) -> None:
+        with TemporaryDirectory() as tmp:
+            workdir = Path(tmp)
+
+            preset = write_config_preset(
+                workdir,
+                "No Memory",
+                {
+                    "provider": "openai-compatible",
+                    "ignore_translation_memory": True,
+                },
+            )
+
+            raw = json.loads(preset_path(workdir, preset["name"]).read_text(encoding="utf-8"))
+            self.assertTrue(raw["config"]["ignore_translation_memory"])
+            self.assertTrue(read_config_preset(workdir, "No Memory")["config"]["ignore_translation_memory"])
+
     def test_list_read_and_delete_presets(self) -> None:
         with TemporaryDirectory() as tmp:
             workdir = Path(tmp)

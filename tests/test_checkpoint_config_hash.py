@@ -38,10 +38,31 @@ class CheckpointConfigHashTest(unittest.TestCase):
             api_url="https://api.openai.com/v1/chat/completions",
             overwrite_existing=False,
             skip_translated=False,
+            ignore_translation_memory=False,
             pack_format="1.20.1",
             glossary=None,
         )
         changed = Namespace(**{**vars(base), "provider": "glossary"})
+
+        self.assertNotEqual(
+            compute_translation_config_hash(base),
+            compute_translation_config_hash(changed),
+        )
+
+    def test_translation_config_hash_changes_when_ignore_translation_memory_changes(self) -> None:
+        base = Namespace(
+            source_locale="en_us",
+            target_locale="zh_cn",
+            provider="copy",
+            model="gpt-4o-mini",
+            api_url="https://api.openai.com/v1/chat/completions",
+            overwrite_existing=False,
+            skip_translated=False,
+            ignore_translation_memory=False,
+            pack_format="1.20.1",
+            glossary=None,
+        )
+        changed = Namespace(**{**vars(base), "ignore_translation_memory": True})
 
         self.assertNotEqual(
             compute_translation_config_hash(base),
