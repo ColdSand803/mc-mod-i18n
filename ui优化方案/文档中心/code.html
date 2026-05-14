@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+
+<html class="light" lang="zh-CN"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>MC-Localiz Workbench - 文档</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;600;700&amp;family=Inter:wght@400;500;600&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            "colors": {
+                    "primary-fixed-dim": "#b4c5ff",
+                    "surface-bright": "#f7f9fb",
+                    "on-background": "#191c1e",
+                    "tertiary-fixed-dim": "#ffb596",
+                    "on-error-container": "#93000a",
+                    "secondary-fixed": "#dae2fd",
+                    "tertiary-fixed": "#ffdbcd",
+                    "surface-dim": "#d8dadc",
+                    "on-tertiary-fixed-variant": "#7d2d00",
+                    "background": "#f7f9fb",
+                    "surface-container-low": "#f2f4f6",
+                    "on-surface-variant": "#434655",
+                    "on-secondary-fixed-variant": "#3f465c",
+                    "on-secondary-container": "#5c647a",
+                    "on-primary-fixed": "#00174b",
+                    "on-secondary-fixed": "#131b2e",
+                    "tertiary-container": "#bc4800",
+                    "primary-fixed": "#dbe1ff",
+                    "on-primary-container": "#eeefff",
+                    "primary-container": "#2563eb",
+                    "surface-container": "#eceef0",
+                    "surface-container-high": "#e6e8ea",
+                    "secondary-fixed-dim": "#bec6e0",
+                    "on-surface": "#191c1e",
+                    "error-container": "#ffdad6",
+                    "secondary-container": "#dae2fd",
+                    "outline-variant": "#c3c6d7",
+                    "on-secondary": "#ffffff",
+                    "primary": "#004ac6",
+                    "on-tertiary": "#ffffff",
+                    "on-primary-fixed-variant": "#003ea8",
+                    "on-error": "#ffffff",
+                    "tertiary": "#943700",
+                    "surface-tint": "#0053db",
+                    "surface-container-highest": "#e0e3e5",
+                    "surface": "#f7f9fb",
+                    "on-tertiary-fixed": "#360f00",
+                    "inverse-primary": "#b4c5ff",
+                    "surface-container-lowest": "#ffffff",
+                    "error": "#ba1a1a",
+                    "inverse-on-surface": "#eff1f3",
+                    "outline": "#737686",
+                    "on-primary": "#ffffff",
+                    "surface-variant": "#e0e3e5",
+                    "secondary": "#565e74",
+                    "inverse-surface": "#2d3133",
+                    "on-tertiary-container": "#ffede6"
+            },
+            "borderRadius": {
+                    "DEFAULT": "0.125rem",
+                    "lg": "0.25rem",
+                    "xl": "0.5rem",
+                    "full": "0.75rem"
+            },
+            "spacing": {
+                    "stack-sm": "0.5rem",
+                    "stack-md": "1rem",
+                    "container-padding": "2rem",
+                    "gutter": "1.5rem",
+                    "sidebar-width": "260px",
+                    "stack-lg": "2rem",
+                    "content-max-width": "1280px"
+            },
+            "fontFamily": {
+                    "code-sm": [
+                            "JetBrains Mono"
+                    ],
+                    "label-md": [
+                            "Inter"
+                    ],
+                    "headline-lg": [
+                            "Hanken Grotesk"
+                    ],
+                    "body-md": [
+                            "Inter"
+                    ],
+                    "body-lg": [
+                            "Inter"
+                    ],
+                    "headline-sm": [
+                            "Hanken Grotesk"
+                    ],
+                    "headline-md": [
+                            "Hanken Grotesk"
+                    ],
+                    "body-sm": [
+                            "Inter"
+                    ]
+            },
+            "fontSize": {
+                    "code-sm": [
+                            "13px",
+                            {
+                                    "lineHeight": "20px",
+                                    "fontWeight": "400"
+                            }
+                    ],
+                    "label-md": [
+                            "13px",
+                            {
+                                    "lineHeight": "16px",
+                                    "fontWeight": "600"
+                            }
+                    ],
+                    "headline-lg": [
+                            "30px",
+                            {
+                                    "lineHeight": "38px",
+                                    "letterSpacing": "-0.02em",
+                                    "fontWeight": "700"
+                            }
+                    ],
+                    "body-md": [
+                            "14px",
+                            {
+                                    "lineHeight": "22px",
+                                    "fontWeight": "400"
+                            }
+                    ],
+                    "body-lg": [
+                            "16px",
+                            {
+                                    "lineHeight": "26px",
+                                    "fontWeight": "400"
+                            }
+                    ],
+                    "headline-sm": [
+                            "18px",
+                            {
+                                    "lineHeight": "24px",
+                                    "fontWeight": "600"
+                            }
+                    ],
+                    "headline-md": [
+                            "24px",
+                            {
+                                    "lineHeight": "32px",
+                                    "letterSpacing": "-0.01em",
+                                    "fontWeight": "600"
+                            }
+                    ],
+                    "body-sm": [
+                            "12px",
+                            {
+                                    "lineHeight": "18px",
+                                    "fontWeight": "400"
+                            }
+                    ]
+            }
+    },
+        },
+      }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .material-symbols-outlined[data-weight="fill"] {
+            font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+    </style>
+</head>
+<body class="bg-background text-on-background font-body-md antialiased min-h-screen flex">
+<!-- SideNavBar -->
+<nav class="fixed left-0 top-0 h-full w-[260px] bg-surface-container-low border-r border-outline-variant flex flex-col py-4 px-3 z-20">
+<div class="flex items-center gap-3 px-3 mb-8">
+<div class="w-8 h-8 rounded bg-primary flex items-center justify-center text-on-primary font-bold text-lg shadow-sm">
+                M
+            </div>
+<div>
+<h1 class="text-headline-sm font-headline-sm font-bold text-on-surface">MC-Localiz</h1>
+<p class="text-body-sm text-on-surface-variant">Localization Tool</p>
+</div>
+</div>
+<div class="flex-1 overflow-y-auto">
+<ul class="space-y-1">
+<li>
+<a class="flex items-center gap-3 px-4 py-2.5 rounded-full text-on-surface-variant hover:bg-surface-container-high transition-colors text-label-md font-label-md" href="#">
+<span class="material-symbols-outlined text-[20px]" data-icon="desktop_windows">desktop_windows</span>
+                        Workspace
+                    </a>
+</li>
+<li>
+<a class="flex items-center gap-3 px-4 py-2.5 rounded-full text-on-surface-variant hover:bg-surface-container-high transition-colors text-label-md font-label-md" href="#">
+<span class="material-symbols-outlined text-[20px]" data-icon="history">history</span>
+                        History
+                    </a>
+</li>
+<li>
+<a class="flex items-center gap-3 px-4 py-2.5 rounded-full text-on-surface-variant hover:bg-surface-container-high transition-colors text-label-md font-label-md" href="#">
+<span class="material-symbols-outlined text-[20px]" data-icon="assessment">assessment</span>
+                        Reports
+                    </a>
+</li>
+<li>
+<a class="flex items-center gap-3 px-4 py-2.5 rounded-full text-on-surface-variant hover:bg-surface-container-high transition-colors text-label-md font-label-md" href="#">
+<span class="material-symbols-outlined text-[20px]" data-icon="code">code</span>
+                        Hardcoded
+                    </a>
+</li>
+<li>
+<a class="flex items-center gap-3 px-4 py-2.5 rounded-full text-on-surface-variant hover:bg-surface-container-high transition-colors text-label-md font-label-md" href="#">
+<span class="material-symbols-outlined text-[20px]" data-icon="api">api</span>
+                        API Logs
+                    </a>
+</li>
+</ul>
+</div>
+<div class="mt-auto pt-4 border-t border-outline-variant border-opacity-50">
+<ul class="space-y-1">
+<li>
+<a class="flex items-center gap-3 px-4 py-2.5 rounded-full text-on-surface-variant hover:bg-surface-container-high transition-colors text-label-md font-label-md" href="#">
+<span class="material-symbols-outlined text-[20px]" data-icon="settings">settings</span>
+                        Settings
+                    </a>
+</li>
+<li>
+<a class="flex items-center gap-3 px-4 py-2.5 rounded-full bg-primary-container text-on-primary-container font-bold text-label-md font-label-md transition-all duration-150" href="#">
+<span class="material-symbols-outlined text-[20px]" data-icon="description" data-weight="fill">description</span>
+                        Documents
+                    </a>
+</li>
+<li>
+<a class="flex items-center gap-3 px-4 py-2.5 rounded-full text-on-surface-variant hover:bg-surface-container-high transition-colors text-label-md font-label-md" href="#">
+<span class="material-symbols-outlined text-[20px]" data-icon="help">help</span>
+                        Help
+                    </a>
+</li>
+</ul>
+</div>
+</nav>
+<!-- Main Content Area -->
+<div class="ml-[260px] flex-1 flex flex-col min-h-screen relative w-full">
+<!-- TopAppBar -->
+<header class="h-16 bg-surface-lowest border-b border-outline-variant flex justify-between items-center px-gutter sticky top-0 z-10 w-full">
+<div class="flex items-center gap-4">
+<h2 class="text-headline-md font-headline-md font-bold text-primary">MC-Localiz Workbench</h2>
+<span class="text-body-sm text-on-surface-variant px-2 py-1 bg-surface-container rounded-md">当前任务 <span class="font-bold">未开始</span></span>
+</div>
+<div class="flex items-center gap-4">
+<div class="relative">
+<select class="appearance-none bg-surface-container-low border border-outline-variant rounded-full py-1.5 pl-4 pr-10 text-body-sm text-on-surface hover:bg-surface-container transition-colors focus:ring-2 focus:ring-primary focus:border-primary focus:outline-none">
+<option>简体中文</option>
+<option>English</option>
+</select>
+<span class="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-[18px] text-on-surface-variant pointer-events-none" data-icon="language">language</span>
+</div>
+<div class="flex items-center gap-2 bg-surface-container-low rounded-full p-1 border border-outline-variant">
+<button class="p-1 rounded-full text-on-surface-variant hover:bg-surface-container hover:text-primary transition-colors flex items-center justify-center">
+<span class="material-symbols-outlined text-[18px]" data-icon="settings_brightness">settings_brightness</span>
+</button>
+<div class="h-4 w-px bg-outline-variant"></div>
+<div class="flex gap-1 px-1">
+<button class="w-4 h-4 rounded-sm bg-primary border border-outline-variant"></button>
+<button class="w-4 h-4 rounded-sm bg-surface-variant border border-outline-variant"></button>
+<button class="w-4 h-4 rounded-sm bg-on-surface border border-outline-variant"></button>
+</div>
+</div>
+<div class="flex items-center gap-2 px-3 py-1.5 rounded-full border border-outline-variant hover:bg-surface-container-low transition-colors cursor-pointer">
+<span class="text-body-sm text-on-surface">本地处理</span>
+</div>
+<div class="flex items-center gap-2 px-3 py-1.5 rounded-full bg-primary-fixed border border-primary-fixed-dim hover:opacity-90 transition-opacity cursor-pointer">
+<span class="text-body-sm text-on-primary-fixed font-medium">作者: co1dsand</span>
+</div>
+</div>
+</header>
+<!-- Page Content -->
+<main class="flex-1 p-gutter overflow-y-auto max-w-content-max-width mx-auto w-full">
+<div class="mb-6 bg-surface-container-lowest border border-outline-variant rounded-xl p-6 shadow-sm">
+<h1 class="text-headline-lg font-headline-lg text-on-surface mb-2">文档</h1>
+<p class="text-body-md text-on-surface-variant">快速开始、翻译器选择与关键流程说明。</p>
+</div>
+<div class="grid grid-cols-12 gap-gutter items-start">
+<!-- Left Column: Navigation/List -->
+<div class="col-span-12 lg:col-span-4 xl:col-span-5 bg-surface-container-lowest border border-outline-variant rounded-xl overflow-hidden shadow-sm h-full flex flex-col">
+<div class="p-4 border-b border-outline-variant flex items-center gap-2 bg-surface-bright">
+<span class="material-symbols-outlined text-primary" data-icon="menu_book">menu_book</span>
+<h3 class="text-headline-sm font-headline-sm text-on-surface">文档目录</h3>
+</div>
+<div class="p-4 border-b border-outline-variant bg-surface-container-lowest">
+<div class="relative">
+<input class="w-full bg-surface-container-low border border-outline-variant rounded-lg py-2 pl-3 pr-10 text-body-md text-on-surface placeholder-on-surface-variant focus:bg-surface-container-lowest focus:ring-2 focus:ring-primary focus:border-primary focus:outline-none transition-all" placeholder="按标题、摘要或关键词筛选" type="text"/>
+<span class="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant pointer-events-none" data-icon="search">search</span>
+</div>
+</div>
+<div class="flex-1 overflow-y-auto p-4 space-y-2">
+<!-- Active Item -->
+<div class="p-3 rounded-lg bg-primary text-on-primary cursor-pointer shadow-sm transition-all hover:opacity-90">
+<h4 class="text-label-md font-label-md mb-1">快速开始</h4>
+<p class="text-body-sm opacity-90 line-clamp-1">第一次使用时，如何从导入到生成跑通最小流程。</p>
+</div>
+<!-- Inactive Items -->
+<div class="p-3 rounded-lg bg-surface-bright border border-outline-variant text-on-surface hover:bg-surface-container-low cursor-pointer transition-colors">
+<h4 class="text-label-md font-label-md mb-1">翻译器选择</h4>
+<p class="text-body-sm text-on-surface-variant line-clamp-1">如何在 glossary、deep-free、LibreTranslate、Argos、Azure 和 AI provider 之间选择。</p>
+</div>
+<div class="p-3 rounded-lg bg-surface-bright border border-outline-variant text-on-surface hover:bg-surface-container-low cursor-pointer transition-colors">
+<h4 class="text-label-md font-label-md mb-1">输出策略</h4>
+<p class="text-body-sm text-on-surface-variant line-clamp-1">理解覆盖、跳过、缓存、翻译记忆和硬编码扫描等选项。</p>
+</div>
+<div class="p-3 rounded-lg bg-surface-bright border border-outline-variant text-on-surface hover:bg-surface-container-low cursor-pointer transition-colors">
+<h4 class="text-label-md font-label-md mb-1">预检说明</h4>
+<p class="text-body-sm text-on-surface-variant line-clamp-1">预检会检查什么，阻断和警告分别代表什么。</p>
+</div>
+<div class="p-3 rounded-lg bg-surface-bright border border-outline-variant text-on-surface hover:bg-surface-container-low cursor-pointer transition-colors">
+<h4 class="text-label-md font-label-md mb-1">翻译记忆与缓存</h4>
+<p class="text-body-sm text-on-surface-variant line-clamp-1">理解 checkpoint、普通缓存与 translation memory 的区别，以及何时应该忽略记忆。</p>
+</div>
+<div class="p-3 rounded-lg bg-surface-bright border border-outline-variant text-on-surface hover:bg-surface-container-low cursor-pointer transition-colors opacity-60">
+<h4 class="text-label-md font-label-md mb-1">结果、报告与任务历史</h4>
+<p class="text-body-sm text-on-surface-variant line-clamp-1">如何查看下载、翻译报告、失败项、API 日志和最近任务。</p>
+</div>
+<div class="p-3 rounded-lg bg-surface-bright border border-outline-variant text-on-surface hover:bg-surface-container-low cursor-pointer transition-colors">
+<h4 class="text-label-md font-label-md mb-1">硬编码扫描与工作台</h4>
+<p class="text-body-sm text-on-surface-variant line-clamp-1">理解资源包之外的英文文本，以及 hardcoded 映射的用途和限制。</p>
+</div>
+<div class="p-3 rounded-lg bg-surface-bright border border-outline-variant text-on-surface hover:bg-surface-container-low cursor-pointer transition-colors">
+<h4 class="text-label-md font-label-md mb-1">常见问题</h4>
+<p class="text-body-sm text-on-surface-variant line-clamp-1">集中查看连接失败、结果没变化、历史文件不存在和硬编码不生效等高频问题。</p>
+</div>
+</div>
+</div>
+<!-- Right Column: Content Detail -->
+<div class="col-span-12 lg:col-span-8 xl:col-span-7 bg-surface-container-lowest border border-outline-variant rounded-xl p-8 shadow-sm">
+<div class="flex items-center gap-2 mb-6 text-primary">
+<span class="material-symbols-outlined" data-icon="description">description</span>
+<span class="text-label-md font-label-md font-bold uppercase tracking-wider">文档详情</span>
+</div>
+<h2 class="text-headline-md font-headline-md text-on-surface mb-6 border-b border-outline-variant pb-4">快速开始</h2>
+<div class="prose prose-sm max-w-none text-on-surface">
+<h3 class="text-headline-sm font-headline-sm mb-4 mt-6 text-on-surface">最小流程</h3>
+<p class="text-body-md mb-4 leading-relaxed">按照以下步骤，快速完成第一次完整的翻译流程：</p>
+<ol class="list-decimal pl-5 space-y-3 mb-8 text-body-md">
+<li class="pl-2">在 <strong class="text-primary font-semibold">工作区</strong> 选择输入类型，例如 <code class="bg-surface-container-low text-code-sm font-code-sm px-1.5 py-0.5 rounded border border-outline-variant text-on-surface-variant">Mod JAR</code>。</li>
+<li class="pl-2">选择源语言和目标语言（确保方向正确）。</li>
+<li class="pl-2">选择一个可用的 <strong class="text-primary font-semibold">翻译器</strong>。</li>
+<li class="pl-2">点击 <strong class="text-primary font-semibold">运行预检</strong>，先确认输入格式和设置可处理。</li>
+<li class="pl-2">预检通过后，再次点击 <strong class="text-primary font-semibold">开始生成</strong>。</li>
+</ol>
+<div class="bg-surface-bright border border-outline-variant rounded-lg p-5 mt-8">
+<h3 class="text-headline-sm font-headline-sm mb-3 flex items-center gap-2 text-on-surface">
+<span class="material-symbols-outlined text-tertiary-container" data-icon="lightbulb">lightbulb</span>
+                                建议与提示
+                            </h3>
+<ul class="list-disc pl-5 space-y-2 text-body-md text-on-surface-variant">
+<li>第一次使用可以先用 <code class="bg-surface-container-lowest text-code-sm font-code-sm px-1 py-0.5 rounded border border-outline-variant">glossary</code> 或 <code class="bg-surface-container-lowest text-code-sm font-code-sm px-1 py-0.5 rounded border border-outline-variant">deep-free</code> 跑通流程，验证环境配置。</li>
+<li>如果预检出现 <strong class="text-error font-medium">阻断 (Error)</strong>，请优先修复阻断项，不要直接忽略警告强制运行。</li>
+<li>处理完成后，可在 <strong class="font-medium text-on-surface">结果页</strong>、<strong class="font-medium text-on-surface">翻译报告</strong> 或 <strong class="font-medium text-on-surface">任务历史</strong> 里继续排查可能的遗漏。</li>
+</ul>
+</div>
+</div>
+</div>
+</div>
+</main>
+</div>
+</body></html>
