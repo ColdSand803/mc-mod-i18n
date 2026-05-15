@@ -8,6 +8,7 @@ __pycache__/
 # Build outputs
 build/
 dist/
+*.egg-info/
 *.spec~
 
 # Runtime/output folders
