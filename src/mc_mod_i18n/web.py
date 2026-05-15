@@ -1731,6 +1731,9 @@ INDEX_HTML = r"""<!doctype html>
     .api-box[hidden] {
       display: none;
     }
+    .api-box [data-provider-field][hidden] {
+      display: none !important;
+    }
     .api-box-head {
       display: flex;
       justify-content: space-between;
@@ -2020,6 +2023,7 @@ INDEX_HTML = r"""<!doctype html>
       place-items: center;
       padding: 20px;
       background: var(--overlay);
+      animation: packDialogFadeIn var(--motion-base) ease;
     }
     .pack-name-dialog[hidden] {
       display: none;
@@ -2033,6 +2037,45 @@ INDEX_HTML = r"""<!doctype html>
       border-radius: 14px;
       background: var(--panel);
       box-shadow: 0 24px 64px rgba(15, 23, 42, .24);
+      animation: packCardPopIn var(--motion-base) cubic-bezier(.22, 1, .36, 1);
+    }
+    .pack-name-note {
+      display: grid;
+      gap: 6px;
+      padding: 12px 14px;
+      border: 1px solid var(--accent-soft-line);
+      border-radius: 12px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      box-shadow: 0 10px 24px color-mix(in srgb, var(--accent) 10%, transparent);
+    }
+    .pack-name-note strong {
+      margin: 0;
+      font-size: 13px;
+      line-height: 1.4;
+    }
+    .pack-name-note span {
+      color: color-mix(in srgb, var(--accent) 82%, var(--text));
+      font-size: 12px;
+      line-height: 1.55;
+    }
+    @keyframes packDialogFadeIn {
+      from {
+        opacity: 0;
+      }
+      to {
+        opacity: 1;
+      }
+    }
+    @keyframes packCardPopIn {
+      from {
+        opacity: 0;
+        transform: translateY(14px) scale(.96);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+      }
     }
     .settings-page,
     .history-page {
@@ -2043,7 +2086,7 @@ INDEX_HTML = r"""<!doctype html>
       overflow: hidden;
     }
     .history-page {
-      overflow: visible;
+      overflow: hidden;
     }
     .settings-page[hidden],
     .history-page[hidden] {
@@ -2063,18 +2106,405 @@ INDEX_HTML = r"""<!doctype html>
       box-shadow: none;
     }
     .history-card {
-      overflow: visible;
+      overflow: hidden;
+      background: linear-gradient(180deg, var(--panel), color-mix(in srgb, var(--panel) 84%, var(--surface)));
     }
-    .history-card .settings-layout,
-    .history-card .settings-section {
-      overflow: visible;
-    }
-    #history-list.results {
-      max-height: min(62vh, 640px);
+    .history-workbench {
       min-height: 0;
+      display: grid;
+      grid-template-rows: auto auto minmax(0, 1fr);
+      gap: 16px;
+      padding: 18px 22px 22px;
+      overflow: hidden;
+    }
+    .history-toolbar {
+      display: grid;
+      grid-template-columns: minmax(220px, 1fr) minmax(180px, 240px) minmax(200px, 280px);
+      gap: 12px;
+      align-items: end;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-md);
+      background: color-mix(in srgb, var(--panel) 76%, var(--field-bg-soft));
+      box-shadow: var(--card-shadow-soft);
+      overflow: visible;
+    }
+    .history-search-control {
+      position: relative;
+      min-width: 0;
+    }
+    .history-search-control i {
+      position: absolute;
+      left: 12px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--muted);
+      font-size: 18px;
+      pointer-events: none;
+    }
+    .history-search-control input {
+      padding-left: 38px;
+    }
+    .history-stats {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .history-stat {
+      min-width: 0;
+      display: grid;
+      gap: 4px;
+      padding: 12px 14px;
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius-md);
+      background: var(--card-surface-soft);
+      box-shadow: var(--card-shadow-soft);
+      position: relative;
+      overflow: hidden;
+    }
+    .history-stat::before {
+      content: "";
+      position: absolute;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 4px;
+      background: var(--accent);
+    }
+    .history-stat[data-tone="success"]::before { background: var(--success); }
+    .history-stat[data-tone="danger"]::before { background: var(--danger); }
+    .history-stat[data-tone="warning"]::before { background: var(--warning); }
+    .history-stat strong {
+      color: var(--text);
+      font-size: 22px;
+      line-height: 1.05;
+      font-family: "Fira Code", ui-monospace, SFMono-Regular, Consolas, monospace;
+    }
+    .history-stat span {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .history-stage {
+      min-height: 0;
+      display: grid;
+      grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
+      gap: 16px;
+      overflow: hidden;
+    }
+    .history-master,
+    .history-detail {
+      min-width: 0;
+      min-height: 0;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      border: 1px solid var(--card-border);
+      border-radius: calc(var(--radius-lg) + 2px);
+      background: var(--panel);
+      box-shadow: var(--card-shadow-soft);
+      overflow: hidden;
+    }
+    .history-master-head,
+    .history-detail-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 16px 18px;
+      border-bottom: 1px solid var(--line);
+      background: color-mix(in srgb, var(--panel) 76%, var(--field-bg-soft));
+    }
+    .history-master-head strong,
+    .history-detail-head strong {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+      color: var(--text);
+      font-size: 15px;
+      line-height: 1.3;
+    }
+    .history-master-head span,
+    .history-detail-head span {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .history-list {
+      min-height: 0;
+      display: grid;
+      align-content: start;
       overflow-y: auto;
-      overscroll-behavior: contain;
-      padding-right: 4px;
+      scrollbar-width: thin;
+      scrollbar-color: var(--scroll-thumb) transparent;
+    }
+    .history-task-card {
+      width: 100%;
+      height: auto;
+      min-height: 142px;
+      display: grid;
+      gap: 10px;
+      padding: 16px 18px;
+      border: 0;
+      border-left: 4px solid transparent;
+      border-bottom: 1px solid var(--line);
+      border-radius: 0;
+      background: var(--panel);
+      color: var(--text);
+      text-align: left;
+      box-shadow: none;
+      transform: none;
+      transition: background-color 140ms ease-out, border-color 140ms ease-out, color 120ms ease-out;
+    }
+    .history-task-card:hover:not(:disabled) {
+      background: color-mix(in srgb, var(--panel) 30%, var(--field-bg-soft));
+      transform: none;
+    }
+    .history-task-card.active {
+      border-left-color: var(--accent);
+      background: color-mix(in srgb, var(--accent-soft) 58%, var(--panel));
+    }
+    .history-task-top,
+    .history-task-foot,
+    .history-detail-title-row,
+    .history-artifact-row {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .history-task-title,
+    .history-task-id,
+    .history-task-meta,
+    .history-detail-id,
+    .history-artifact-copy strong,
+    .history-artifact-copy span {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .history-task-title {
+      display: block;
+      color: var(--text);
+      font-size: 15px;
+      font-weight: 800;
+      line-height: 1.35;
+    }
+    .history-task-id,
+    .history-detail-id {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--muted);
+      font-family: "Fira Code", ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .history-task-meta {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .history-status-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      min-height: 24px;
+      padding: 0 9px;
+      border-radius: 999px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 11px;
+      font-weight: 800;
+      line-height: 1;
+      white-space: nowrap;
+    }
+    .history-status-chip.done {
+      background: color-mix(in srgb, var(--success) 14%, var(--field-bg));
+      color: var(--success);
+    }
+    .history-status-chip.error {
+      background: var(--danger-bg);
+      color: var(--danger);
+    }
+    .history-status-chip.cancelled {
+      background: color-mix(in srgb, var(--warning) 14%, var(--field-bg));
+      color: var(--warning);
+    }
+    .history-progress {
+      display: grid;
+      gap: 6px;
+    }
+    .history-progress-track {
+      height: 7px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: var(--field-bg-soft);
+    }
+    .history-progress-bar {
+      display: block;
+      height: 100%;
+      border-radius: inherit;
+      background: var(--accent);
+    }
+    .history-progress-text {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .history-detail-body {
+      min-height: 0;
+      display: grid;
+      align-content: start;
+      gap: 16px;
+      padding: 20px;
+      overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: var(--scroll-thumb) transparent;
+    }
+    .history-detail-title {
+      display: grid;
+      gap: 8px;
+      min-width: 0;
+    }
+    .history-detail-title h3 {
+      margin: 0;
+      color: var(--text);
+      font-size: clamp(24px, 2.6vw, 34px);
+      line-height: 1.08;
+    }
+    .history-detail-actions,
+    .history-artifact-actions {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .history-detail-actions a,
+    .history-detail-actions button,
+    .history-artifact-actions a,
+    .history-artifact-actions button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      min-height: 38px;
+      height: 38px;
+      padding: 0 13px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      background: var(--field-bg);
+      color: var(--text);
+      text-decoration: none;
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .history-detail-actions a.primary {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: var(--button-text);
+    }
+    .history-detail-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .history-detail-metric {
+      min-width: 0;
+      display: grid;
+      gap: 6px;
+      padding: 16px;
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius-md);
+      background: var(--card-surface-soft);
+      box-shadow: var(--card-shadow-soft);
+    }
+    .history-detail-metric span {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .history-detail-metric strong {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--text);
+      font-size: 18px;
+      line-height: 1.25;
+    }
+    .history-artifacts {
+      display: grid;
+      overflow: hidden;
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius-md);
+      background: var(--panel);
+      box-shadow: var(--card-shadow-soft);
+    }
+    .history-artifacts-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      background: color-mix(in srgb, var(--panel) 76%, var(--field-bg-soft));
+    }
+    .history-artifact-row {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+    }
+    .history-artifact-row:last-child {
+      border-bottom: 0;
+    }
+    .history-artifact-copy {
+      min-width: 0;
+      display: grid;
+      gap: 3px;
+    }
+    .history-artifact-copy strong {
+      color: var(--text);
+      font-size: 14px;
+    }
+    .history-artifact-copy span {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .history-artifact-icon {
+      flex: 0 0 40px;
+      width: 40px;
+      height: 40px;
+      display: grid;
+      place-items: center;
+      border-radius: 10px;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-size: 20px;
+    }
+    .history-error-note {
+      display: grid;
+      gap: 6px;
+      padding: 12px 14px;
+      border: 1px solid var(--danger-line);
+      border-radius: var(--radius-md);
+      background: var(--danger-bg);
+      color: var(--danger);
+      font-size: 13px;
+      font-weight: 700;
     }
     .history-card .ghost-select.open {
       z-index: 90;
@@ -2187,51 +2617,68 @@ INDEX_HTML = r"""<!doctype html>
     }
     .docs-link {
       display: grid;
-      gap: 4px;
+      align-content: center;
+      gap: 6px;
       justify-items: start;
       text-align: left;
-      padding: 10px 14px;
+      min-height: 72px;
+      padding: 14px 16px;
       border: 1px solid var(--card-border);
-      border-radius: 12px;
+      border-radius: 10px;
       background: var(--field-bg);
-      box-shadow: var(--card-shadow-soft);
-      transition: border-color var(--motion-fast) ease, background var(--motion-fast) ease, box-shadow var(--motion-fast) ease, transform var(--motion-fast) ease;
+      box-shadow: none;
+      will-change: background-color, border-color;
+      transition: border-color 120ms ease-out, background-color 120ms ease-out, color 100ms ease-out;
     }
-    .docs-link:hover:not(:disabled) {
-      border-color: var(--field-border-hover);
-      background: var(--card-surface-soft);
-      box-shadow: var(--card-shadow-soft);
-      transform: translateY(-2px);
+    .secondary.docs-link {
+      border-color: var(--card-border);
+      background: var(--panel);
+      color: var(--text);
+      box-shadow: none;
     }
-    .docs-link.active {
-      border-color: var(--control-active-border);
-      background: var(--control-active-bg);
-      color: var(--control-active-text);
-      box-shadow: var(--control-active-shadow);
+    .docs-link:hover:not(:disabled),
+    .secondary.docs-link:hover:not(:disabled) {
+      border-color: color-mix(in srgb, var(--line) 84%, var(--accent-soft-line));
+      background: color-mix(in srgb, var(--panel) 26%, var(--field-bg-soft));
     }
-    .docs-link.active span {
-      color: color-mix(in srgb, var(--control-active-text) 78%, transparent);
+    .docs-link.active,
+    .secondary.docs-link.active {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: var(--button-text);
+      box-shadow: none;
+    }
+    .docs-link.active:hover:not(:disabled),
+    .secondary.docs-link.active:hover:not(:disabled) {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: var(--button-text);
     }
     .docs-link strong {
+      width: 100%;
+      margin: 0;
+      overflow: hidden;
       font-size: 14px;
       line-height: 1.35;
-      margin: 0;
+      white-space: nowrap;
+      text-overflow: ellipsis;
     }
     .docs-link span {
+      width: 100%;
       color: var(--text);
       font-size: 12px;
       line-height: 1.5;
-      opacity: .72;
+      opacity: .74;
       white-space: nowrap;
       text-overflow: ellipsis;
-      display: -webkit-box;
-      -webkit-line-clamp: 1;
-      -webkit-box-orient: vertical;
       overflow: hidden;
     }
-    .docs-link.active strong,
+    .docs-link.active strong {
+      color: var(--button-text);
+    }
     .docs-link.active span {
-      color: var(--control-active-text);
+      color: color-mix(in srgb, var(--button-text) 90%, transparent);
+      opacity: 1;
     }
     .docs-detail {
       grid-template-rows: auto minmax(0, 1fr);
@@ -2408,7 +2855,7 @@ INDEX_HTML = r"""<!doctype html>
     }
     .help-topic-list {
       display: grid;
-      gap: 12px;
+      gap: 10px;
     }
     .help-topic-link {
       position: relative;
@@ -2417,6 +2864,7 @@ INDEX_HTML = r"""<!doctype html>
     }
     .help-topic-category {
       display: inline-flex;
+      max-width: 100%;
       align-items: center;
       gap: 6px;
       min-height: 22px;
@@ -2428,11 +2876,14 @@ INDEX_HTML = r"""<!doctype html>
       font-size: 11px;
       font-weight: 700;
       line-height: 1.3;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      overflow: hidden;
     }
     .help-topic-link.active .help-topic-category {
-      border-color: color-mix(in srgb, var(--control-active-text) 24%, transparent);
-      background: color-mix(in srgb, var(--control-active-text) 16%, transparent);
-      color: color-mix(in srgb, var(--control-active-text) 84%, transparent);
+      border-color: color-mix(in srgb, var(--button-text) 26%, transparent);
+      background: color-mix(in srgb, var(--button-text) 16%, transparent);
+      color: color-mix(in srgb, var(--button-text) 84%, transparent);
     }
     .help-topic-link::after {
       content: "\ea6e";
@@ -2444,13 +2895,13 @@ INDEX_HTML = r"""<!doctype html>
       line-height: 1;
       color: color-mix(in srgb, var(--accent) 70%, var(--muted));
       opacity: .82;
-      transition: transform var(--motion-fast) ease, color var(--motion-fast) ease;
+      transition: transform 120ms ease-out, color 100ms ease-out, opacity 100ms ease-out;
     }
     .help-topic-link.active::after {
-      color: color-mix(in srgb, var(--control-active-text) 82%, transparent);
+      color: color-mix(in srgb, var(--button-text) 82%, transparent);
     }
     .help-topic-link:hover:not(:disabled)::after {
-      transform: translateX(2px);
+      transform: translateX(1px);
       color: var(--accent);
     }
     .help-preview-card {
@@ -2497,6 +2948,41 @@ INDEX_HTML = r"""<!doctype html>
     }
     .help-preview-actions.compact {
       gap: 8px;
+    }
+    .help-preview-section {
+      display: grid;
+      gap: 8px;
+      padding-top: 2px;
+    }
+    .help-preview-section strong {
+      color: var(--text);
+      font-size: 13px;
+      line-height: 1.4;
+    }
+    .help-preview-checklist {
+      display: grid;
+      gap: 8px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+    .help-preview-checklist li {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      align-items: flex-start;
+      gap: 8px;
+      color: color-mix(in srgb, var(--text) 94%, var(--muted));
+      font-size: 13px;
+      line-height: 1.6;
+    }
+    .help-preview-checklist li::before {
+      content: "";
+      width: 7px;
+      height: 7px;
+      margin-top: 7px;
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--accent) 76%, var(--panel));
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
     }
     .help-preview-actions .secondary {
       border: 1px solid var(--accent-soft-line);
@@ -3390,6 +3876,36 @@ INDEX_HTML = r"""<!doctype html>
       gap: 6px;
       align-items: center;
     }
+    .language-view-mode button {
+      min-width: 72px;
+      height: 34px;
+      padding: 0 12px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--field-bg);
+      color: var(--muted);
+      box-shadow: none;
+      font-size: 12px;
+      font-weight: 800;
+    }
+    .language-view-mode button:not(.active):hover:not(:disabled) {
+      border-color: var(--accent-soft-line);
+      background: var(--accent-soft-hover);
+      color: var(--accent);
+      transform: none;
+    }
+    .language-view-mode button.active {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: var(--button-text);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+    }
+    .language-view-mode button.active:hover:not(:disabled) {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: var(--button-text);
+      transform: none;
+    }
     .language-diff-list {
       display: grid;
       gap: 12px;
@@ -3675,6 +4191,50 @@ INDEX_HTML = r"""<!doctype html>
       color: var(--accent);
       background: var(--accent-soft);
       border-color: var(--accent-soft-line);
+    }
+    .provider-badge-wrap {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+    }
+    .api-box-head .provider-badge-wrap .field-help {
+      position: absolute;
+      left: 0;
+      top: calc(100% + 7px);
+      z-index: 16;
+      display: flex;
+      width: max-content;
+      max-width: min(420px, 72vw);
+      min-height: auto;
+      padding: 8px 10px;
+      border-radius: 12px;
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transform: translateY(-6px) scale(.98);
+      transform-origin: top left;
+      transition: opacity var(--motion-base) ease, visibility var(--motion-base) ease, transform var(--motion-base) ease, box-shadow var(--motion-base) ease;
+      box-shadow: 0 14px 34px rgba(15, 23, 42, .14);
+      white-space: normal;
+    }
+    .api-box-head .provider-badge-wrap .field-help::before {
+      content: "";
+      position: absolute;
+      left: 18px;
+      top: -5px;
+      width: 9px;
+      height: 9px;
+      border-left: 1px solid var(--help-border);
+      border-top: 1px solid var(--help-border);
+      background: var(--help-bg);
+      transform: rotate(45deg);
+    }
+    .api-box-head .provider-badge-wrap:focus-within .field-help,
+    .api-box-head .provider-badge[data-provider-help-active="true"]:hover + .field-help,
+    .api-box-head .provider-badge[data-provider-help-active="true"]:focus-visible + .field-help {
+      opacity: 1;
+      visibility: visible;
+      transform: translateY(0) scale(1);
     }
     .btn-key-apply {
       display: inline-flex;
@@ -4263,6 +4823,27 @@ INDEX_HTML = r"""<!doctype html>
       .api-log-table {
         min-width: 760px;
       }
+      .history-page {
+        height: auto;
+        max-height: none;
+      }
+      .history-workbench {
+        overflow: visible;
+      }
+      .history-toolbar,
+      .history-stage {
+        grid-template-columns: 1fr;
+      }
+      .history-stats {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      .history-master,
+      .history-detail {
+        min-height: 420px;
+      }
+      .history-detail-grid {
+        grid-template-columns: 1fr;
+      }
       .metric {
         min-height: 88px;
       }
@@ -4290,6 +4871,32 @@ INDEX_HTML = r"""<!doctype html>
       }
       .settings-layout {
         gap: 12px;
+      }
+      .history-workbench {
+        padding: 14px;
+        gap: 12px;
+      }
+      .history-toolbar {
+        padding: 12px;
+      }
+      .history-stats {
+        grid-template-columns: 1fr;
+      }
+      .history-detail-title-row,
+      .history-artifact-row {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+      .history-detail-actions,
+      .history-artifact-actions {
+        width: 100%;
+        justify-content: stretch;
+      }
+      .history-detail-actions a,
+      .history-detail-actions button,
+      .history-artifact-actions a,
+      .history-artifact-actions button {
+        width: 100%;
       }
       .settings-section {
         padding: 14px;
@@ -4526,15 +5133,17 @@ INDEX_HTML = r"""<!doctype html>
             <div class="api-box-head api-box-title">
               <div>
                 <strong data-i18n="advanced.api_title">AI 接口配置</strong>
-                <span id="provider-badge" class="pill provider-badge">AI</span>
-                <a id="api-key-link" href="#" target="_blank" rel="noopener" class="btn-key-apply" hidden>申请 Key <i class="ri-external-link-line"></i></a>
+                <span class="provider-badge-wrap">
+                  <span id="provider-badge" class="pill provider-badge" tabindex="0">AI</span>
+                  <span id="provider-help" class="field-help" data-i18n="advanced.provider_help">选择翻译器后会自动填入推荐 BaseURL 和模型。</span>
+                </span>
+                <a id="api-key-link" href="#" target="_blank" rel="noopener" class="btn-key-apply" data-provider-field="api_key_link" hidden>申请 Key <i class="ri-external-link-line"></i></a>
               </div>
             <div>
-              <div id="provider-help" class="field-help" data-i18n="advanced.provider_help">选择翻译器后会自动填入推荐 BaseURL 和模型。</div>
               <div class="doc-jump-row"><button type="button" class="secondary" id="provider-doc-link" data-doc-target="providers"><i class="ri-book-open-line"></i><span>查看翻译器说明</span></button></div>
             </div>
             </div>
-          <label class="model-field"><span data-i18n="advanced.model">模型</span>
+          <label class="model-field" data-provider-field="model_field"><span data-i18n="advanced.model">模型</span>
             <div class="model-row">
               <span class="ghost-select model-select" id="model-select">
                 <div class="control model-control" data-model-trigger role="combobox" tabindex="0" aria-haspopup="listbox" aria-expanded="false" aria-controls="model-menu"><span class="value model-control-value" id="model-display">gpt-4o-mini</span><input type="search" class="model-control-input" id="model-search" placeholder="搜索模型" data-i18n-placeholder="advanced.model_search" autocomplete="off" spellcheck="false" aria-label="搜索模型" data-i18n-aria-label="advanced.model_search"><i class="ri-arrow-down-s-line chevron"></i></div>
@@ -4545,25 +5154,25 @@ INDEX_HTML = r"""<!doctype html>
             </div>
             <span id="model-status" class="model-status"></span>
           </label>
-          <label><span data-i18n="advanced.api_key">API Key</span>
+          <label data-provider-field="api_key"><span data-i18n="advanced.api_key">API Key</span>
             <div class="secret-input">
               <input name="api_key" id="api_key" type="password" autocomplete="new-password" placeholder="可直接粘贴 Key" data-i18n-placeholder="advanced.api_key_placeholder" autocapitalize="none" spellcheck="false">
               <button type="button" id="api-key-toggle" class="secret-toggle" aria-label="查看 API Key" data-i18n-aria-label="advanced.api_key_reveal" aria-pressed="false"><i class="ri-eye-line"></i></button>
             </div>
           </label>
-          <label><span data-i18n="advanced.base_url">BaseURL</span>
+          <label data-provider-field="api_base_url"><span data-i18n="advanced.base_url">BaseURL</span>
             <input name="api_url" id="api_base_url" value="https://api.openai.com/v1">
             <span class="field-help" data-i18n="advanced.base_url_help">填写接口 BaseURL，例如 https://api.openai.com/v1；完整 /chat/completions 或 /messages 也兼容。</span>
           </label>
-          <label><span>Region</span>
+          <label data-provider-field="api_region"><span>Region</span>
             <input name="api_region" id="api_region" value="">
             <span class="field-help">Azure Translator 等服务需要 region，例如 global、eastasia。</span>
           </label>
-          <label><span data-i18n="advanced.api_key_env">API Key 环境变量</span>
+          <label data-provider-field="api_key_env"><span data-i18n="advanced.api_key_env">API Key 环境变量</span>
             <input name="api_key_env" id="api_key_env" value="OPENAI_API_KEY">
             <span class="field-help" data-i18n="advanced.api_key_env_help">API Key 留空时使用该环境变量；直接填写 Key 可避免本地 UI 读不到环境变量导致报错。</span>
           </label>
-          <div class="provider-test-row">
+          <div class="provider-test-row" data-provider-field="provider_test_row">
             <button type="button" class="secondary" id="provider-test"><i class="ri-plug-2-line"></i><span data-i18n="advanced.test_provider">测试连接</span></button>
             <span id="provider-test-status" class="provider-test-status" aria-live="polite"></span>
           </div>
@@ -4585,7 +5194,7 @@ INDEX_HTML = r"""<!doctype html>
               <span class="field-help" data-i18n="advanced.timeout_help">连接或读取响应超过该秒数，会进入下一次重试。</span>
             </label>
           </div>
-          <label class="checkline api-debug-log-line">
+          <label class="checkline api-debug-log-line" data-provider-field="api_debug_log">
             <input name="api_debug_log" type="checkbox">
             <span data-i18n="advanced.debug_log">记录 API 调试日志</span>
             <span class="field-help" data-i18n="advanced.debug_log_help">会记录请求体、响应头和原始响应到本次任务目录；Authorization/API Key 会被隐藏。</span>
@@ -4654,40 +5263,51 @@ INDEX_HTML = r"""<!doctype html>
             <button type="button" class="secondary" id="history-refresh"><i class="ri-refresh-line"></i><span data-i18n="history.refresh">刷新</span></button>
           </div>
         </div>
-        <div class="settings-layout">
-          <section class="settings-section">
-            <div class="settings-section-head">
-              <div><strong data-i18n="history.filters">筛选</strong><span data-i18n="history.filters_desc">按状态和输入类型缩小范围。</span></div>
-            </div>
-            <div class="grid-2">
-              <label class="ghost-select" id="history-status-filter-shell"><span data-i18n="history.status">状态</span>
-                <button type="button" class="control" data-select-trigger="history_status" role="combobox" tabindex="0" aria-haspopup="listbox" aria-expanded="false" aria-controls="history-status-filter-menu"><span class="value" id="history-status-filter-display">全部</span><i class="ri-arrow-down-s-line chevron"></i></button>
-                <div class="ghost-menu" id="history-status-filter-menu" role="listbox" hidden></div>
-                <select id="history-status-filter">
-                  <option value="all" data-i18n="history.all">全部</option>
-                  <option value="done" data-i18n="history.done">完成</option>
-                  <option value="error" data-i18n="history.error">失败</option>
-                  <option value="cancelled" data-i18n="history.cancelled">已中断</option>
-                </select>
-              </label>
-              <label class="ghost-select" id="history-kind-filter-shell"><span data-i18n="history.kind">输入类型</span>
-                <button type="button" class="control" data-select-trigger="history_kind" role="combobox" tabindex="0" aria-haspopup="listbox" aria-expanded="false" aria-controls="history-kind-filter-menu"><span class="value" id="history-kind-filter-display">全部</span><i class="ri-arrow-down-s-line chevron"></i></button>
-                <div class="ghost-menu" id="history-kind-filter-menu" role="listbox" hidden></div>
-                <select id="history-kind-filter">
-                  <option value="all" data-i18n="history.all">全部</option>
-                  <option value="jar" data-i18n="input.jar">Mod JAR 语言文件</option>
-                  <option value="ftbquests" data-i18n="input.ftbquests">FTB Quests 任务书</option>
-                  <option value="json" data-i18n="input.json">语言 JSON 文件</option>
-                </select>
-              </label>
-            </div>
-          </section>
-          <section class="settings-section">
-            <div class="settings-section-head">
-              <div><strong data-i18n="history.recent">最近任务</strong><span id="history-count" data-i18n="history.loading">正在读取...</span></div>
-            </div>
-            <div id="history-list" class="results"></div>
-          </section>
+        <div class="history-workbench">
+          <div class="history-toolbar">
+            <label class="settings-field"><span>按 ID、Provider 或模型搜索</span>
+              <span class="history-search-control"><i class="ri-search-line"></i><input id="history-search" class="ghost-input" placeholder="输入任务 ID、Provider、模型或错误信息" autocomplete="off" spellcheck="false"></span>
+            </label>
+            <label class="ghost-select" id="history-status-filter-shell"><span data-i18n="history.status">状态</span>
+              <button type="button" class="control" data-select-trigger="history_status" role="combobox" tabindex="0" aria-haspopup="listbox" aria-expanded="false" aria-controls="history-status-filter-menu"><span class="value" id="history-status-filter-display">全部</span><i class="ri-arrow-down-s-line chevron"></i></button>
+              <div class="ghost-menu" id="history-status-filter-menu" role="listbox" hidden></div>
+              <select id="history-status-filter">
+                <option value="all" data-i18n="history.all">全部</option>
+                <option value="done" data-i18n="history.done">完成</option>
+                <option value="error" data-i18n="history.error">失败</option>
+                <option value="cancelled" data-i18n="history.cancelled">已中断</option>
+              </select>
+            </label>
+            <label class="ghost-select" id="history-kind-filter-shell"><span data-i18n="history.kind">输入类型</span>
+              <button type="button" class="control" data-select-trigger="history_kind" role="combobox" tabindex="0" aria-haspopup="listbox" aria-expanded="false" aria-controls="history-kind-filter-menu"><span class="value" id="history-kind-filter-display">全部</span><i class="ri-arrow-down-s-line chevron"></i></button>
+              <div class="ghost-menu" id="history-kind-filter-menu" role="listbox" hidden></div>
+              <select id="history-kind-filter">
+                <option value="all" data-i18n="history.all">全部</option>
+                <option value="jar" data-i18n="input.jar">Mod JAR 语言文件</option>
+                <option value="ftbquests" data-i18n="input.ftbquests">FTB Quests 任务书</option>
+                <option value="json" data-i18n="input.json">语言 JSON 文件</option>
+              </select>
+            </label>
+          </div>
+          <div id="history-stats" class="history-stats"></div>
+          <div class="history-stage">
+            <section class="history-master">
+              <div class="history-master-head">
+                <strong><i class="ri-time-line"></i><span data-i18n="history.recent">最近任务</span></strong>
+                <span id="history-count" data-i18n="history.loading">正在读取...</span>
+              </div>
+              <div id="history-list" class="history-list"></div>
+            </section>
+            <section class="history-detail">
+              <div class="history-detail-head">
+                <strong><i class="ri-file-list-3-line"></i><span>任务详情</span></strong>
+                <span>下载、报告和错误定位</span>
+              </div>
+              <div id="history-detail" class="history-detail-body">
+                <div class="empty">选择一条历史任务查看详情。</div>
+              </div>
+            </section>
+          </div>
         </div>
       </div>
     </section>
@@ -4736,7 +5356,7 @@ INDEX_HTML = r"""<!doctype html>
         <div class="settings-head">
           <div>
             <strong data-i18n="nav.help">帮助</strong>
-            <span>按场景快速找到最常见的问题与对应文档。</span>
+            <span>按问题场景先做快速判断，再决定是否进入完整文档。</span>
           </div>
         </div>
         <div class="docs-page-shell">
@@ -4750,8 +5370,8 @@ INDEX_HTML = r"""<!doctype html>
             <div class="help-topic-column">
               <section class="help-preview-card">
                 <div class="help-preview-head">
-                  <strong><i class="ri-compass-3-line"></i><span>推荐阅读</span></strong>
-                  <span>从高频问题开始</span>
+                  <strong><i class="ri-life-buoy-line"></i><span>快速判断</span></strong>
+                  <span>先看原因和下一步</span>
                 </div>
                 <div id="help-doc-preview"></div>
               </section>
@@ -4940,6 +5560,9 @@ INDEX_HTML = r"""<!doctype html>
     const helpPanel = document.getElementById('help-panel');
     const historyList = document.getElementById('history-list');
     const historyCount = document.getElementById('history-count');
+    const historySearch = document.getElementById('history-search');
+    const historyStats = document.getElementById('history-stats');
+    const historyDetail = document.getElementById('history-detail');
     const historyRefresh = document.getElementById('history-refresh');
     const historyStatusFilter = document.getElementById('history-status-filter');
     const historyKindFilter = document.getElementById('history-kind-filter');
@@ -4993,6 +5616,7 @@ INDEX_HTML = r"""<!doctype html>
     const settingsSave = document.getElementById('settings-save');
     let loadingTimer = null;
     let progressTimer = null;
+    let progressPollToken = 0;
     let activeJobId = '';
     let loadingStartedAt = 0;
     let loadingProgress = {
@@ -5023,7 +5647,8 @@ INDEX_HTML = r"""<!doctype html>
       languageFilteredEntries: [],
       languageEdits: {},
       languagePage: 1,
-      activeView: 'language',
+      mainView: 'language',
+      resultView: 'language',
       reportSearch: '',
       hardcodedSearch: '',
       apiLogSearch: '',
@@ -5039,9 +5664,11 @@ INDEX_HTML = r"""<!doctype html>
       nextRowId: 1
     };
     let historyRecords = [];
+    let activeHistoryJobId = '';
     let docsIndex = [];
     let activeDocSlug = '';
     let activeHelpSlug = 'quick-start';
+    const docDetailCache = new Map();
     let languageSearchDebounce = 0;
     let reportSearchDebounce = 0;
     let hardcodedReportSearchDebounce = 0;
@@ -5328,7 +5955,7 @@ INDEX_HTML = r"""<!doctype html>
         url: '',
         model: 'deep-free',
         env: '',
-        help: '免费公共翻译源，无需 API Key。可能因网络或第三方限制失败；失败条目会回退为原文并在报告中标记。',
+        help: '免费公共翻译源，无需 API Key。当前默认按 GoogleTranslator -> MyMemoryTranslator 回退；可能因网络或第三方限制失败，失败条目会回退为原文并在报告中标记。',
         keyUrl: ''
       },
       'libretranslate': {
@@ -7310,6 +7937,18 @@ INDEX_HTML = r"""<!doctype html>
     function syncProvider(resetPreset = true) {
       const preset = providerPresets[provider.value];
       const keyLink = document.getElementById('api-key-link');
+      const providerTitle = document.querySelector('[data-i18n="advanced.api_title"]');
+      const providerHelpMessage = '当前走 GoogleTranslator -> MyMemoryTranslator 免费回退链；无需 API Key，也不生成项目级 API 调试日志。';
+      const providerFieldVisibility = {
+        model_field: !['deep-free', 'argos', 'azure-translator', 'libretranslate'].includes(provider.value),
+        api_key: provider.value !== 'deep-free' && provider.value !== 'argos' && provider.value !== 'libretranslate',
+        api_base_url: !['deep-free', 'argos'].includes(provider.value),
+        api_region: provider.value === 'azure-translator',
+        api_key_env: provider.value !== 'deep-free' && provider.value !== 'argos' && provider.value !== 'libretranslate',
+        api_debug_log: !['deep-free', 'argos', 'libretranslate'].includes(provider.value),
+        api_key_link: provider.value !== 'deep-free' && provider.value !== 'argos' && Boolean(preset?.keyUrl),
+        provider_test_row: provider.value !== 'deep-free' && provider.value !== 'argos',
+      };
       apiBox.hidden = !preset;
       const apiPanel = apiBox.closest('details');
       if (apiPanel && preset) {
@@ -7323,8 +7962,26 @@ INDEX_HTML = r"""<!doctype html>
         setProviderTestStatus('');
         return;
       }
+      apiBox.dataset.provider = provider.value || '';
+      if (providerTitle) {
+        providerTitle.textContent = provider.value === 'deep-free' ? '免费翻译设置' : (provider.value === 'argos' ? '离线翻译设置' : 'AI 接口配置');
+      }
       providerBadge.textContent = ui(`provider.${provider.value}`, preset.label);
-      providerHelp.textContent = ui(`provider.${provider.value}.help`, preset.help);
+      providerHelp.textContent = provider.value === 'deep-free'
+        ? providerHelpMessage
+        : (provider.value === 'argos'
+          ? '本地离线翻译，需要预先安装 Argos Translate 和对应语言包；无需 API Key。'
+          : ui(`provider.${provider.value}.help`, preset.help));
+      providerHelp.hidden = false;
+      providerBadge.setAttribute('data-provider-help-active', provider.value === 'deep-free' ? 'true' : 'false');
+      providerBadge.setAttribute('aria-label', provider.value === 'deep-free' ? providerHelpMessage : providerBadge.textContent);
+      document.querySelectorAll('[data-provider-field]').forEach(node => {
+        const key = node.dataset.providerField || '';
+        const visible = Object.prototype.hasOwnProperty.call(providerFieldVisibility, key)
+          ? providerFieldVisibility[key]
+          : true;
+        node.hidden = !visible;
+      });
       renderProviderRiskBanner();
       if (resetPreset) {
         apiBaseUrl.value = preset.url;
@@ -7725,7 +8382,7 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function switchView(view) {
-      resultState.activeView = view;
+      resultState.mainView = view;
       closeAllSelectMenus();
       const isSettingsView = view === 'settings';
       const isHistoryView = view === 'history';
@@ -7770,7 +8427,7 @@ INDEX_HTML = r"""<!doctype html>
       const resultShells = results.querySelectorAll('[data-result-view]');
       if (resultShells.length) {
         resultShells.forEach(shell => {
-          shell.classList.toggle('active', shell.dataset.resultView === view);
+          shell.classList.toggle('active', shell.dataset.resultView === resultState.resultView);
         });
       } else if (resultState.payload) {
         renderResultShell();
@@ -7784,6 +8441,13 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     async function loadDocsIndex() {
+      if (docsIndex.length) {
+        renderDocsList(docsSearch.value);
+        if (helpPanel && !helpPanel.hidden) {
+          renderHelpTopics();
+        }
+        return;
+      }
       const response = await fetch('/api/docs');
       const payload = await response.json();
       if (!response.ok || !payload.ok) {
@@ -7900,10 +8564,20 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     async function loadDocDetail(slug) {
-      const response = await fetch(`/api/docs/${encodeURIComponent(slug)}`);
-      const payload = await response.json();
-      if (!response.ok || !payload.ok) {
-        throw new Error(payload.error || '文档读取失败');
+      const cacheKey = String(slug || '').trim();
+      let payload = cacheKey ? docDetailCache.get(cacheKey) : null;
+      if (!payload) {
+        const response = await fetch(`/api/docs/${encodeURIComponent(slug)}`);
+        payload = await response.json();
+        if (!response.ok || !payload.ok) {
+          throw new Error(payload.error || '文档读取失败');
+        }
+        if (payload?.slug) {
+          docDetailCache.set(payload.slug, payload);
+        }
+        if (cacheKey) {
+          docDetailCache.set(cacheKey, payload);
+        }
       }
       activeDocSlug = payload.slug || slug;
       if (docsTitle) {
@@ -7940,6 +8614,53 @@ INDEX_HTML = r"""<!doctype html>
         helpDocPreview.innerHTML = `<div class="empty">暂无帮助预览。</div>`;
         return;
       }
+      const issueHints = {
+        'quick-start': {
+          summary: '适合第一次跑流程、刚打开工具还不知道从哪里开始时查看。',
+          causes: ['还没区分输入类型和输出目标。', '没有先跑预检，不清楚当前配置是否可处理。', '想先验证流程是否通，但还没选定长期使用的翻译器。'],
+          next: ['先选一个最容易成功的输入样本。', '优先跑一次预检，确认没有阻断项。', '如果只是验证流程，可先用 glossary 或 deep-free 试跑。'],
+        },
+        'providers': {
+          summary: '适合 API 配置太多、不确定该用哪种翻译器、或者连接测试反复失败时查看。',
+          causes: ['不知道本地离线、免费源、自托管和商业 API 的差别。', '把 BaseURL、Region、API Key 或模型接口混用了。', '想要稳定性，但当前选择的 provider 不适合这个场景。'],
+          next: ['先判断你是要本地离线、零配置试跑，还是正式生产使用。', '如果只是先跑通，优先选最少配置的 provider。', '需要更完整说明时再打开完整文档看逐项对比。'],
+        },
+        'output-strategy': {
+          summary: '适合结果看起来不符合预期，但你还不确定是缓存、跳过策略还是硬编码扫描导致时查看。',
+          causes: ['不清楚覆盖、跳过、缓存和翻译记忆的生效顺序。', '把资源包文本和硬编码文本当成同一类输出。', '对“为什么没有变化”只有结果感受，没有定位方向。'],
+          next: ['先确认这次处理的文本到底属于资源包还是硬编码。', '再看是否开启了缓存或翻译记忆复用。', '如果仍然拿不准，再进入完整文档查看输出策略说明。'],
+        },
+        'preflight': {
+          summary: '适合预检阻断、警告太多或不清楚为什么不能继续生成时查看。',
+          causes: ['输入格式不完整，缺少必要文件或目录。', '当前 provider 配置缺少关键参数。', '把警告当成阻断，或把阻断当成可忽略提示。'],
+          next: ['先看预检消息里是否明确标注 blocker。', '优先修阻断项，再决定要不要处理警告。', '如果消息看不懂，再打开完整文档对照预检规则。'],
+        },
+        'translation-memory': {
+          summary: '适合你觉得“结果没变化”“像是用了旧结果”时查看。',
+          causes: ['缓存和翻译记忆命中了之前的结果。', '配置 scope 没变化，系统判断可以复用。', '误以为重新运行就一定会绕过历史结果。'],
+          next: ['先确认这次任务是否复用了同一份缓存目录。', '再检查是否开启了翻译记忆。', '如果要强制看新结果，再进入完整文档按说明调整策略。'],
+        },
+        'history-and-report': {
+          summary: '适合任务跑完了，但你找不到下载、报告或错误定位入口时查看。',
+          causes: ['不知道任务历史、翻译报告和 API 日志的分工。', '历史文件已被移动或清理。', '只看最终结果，没有回到任务记录定位失败点。'],
+          next: ['先去任务历史确认本次任务是否真的成功产出。', '再从报告或 API 日志判断失败集中在哪一层。', '需要更细的处理方法时再打开完整文档。'],
+        },
+        'hardcoded': {
+          summary: '适合你发现游戏里还有英文，但资源包里看不到对应文本时查看。',
+          causes: ['文本根本不在语言文件里，而是写死在代码或脚本中。', '误以为资源包可以覆盖所有游戏内文字。', '还没区分“扫描到”与“已经能自动替换”的差别。'],
+          next: ['先确认这些文本是否属于硬编码扫描范围。', '再决定是否要导出 hardcoded 映射。', '需要补丁路线时再进入完整文档看完整说明。'],
+        },
+        'faq': {
+          summary: '适合问题比较分散，暂时判断不出该看哪篇文档时先做归类。',
+          causes: ['遇到的是高频通用问题，但还没定位到具体模块。', '多个现象叠在一起，不确定先看连接、输出还是历史。', '只知道“哪里不对”，还没有把问题描述压缩成一个场景。'],
+          next: ['先从最接近的高频症状开始归类。', '如果预览里的原因和你情况接近，再进入对应完整文档。', '如果都不匹配，再回到 FAQ 集中排查。'],
+        },
+      };
+      const issue = issueHints[item.slug] || {
+        summary: item.summary || '先在这里快速判断问题归属，再决定是否进入完整文档。',
+        causes: ['当前场景通常和输入类型、provider 配置或输出策略有关。'],
+        next: ['先根据预览信息缩小问题范围，再决定是否阅读完整文档。'],
+      };
       const applies = (Array.isArray(item.applies_to) ? item.applies_to.slice(0, 3) : [])
         .map(value => `<span class="docs-chip"><i class="ri-focus-3-line"></i><span>${escapeHtml(appliesToLabel(value))}</span></span>`)
         .join('');
@@ -7953,13 +8674,21 @@ INDEX_HTML = r"""<!doctype html>
         <div class="help-preview-body compact">
           <span class="help-preview-kicker"><i class="ri-compass-3-line"></i><span>${escapeHtml(docCategoryLabel(item.category))}</span></span>
           <h3>${escapeHtml(item.title)}</h3>
-          <p class="help-preview-summary">${escapeHtml(item.summary || '从这里进入对应文档，查看完整说明和处理步骤。')}</p>
+          <p class="help-preview-summary">${escapeHtml(issue.summary)}</p>
           <div class="docs-meta">${applies || `<span class="docs-chip"><i class="ri-book-open-line"></i><span>${escapeHtml(docCategoryLabel(item.category))}</span></span>`}</div>
+          <div class="help-preview-section">
+            <strong>常见原因</strong>
+            <ul class="help-preview-checklist">${issue.causes.map(text => `<li>${escapeHtml(text)}</li>`).join('')}</ul>
+          </div>
+          <div class="help-preview-section">
+            <strong>下一步</strong>
+            <ul class="help-preview-checklist">${issue.next.map(text => `<li>${escapeHtml(text)}</li>`).join('')}</ul>
+          </div>
           <div class="help-preview-actions compact">
             <button type="button" class="secondary" data-help-open="${escapeHtml(item.slug)}"><i class="ri-book-open-line"></i><span>打开完整文档</span></button>
           </div>
           <div class="docs-related-block">
-            <strong>继续查看</strong>
+            <strong>相关主题</strong>
             <div class="docs-related">${related || `<span class="docs-chip"><i class="ri-information-line"></i><span>暂无更多推荐</span></span>`}</div>
           </div>
         </div>
@@ -7968,7 +8697,11 @@ INDEX_HTML = r"""<!doctype html>
         button.addEventListener('click', () => openDocView(button.dataset.helpOpen));
       });
       helpDocPreview.querySelectorAll('[data-help-related]').forEach(button => {
-        button.addEventListener('click', () => openDocView(button.dataset.helpRelated));
+        button.addEventListener('click', () => {
+          activeHelpSlug = button.dataset.helpRelated || activeHelpSlug;
+          renderHelpTopics();
+          renderHelpPreview(activeHelpSlug);
+        });
       });
     }
 
@@ -7997,7 +8730,7 @@ INDEX_HTML = r"""<!doctype html>
         button.addEventListener('click', () => {
           activeHelpSlug = button.dataset.helpDoc || 'quick-start';
           renderHelpTopics();
-          openDocView(button.dataset.helpDoc);
+          renderHelpPreview(activeHelpSlug);
         });
       });
       renderHelpPreview(activeHelpSlug || topics[0]?.slug || 'quick-start');
@@ -8035,12 +8768,21 @@ INDEX_HTML = r"""<!doctype html>
         filter.addEventListener('change', renderJobHistory);
       }
     });
+    if (historySearch) {
+      historySearch.addEventListener('input', renderJobHistory);
+    }
 
     async function loadJobHistory() {
       if (!historyList) {
         return;
       }
       historyList.innerHTML = `<div class="empty">${escapeHtml(ui('history.loading', '正在读取...'))}</div>`;
+      if (historyStats) {
+        historyStats.innerHTML = renderHistoryStats([]);
+      }
+      if (historyDetail) {
+        historyDetail.innerHTML = `<div class="empty">${escapeHtml(ui('history.loading', '正在读取...'))}</div>`;
+      }
       const response = await fetch('/api/jobs');
       const payload = await response.json();
       if (!response.ok || !payload.ok) {
@@ -8056,47 +8798,124 @@ INDEX_HTML = r"""<!doctype html>
       }
       const statusFilter = historyStatusFilter?.value || 'all';
       const kindFilter = historyKindFilter?.value || 'all';
+      const query = String(historySearch?.value || '').trim().toLowerCase();
       const rows = historyRecords.filter(record => {
         return (statusFilter === 'all' || record.status === statusFilter)
-          && (kindFilter === 'all' || record.input_kind === kindFilter);
+          && (kindFilter === 'all' || record.input_kind === kindFilter)
+          && (!query || historyRecordHaystack(record).includes(query));
       });
+      if (!rows.some(record => record.job_id === activeHistoryJobId)) {
+        activeHistoryJobId = rows[0]?.job_id || '';
+      }
       if (historyCount) {
         historyCount.textContent = formatUi('history.count', '共 {count} 条', { count: rows.length });
       }
+      if (historyStats) {
+        historyStats.innerHTML = renderHistoryStats(rows);
+      }
       if (!rows.length) {
         historyList.innerHTML = `<div class="empty">${escapeHtml(ui('history.empty', '没有匹配的历史任务。'))}</div>`;
+        if (historyDetail) {
+          historyDetail.innerHTML = `<div class="empty">没有可查看的任务详情。</div>`;
+        }
         return;
       }
-      historyList.innerHTML = `
-        <table>
-          <thead><tr><th>${escapeHtml(ui('history.time', '时间'))}</th><th>${escapeHtml(ui('history.kind', '输入类型'))}</th><th>${escapeHtml(ui('history.status', '状态'))}</th><th>${escapeHtml(ui('result.provider', 'Provider'))}</th><th>${escapeHtml(ui('history.counts', '成功/失败'))}</th><th>${escapeHtml(ui('history.downloads', '下载'))}</th><th>${escapeHtml(ui('nav.help', '帮助'))}</th></tr></thead>
-          <tbody>${rows.map(renderJobHistoryRow).join('')}</tbody>
-        </table>
-      `;
+      historyList.innerHTML = rows.map(renderJobHistoryRow).join('');
+      historyList.querySelectorAll('[data-history-job]').forEach(button => {
+        button.addEventListener('click', () => {
+          activeHistoryJobId = button.dataset.historyJob || '';
+          renderJobHistory();
+        });
+      });
+      renderJobHistoryDetail(rows.find(record => record.job_id === activeHistoryJobId) || rows[0]);
       bindDocTriggers();
     }
 
     function renderJobHistoryRow(record) {
-      const downloads = record.downloads || {};
-      const downloadStatus = record.download_status || {};
-      const links = Object.entries(downloads).map(([label, url]) => {
-        const available = !downloadStatus[label] || downloadStatus[label].exists !== false;
-        const text = historyDownloadLabel(label);
-        if (!available) {
-          return `<span class="history-download-missing" title="${escapeHtml(ui('history.file_missing', '文件已不存在'))}">${escapeHtml(text)}</span>`;
-        }
-        return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(text)}</a>`;
-      }).join(' ');
+      const progress = historyProgress(record);
+      const statusClass = historyStatusClass(record.status);
+      const isActive = record.job_id === activeHistoryJobId;
       return `
-        <tr>
-          <td>${escapeHtml(record.created_at || '')}<br><span class="muted">${escapeHtml(record.job_id || '')}</span></td>
-          <td>${escapeHtml(historyKindLabel(record.input_kind))}</td>
-          <td>${escapeHtml(historyStatusLabel(record.status))}</td>
-          <td>${escapeHtml(record.provider || '')}<br><span class="muted">${escapeHtml(record.model || '')}</span></td>
-          <td>${escapeHtml(record.success_count || 0)} / ${escapeHtml(record.failure_count || 0)}</td>
-          <td>${links || escapeHtml(ui('history.no_downloads', '无可用下载'))}</td>
-          <td><button type="button" class="secondary" data-doc-target="history-and-report"><i class="ri-book-open-line"></i><span>查看说明</span></button></td>
-        </tr>
+        <button type="button" class="history-task-card ${isActive ? 'active' : ''}" data-history-job="${escapeHtml(record.job_id || '')}" aria-pressed="${isActive ? 'true' : 'false'}">
+          <span class="history-task-top">
+            <span class="history-status-chip ${escapeHtml(statusClass)}"><i class="${escapeHtml(historyStatusIcon(record.status))}"></i>${escapeHtml(historyStatusLabel(record.status))}</span>
+            <span class="history-task-meta">${escapeHtml(formatHistoryTime(record.created_at))}</span>
+          </span>
+          <strong class="history-task-title" title="${escapeHtml(historyTaskTitle(record))}">${escapeHtml(historyTaskTitle(record))}</strong>
+          <span class="history-task-id" title="${escapeHtml(record.job_id || '')}"><i class="ri-terminal-box-line"></i>${escapeHtml(record.job_id || '')}</span>
+          <span class="history-progress">
+            <span class="history-progress-track"><span class="history-progress-bar" style="width:${escapeHtml(progress.percentText)}"></span></span>
+            <span class="history-progress-text"><span>${escapeHtml(progress.label)}</span><span>${escapeHtml(progress.percentText)}</span></span>
+          </span>
+          <span class="history-task-foot">
+            <span class="history-task-meta">${escapeHtml(historyKindLabel(record.input_kind))}</span>
+            <span class="history-task-meta">${escapeHtml(record.provider || 'provider 未记录')}</span>
+          </span>
+        </button>
+      `;
+    }
+
+    function renderJobHistoryDetail(record) {
+      if (!historyDetail) {
+        return;
+      }
+      if (!record) {
+        historyDetail.innerHTML = `<div class="empty">选择一条历史任务查看详情。</div>`;
+        return;
+      }
+      const statusClass = historyStatusClass(record.status);
+      const downloads = historyDownloadEntries(record);
+      const firstDownload = downloads.find(item => item.available);
+      const progress = historyProgress(record);
+      historyDetail.innerHTML = `
+        <div class="history-detail-title-row">
+          <div class="history-detail-title">
+            <span class="history-status-chip ${escapeHtml(statusClass)}"><i class="${escapeHtml(historyStatusIcon(record.status))}"></i>${escapeHtml(historyStatusLabel(record.status))}</span>
+            <h3>${escapeHtml(historyTaskTitle(record))}</h3>
+            <span class="history-detail-id" title="${escapeHtml(record.job_id || '')}"><i class="ri-terminal-box-line"></i>${escapeHtml(record.job_id || '')}</span>
+          </div>
+          <div class="history-detail-actions">
+            ${firstDownload ? `<a class="primary" href="${escapeHtml(firstDownload.url)}" target="_blank" rel="noopener"><i class="ri-download-cloud-2-line"></i><span>下载主要产物</span></a>` : ''}
+            <button type="button" data-doc-target="history-and-report"><i class="ri-book-open-line"></i><span>查看说明</span></button>
+          </div>
+        </div>
+        <div class="history-detail-grid">
+          ${renderHistoryMetric('ri-robot-2-line', ui('result.provider', 'Provider'), record.provider || '-')}
+          ${renderHistoryMetric('ri-bar-chart-2-line', ui('history.counts', '成功/失败'), `${Number(record.success_count || 0)} / ${Number(record.failure_count || 0)}`)}
+          ${renderHistoryMetric('ri-stack-line', '处理进度', progress.label)}
+        </div>
+        ${record.error ? `<div class="history-error-note"><strong>错误信息</strong><span>${escapeHtml(record.error)}</span></div>` : ''}
+        <div class="history-artifacts">
+          <div class="history-artifacts-head"><strong>Reports & Artifacts</strong><span>${escapeHtml(formatUi('history.count', '共 {count} 条', { count: downloads.length }))}</span></div>
+          ${downloads.length ? downloads.map(renderHistoryArtifact).join('') : `<div class="empty">${escapeHtml(ui('history.no_downloads', '无可用下载'))}</div>`}
+        </div>
+      `;
+      bindDocTriggers();
+    }
+
+    function renderHistoryMetric(icon, label, value) {
+      return `
+        <div class="history-detail-metric">
+          <span><i class="${escapeHtml(icon)}"></i>${escapeHtml(label)}</span>
+          <strong title="${escapeHtml(value)}">${escapeHtml(value)}</strong>
+        </div>
+      `;
+    }
+
+    function renderHistoryArtifact(item) {
+      return `
+        <div class="history-artifact-row">
+          <span class="history-artifact-icon"><i class="${escapeHtml(item.icon)}"></i></span>
+          <span class="history-artifact-copy">
+            <strong title="${escapeHtml(item.text)}">${escapeHtml(item.text)}</strong>
+            <span>${escapeHtml(item.meta)}</span>
+          </span>
+          <span class="history-artifact-actions">
+            ${item.available
+              ? `<a href="${escapeHtml(item.url)}" target="_blank" rel="noopener"><i class="ri-download-line"></i><span>打开</span></a>`
+              : `<span class="history-download-missing" title="${escapeHtml(ui('history.file_missing', '文件已不存在'))}">${escapeHtml(ui('history.file_missing', '文件已不存在'))}</span>`}
+          </span>
+        </div>
       `;
     }
 
@@ -8106,6 +8925,113 @@ INDEX_HTML = r"""<!doctype html>
 
     function historyStatusLabel(status) {
       return status === 'done' ? ui('history.done', '完成') : (status === 'cancelled' ? ui('history.cancelled', '已中断') : ui('history.error', '失败'));
+    }
+
+    function historyStatusClass(status) {
+      return status === 'done' ? 'done' : (status === 'cancelled' ? 'cancelled' : 'error');
+    }
+
+    function historyStatusIcon(status) {
+      return status === 'done' ? 'ri-checkbox-circle-line' : (status === 'cancelled' ? 'ri-pause-circle-line' : 'ri-error-warning-line');
+    }
+
+    function historyTaskTitle(record) {
+      const kind = historyKindLabel(record.input_kind);
+      const providerName = record.provider ? ` · ${record.provider}` : '';
+      return `${kind}${providerName}`;
+    }
+
+    function formatHistoryTime(value) {
+      const text = String(value || '').trim();
+      if (!text) {
+        return '-';
+      }
+      return text.replace('T', ' ').replace(/\+00:00$/, 'Z');
+    }
+
+    function historyProgress(record) {
+      const success = Number(record.success_count || 0);
+      const failure = Number(record.failure_count || 0);
+      const total = Math.max(0, success + failure);
+      const percent = total ? Math.round((success / total) * 100) : (record.status === 'done' ? 100 : 0);
+      return {
+        percent,
+        percentText: `${Math.max(0, Math.min(100, percent))}%`,
+        label: total ? `${success} / ${total} items` : `${Number(record.processed_sources || 0)} source${Number(record.processed_sources || 0) === 1 ? '' : 's'}`
+      };
+    }
+
+    function historyRecordHaystack(record) {
+      return [
+        record.job_id,
+        record.created_at,
+        record.updated_at,
+        record.status,
+        record.input_kind,
+        historyKindLabel(record.input_kind),
+        record.target_locale,
+        record.provider,
+        record.model,
+        record.error,
+        ...Object.keys(record.downloads || {}),
+      ].join(' ').toLowerCase();
+    }
+
+    function renderHistoryStats(rows) {
+      const total = rows.length;
+      const done = rows.filter(record => record.status === 'done').length;
+      const failed = rows.filter(record => record.status === 'error').length;
+      const generated = rows.reduce((sum, record) => sum + Number(record.generated_files || 0), 0);
+      const cards = [
+        ['任务总数', total, ''],
+        ['已完成', done, 'success'],
+        ['失败', failed, 'danger'],
+        ['生成文件', generated, 'warning'],
+      ];
+      return cards.map(([label, value, tone]) => `
+        <div class="history-stat" data-tone="${escapeHtml(tone)}">
+          <strong>${escapeHtml(value)}</strong>
+          <span>${escapeHtml(label)}</span>
+        </div>
+      `).join('');
+    }
+
+    function historyDownloadEntries(record) {
+      const downloads = record.downloads || {};
+      const downloadStatus = record.download_status || {};
+      return Object.entries(downloads).map(([label, url]) => {
+        const available = !downloadStatus[label] || downloadStatus[label].exists !== false;
+        return {
+          label,
+          url,
+          available,
+          text: historyDownloadLabel(label),
+          icon: historyDownloadIcon(label),
+          meta: available ? historyDownloadMeta(label, url) : ui('history.file_missing', '文件已不存在'),
+        };
+      });
+    }
+
+    function historyDownloadIcon(label) {
+      const icons = {
+        pack: 'ri-archive-2-line',
+        json: 'ri-braces-line',
+        ftbquests_patch: 'ri-git-pull-request-line',
+        report: 'ri-file-chart-line',
+        report_json: 'ri-file-code-line',
+        report_csv: 'ri-file-excel-2-line',
+        failed_items: 'ri-error-warning-line',
+        hardcoded_report: 'ri-file-warning-line',
+        hardcoded_map: 'ri-map-pin-line',
+        api_debug_log: 'ri-bug-line',
+      };
+      return icons[label] || 'ri-file-download-line';
+    }
+
+    function historyDownloadMeta(label, url) {
+      const path = String(url || '').split('?')[0];
+      const filename = decodeURIComponent(path.split('/').pop() || label);
+      return `${filename} · ${label.replaceAll('_', ' ')}`;
     }
 
     function historyDownloadLabel(label) {
@@ -8524,12 +9450,13 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function stopLoading() {
+      progressPollToken += 1;
       if (loadingTimer) {
         window.clearInterval(loadingTimer);
         loadingTimer = null;
       }
       if (progressTimer) {
-        window.clearInterval(progressTimer);
+        window.clearTimeout(progressTimer);
         progressTimer = null;
       }
       cancelBtn.hidden = true;
@@ -8553,10 +9480,17 @@ INDEX_HTML = r"""<!doctype html>
     });
 
     function startProgressPolling(jobId) {
+      const pollToken = ++progressPollToken;
       const poll = async () => {
         try {
+          if (pollToken !== progressPollToken || activeJobId !== jobId) {
+            return;
+          }
           const response = await fetch(`/api/progress/${jobId}`);
           const payload = await response.json();
+          if (pollToken !== progressPollToken || activeJobId !== jobId) {
+            return;
+          }
           if (!response.ok || !payload.ok) {
             throw new Error(payload.error || ui('status.progress_read_failed', '进度读取失败'));
           }
@@ -8604,8 +9538,13 @@ INDEX_HTML = r"""<!doctype html>
             statusBox.className = 'status error';
             statusBox.textContent = ui('status.cancelled_short', '已中断。');
             results.innerHTML = `<div class="empty">${escapeHtml(ui('status.cancelled_task', '任务已中断。'))}</div>`;
+          } else if (pollToken === progressPollToken && activeJobId === jobId) {
+            progressTimer = window.setTimeout(poll, 900);
           }
         } catch (error) {
+          if (pollToken !== progressPollToken || activeJobId !== jobId) {
+            return;
+          }
           stopLoading();
           submit.disabled = false;
           statusBox.className = 'status error';
@@ -8613,7 +9552,6 @@ INDEX_HTML = r"""<!doctype html>
         }
       };
       poll();
-      progressTimer = window.setInterval(poll, 900);
     }
 
     function renderLoading() {
@@ -8732,6 +9670,8 @@ INDEX_HTML = r"""<!doctype html>
       resultState.languageFilteredEntries = [];
       resultState.languageEdits = {};
       resultState.languagePage = 1;
+      resultState.mainView = 'language';
+      resultState.resultView = 'language';
       resultState.reportSearch = '';
       resultState.hardcodedSearch = '';
       resultState.apiLogSearch = '';
@@ -8813,7 +9753,7 @@ INDEX_HTML = r"""<!doctype html>
           </section>
         </div>
         <div class="system-views">
-          <div class="view-shell ${resultState.activeView === 'language' ? 'active' : ''}" data-result-view="language">
+          <div class="view-shell ${resultState.resultView === 'language' ? 'active' : ''}" data-result-view="language">
             <div class="view-frame">
               <div class="view-head"><strong>${languageHeadTitle}</strong><span class="muted">${languageHeadDesc}</span></div>
               <div class="view-body">
@@ -8827,20 +9767,20 @@ INDEX_HTML = r"""<!doctype html>
               </div>
             </div>
           </div>
-          <div class="view-shell ${resultState.activeView === 'report' ? 'active' : ''}" data-result-view="report">
+          <div class="view-shell ${resultState.resultView === 'report' ? 'active' : ''}" data-result-view="report">
             ${renderReportView()}
           </div>
-          <div class="view-shell ${resultState.activeView === 'hardcoded' ? 'active' : ''}" data-result-view="hardcoded">
+          <div class="view-shell ${resultState.resultView === 'hardcoded' ? 'active' : ''}" data-result-view="hardcoded">
             ${renderHardcodedReportView()}
           </div>
-          <div class="view-shell ${resultState.activeView === 'api-log' ? 'active' : ''}" data-result-view="api-log">
+          <div class="view-shell ${resultState.resultView === 'api-log' ? 'active' : ''}" data-result-view="api-log">
             ${renderApiLogView()}
           </div>
         </div>
       `;
       bindResultTabs();
       bindViewButtons();
-      if (resultState.activeView === 'language') {
+      if (resultState.resultView === 'language') {
         if (resultState.activeTab === 'hardcoded') {
           bindHardcodedWorkbench();
         } else {
@@ -9214,11 +10154,14 @@ INDEX_HTML = r"""<!doctype html>
 
     function bindViewButtons() {
       results.querySelectorAll('button[data-view]').forEach(button => {
-        button.addEventListener('click', () => switchView(button.dataset.view));
+        button.addEventListener('click', () => {
+          resultState.resultView = button.dataset.view || 'language';
+          renderResultShell();
+        });
       });
       document.querySelectorAll('[data-priority-filter="issues"]').forEach(button => {
         button.addEventListener('click', () => {
-          resultState.activeView = 'language';
+          resultState.resultView = 'language';
           resultState.activeTab = 'language';
           resultState.languageConditionFilter = 'issues';
           resultState.languageViewMode = 'diff';
@@ -9444,6 +10387,14 @@ INDEX_HTML = r"""<!doctype html>
         error.className = 'pack-name-error';
         label.append(inputWrap, error);
 
+        const note = document.createElement('div');
+        note.className = 'pack-name-note';
+        const noteTitle = document.createElement('strong');
+        noteTitle.textContent = '任何翻译结果最好都由人工审核一遍哦';
+        const noteBody = document.createElement('span');
+        noteBody.textContent = '自动翻译适合提速，但发布前最好快速过一遍关键信息、专有名词和占位符。';
+        note.append(noteTitle, noteBody);
+
         const actions = document.createElement('div');
         actions.className = 'pack-name-actions';
         const cancel = document.createElement('button');
@@ -9454,7 +10405,7 @@ INDEX_HTML = r"""<!doctype html>
         confirm.type = 'button';
         confirm.textContent = ui('pack_dialog.download', '下载');
         actions.append(cancel, confirm);
-        card.append(head, label, actions);
+        card.append(head, label, note, actions);
         dialog.append(card);
         document.body.appendChild(dialog);
 
@@ -9746,9 +10697,11 @@ INDEX_HTML = r"""<!doctype html>
     function renderApiLogView() {
       if (!apiLogLines.length) {
         const payload = resultState.payload || {};
-        const emptyMessage = payload.cache_hits && !payload.cache_misses
+        const emptyMessage = payload.provider === 'deep-free'
+          ? '当前翻译器通过 deep-translator 调用第三方免费引擎，项目内不会生成标准 API 调试日志。'
+          : (payload.cache_hits && !payload.cache_misses
           ? ui('result.api_log_cached', '本次结果全部来自缓存，未实际发起 API 请求，所以这里没有调试日志。')
-          : ui('result.api_log_empty', '没有 API 调试日志。勾选“记录 API 调试日志”后，实际发起 API 请求时会在这里显示。');
+          : ui('result.api_log_empty', '没有 API 调试日志。勾选“记录 API 调试日志”后，实际发起 API 请求时会在这里显示。'));
         return `<div class="view-frame"><div class="empty">${escapeHtml(emptyMessage)}</div></div>`;
       }
       return `
@@ -9966,7 +10919,7 @@ INDEX_HTML = r"""<!doctype html>
         button.addEventListener('click', () => {
           resultState.languageViewMode = button.dataset.languageView === 'diff' ? 'diff' : 'table';
           resultState.languagePage = 1;
-          renderLanguageResultContent();
+          renderResultShell();
         });
       });
     }
