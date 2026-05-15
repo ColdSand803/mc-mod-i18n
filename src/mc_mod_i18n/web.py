@@ -1432,7 +1432,8 @@ INDEX_HTML = r"""<!doctype html>
     .config-panel,
     .results-panel {
       max-height: calc(100vh - 104px);
-      overflow: auto;
+      overflow-y: auto;
+      overflow-x: hidden;
     }
     .panel-head {
       padding: 16px 20px;
@@ -2258,15 +2259,17 @@ INDEX_HTML = r"""<!doctype html>
       text-align: left;
       box-shadow: none;
       transform: none;
-      transition: background-color 140ms ease-out, border-color 140ms ease-out, color 120ms ease-out;
+      transition: background-color 140ms ease-out, border-color 140ms ease-out, color 120ms ease-out, transform 160ms ease-out, box-shadow 160ms ease-out;
     }
     .history-task-card:hover:not(:disabled) {
       background: color-mix(in srgb, var(--panel) 30%, var(--field-bg-soft));
-      transform: none;
+      transform: translateX(2px);
     }
     .history-task-card.active {
       border-left-color: var(--accent);
       background: color-mix(in srgb, var(--accent-soft) 58%, var(--panel));
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent);
+      transform: translateX(4px);
     }
     .history-task-top,
     .history-task-foot,
@@ -2278,11 +2281,9 @@ INDEX_HTML = r"""<!doctype html>
       justify-content: space-between;
       gap: 12px;
     }
-    .history-task-title,
     .history-task-id,
     .history-task-meta,
     .history-detail-id,
-    .history-artifact-copy strong,
     .history-artifact-copy span {
       min-width: 0;
       overflow: hidden;
@@ -2290,11 +2291,16 @@ INDEX_HTML = r"""<!doctype html>
       white-space: nowrap;
     }
     .history-task-title {
-      display: block;
+      display: -webkit-box;
       color: var(--text);
       font-size: 15px;
       font-weight: 800;
       line-height: 1.35;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+      white-space: normal;
     }
     .history-task-id,
     .history-detail-id {
@@ -2316,13 +2322,13 @@ INDEX_HTML = r"""<!doctype html>
       align-items: center;
       gap: 5px;
       min-height: 24px;
-      padding: 0 9px;
+      padding: 4px 9px;
       border-radius: 999px;
       background: var(--accent-soft);
       color: var(--accent);
       font-size: 11px;
       font-weight: 800;
-      line-height: 1;
+      line-height: 1.25;
       white-space: nowrap;
     }
     .history-status-chip.done {
@@ -2355,15 +2361,18 @@ INDEX_HTML = r"""<!doctype html>
     }
     .history-progress-text {
       display: flex;
+      align-items: center;
       justify-content: space-between;
       gap: 10px;
       color: var(--muted);
       font-size: 12px;
       font-weight: 700;
+      line-height: 1.4;
     }
     .history-detail-body {
       min-height: 0;
       display: grid;
+      grid-template-rows: minmax(0, 1fr);
       align-content: start;
       gap: 16px;
       padding: 20px;
@@ -2464,6 +2473,9 @@ INDEX_HTML = r"""<!doctype html>
       background: color-mix(in srgb, var(--panel) 76%, var(--field-bg-soft));
     }
     .history-artifact-row {
+      display: grid;
+      grid-template-columns: 40px minmax(0, 1fr) auto;
+      align-items: center;
       padding: 14px 16px;
       border-bottom: 1px solid var(--line);
     }
@@ -2474,10 +2486,15 @@ INDEX_HTML = r"""<!doctype html>
       min-width: 0;
       display: grid;
       gap: 3px;
+      justify-items: start;
+      text-align: left;
     }
     .history-artifact-copy strong {
       color: var(--text);
       font-size: 14px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
     .history-artifact-copy span {
       color: var(--muted);
@@ -4196,6 +4213,7 @@ INDEX_HTML = r"""<!doctype html>
       position: relative;
       display: inline-flex;
       align-items: center;
+      min-width: 0;
     }
     .api-box-head .provider-badge-wrap .field-help {
       position: absolute;
@@ -4203,7 +4221,7 @@ INDEX_HTML = r"""<!doctype html>
       top: calc(100% + 7px);
       z-index: 16;
       display: flex;
-      width: max-content;
+      width: min(420px, min(72vw, calc(100% - 12px)));
       max-width: min(420px, 72vw);
       min-height: auto;
       padding: 8px 10px;
@@ -8936,9 +8954,9 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function historyTaskTitle(record) {
-      const kind = historyKindLabel(record.input_kind);
+      const title = record.primary_input || historyKindLabel(record.input_kind);
       const providerName = record.provider ? ` · ${record.provider}` : '';
-      return `${kind}${providerName}`;
+      return providerName ? `${title} · ${providerName}` : title;
     }
 
     function formatHistoryTime(value) {
@@ -8946,7 +8964,11 @@ INDEX_HTML = r"""<!doctype html>
       if (!text) {
         return '-';
       }
-      return text.replace('T', ' ').replace(/\+00:00$/, 'Z');
+      const date = new Date(text);
+      if (Number.isNaN(date.getTime())) {
+        return text.replace('T', ' ').replace(/Z$/, '');
+      }
+      return new Date(text).toLocaleString('sv-SE', { hour12: false }).replace(',', '') + `.${String(date.getMilliseconds()).padStart(3, '0')}`;
     }
 
     function historyProgress(record) {
@@ -8969,6 +8991,7 @@ INDEX_HTML = r"""<!doctype html>
         record.status,
         record.input_kind,
         historyKindLabel(record.input_kind),
+        record.primary_input,
         record.target_locale,
         record.provider,
         record.model,
@@ -9563,7 +9586,7 @@ INDEX_HTML = r"""<!doctype html>
       const sourceCount = isFtbquests ? (ftbquestsInput.files.length || ftbquestsDirectoryInput.files.length) : (isJson ? jsonInput.files.length : jarsInput.files.length);
       const sourceLabel = isFtbquests ? ui('file.ftbquests', 'FTB Quests 输入') : (isJson ? ui('file.json', '语言 JSON') : ui('file.jar', 'JAR'));
       const concurrency = Math.max(1, Number(data.get('api_concurrency') || '1'));
-      const isAi = Boolean(providerPresets[provider.value]);
+      const isAi = provider.value === 'openai-compatible' || provider.value === 'anthropic-compatible';
       const completed = loadingProgress.completed || 0;
       const total = loadingProgress.total || 0;
       const percent = total ? Math.round((completed / total) * 100) : 0;
@@ -9717,7 +9740,6 @@ INDEX_HTML = r"""<!doctype html>
           <button type="button" data-view="api-log"><i class="ri-bug-line"></i><span>${escapeHtml(ui('result.api_log', 'API 调试日志'))}</span></button>
           ${apiFailureCount && !isFtbquestsResult && !isJsonResult ? `<button type="button" id="retry-api-failures"><i class="ri-refresh-line"></i><span>${escapeHtml(ui('result.retry_failed', '重试失败项'))}</span></button>` : ''}
         </div>
-        ${renderResultPriorityActions(payload)}
         ${apiFailureCount ? `
           <div class="status error">
             ${escapeHtml(formatUi('result.api_failure_notice', '汉化翻译存在异常缺失 {count} 条。可打开 API 调试日志查看报错记录，或手动重试失败项。', { count: apiFailureCount }))}
@@ -9787,31 +9809,6 @@ INDEX_HTML = r"""<!doctype html>
           bindLanguageResults();
         }
       }
-    }
-
-    function renderResultPriorityActions(payload) {
-      const summary = payload.summary || {};
-      const failed = (summary.api_failed || 0) + (summary.failed || 0) + (summary.incomplete || 0) + (summary.jar_failed || 0);
-      const risky = (payload.entries || []).filter(entry => ['failed', 'api_failed', 'incomplete', 'jar_failed'].includes(entry.status)).length;
-      if (!failed && !risky) {
-        return '';
-      }
-      const title = failed
-        ? formatUi('result.priority_failed', '优先处理 {count} 条失败项', { count: failed })
-        : formatUi('result.priority_risk', '优先复核 {count} 条风险项', { count: risky });
-      const body = failed
-        ? '建议先查看失败项或直接重试失败项，再决定是否下载最终产物。'
-        : '当前任务没有硬失败，但存在需要人工复核的风险项。';
-      return `
-        <div class="result-priority-actions" id="result-priority-actions">
-          <strong>${escapeHtml(title)}</strong>
-          <p>${escapeHtml(body)}</p>
-          <div class="settings-section-actions">
-            <button type="button" data-priority-filter="issues" class="secondary"><i class="ri-focus-3-line"></i><span>只看风险项</span></button>
-            ${failed ? `<button type="button" id="priority-retry-failures"><i class="ri-refresh-line"></i><span>${escapeHtml(ui('result.retry_failed', '重试失败项'))}</span></button>` : ''}
-          </div>
-        </div>
-      `;
     }
 
     function splitJarPath(value) {
@@ -10226,10 +10223,6 @@ INDEX_HTML = r"""<!doctype html>
       const retryFailures = document.getElementById('retry-api-failures');
       if (retryFailures) {
         retryFailures.addEventListener('click', retryApiFailures);
-      }
-      const priorityRetryFailures = document.getElementById('priority-retry-failures');
-      if (priorityRetryFailures) {
-        priorityRetryFailures.addEventListener('click', retryApiFailures);
       }
       const downloadPack = document.getElementById('download-pack');
       if (downloadPack) {
@@ -12130,6 +12123,8 @@ def make_handler(workdir: Path):
                 error="",
                 created_at=utc_timestamp(),
                 input_kind="jar",
+                input_files=[path.name for path in jar_paths],
+                primary_input=jar_paths[0].name if jar_paths else "",
                 target_locale=fields.get("target_locale", "zh_cn") or "zh_cn",
                 provider=fields.get("provider", "glossary") or "glossary",
                 model=fields.get("model", "gpt-4o-mini") or "gpt-4o-mini",
@@ -12291,6 +12286,8 @@ def make_handler(workdir: Path):
                 error="",
                 created_at=utc_timestamp(),
                 input_kind="json",
+                input_files=[path.name for path in json_paths],
+                primary_input=json_paths[0].name if json_paths else "",
                 target_locale=fields.get("target_locale", "zh_cn") or "zh_cn",
                 provider=fields.get("provider", "glossary") or "glossary",
                 model=fields.get("model", "gpt-4o-mini") or "gpt-4o-mini",
@@ -12458,6 +12455,8 @@ def make_handler(workdir: Path):
                 error="",
                 created_at=utc_timestamp(),
                 input_kind="ftbquests",
+                input_files=[input_path.name],
+                primary_input=input_path.name,
                 target_locale=fields.get("target_locale", "zh_cn") or "zh_cn",
                 provider=fields.get("provider", "glossary") or "glossary",
                 model=fields.get("model", "gpt-4o-mini") or "gpt-4o-mini",
@@ -14481,11 +14480,13 @@ def run_translate_job(
         cache_misses = 0
         shared_cache_dir = shared_cache_scope_dir(shared_cache_root, args)
         ignore_cache = bool(getattr(args, "ignore_cache", False))
+        isolate_translator = args.provider == "deep-free"
         def process_single(jar_path: Path) -> tuple[Path, list[OutputLangDocument], list[ReportEntry], list, str, bool]:
             jar_docs: list[OutputLangDocument] = []
             jar_entries: list[ReportEntry] = []
             jar_hardcoded: list = []
             source_hash = ""
+            local_translator = create_translator(args) if isolate_translator else translator
             cache_key = shared_cache_key(jar_path)
             try:
                 with ZipFile(jar_path) as zf:
@@ -14506,7 +14507,7 @@ def run_translate_job(
                         save_checkpoint(out_dir, jar_path.stem, jar_docs, jar_entries, source_hash=source_hash, config_hash=config_hash)
                         return jar_path, jar_docs, jar_entries, jar_hardcoded, source_hash, True
             try:
-                jar_docs, jar_entries, source_hash = process_jar(jar_path, args, translator)
+                jar_docs, jar_entries, source_hash = process_jar(jar_path, args, local_translator)
                 if args.scan_hardcoded:
                     jar_hardcoded = scan_jar_for_hardcoded(str(jar_path), max_entries=args.hardcoded_limit)
             except (BadZipFile, RuntimeError, ValueError) as exc:
@@ -14829,6 +14830,10 @@ def build_job_history_record(job_id: str, job: dict[str, Any]) -> dict[str, Any]
     result = job.get("result") if isinstance(job.get("result"), dict) else {}
     summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
     input_kind = str(result.get("kind") or job.get("input_kind") or "jar")
+    raw_input_files = result.get("input_files", job.get("input_files"))
+    primary_input_value = result.get("primary_input", job.get("primary_input"))
+    input_files = normalize_history_input_files(raw_input_files if raw_input_files is not None else primary_input_value)
+    primary_input = str(primary_input_value or (input_files[0] if input_files else ""))
     success_count = int(summary.get("translated", 0) or 0) + int(summary.get("existing", 0) or 0)
     failure_count = (
         int(summary.get("api_failed", 0) or 0)
@@ -14842,6 +14847,8 @@ def build_job_history_record(job_id: str, job: dict[str, Any]) -> dict[str, Any]
         "updated_at": utc_timestamp(),
         "status": str(job.get("status") or "unknown"),
         "input_kind": input_kind,
+        "input_files": input_files,
+        "primary_input": primary_input,
         "target_locale": str(job.get("target_locale") or result.get("target_locale") or ""),
         "provider": str(result.get("provider") or job.get("provider") or ""),
         "model": str(result.get("model") or job.get("model") or ""),
@@ -14854,6 +14861,20 @@ def build_job_history_record(job_id: str, job: dict[str, Any]) -> dict[str, Any]
         "download_files": history_download_files(job_id, result),
         "error": str(job.get("error") or ""),
     }
+
+
+def normalize_history_input_files(value: Any) -> list[str]:
+    if isinstance(value, str):
+        cleaned = value.strip()
+        return [cleaned] if cleaned else []
+    if isinstance(value, list):
+        normalized: list[str] = []
+        for item in value:
+            text = str(item or "").strip()
+            if text:
+                normalized.append(text)
+        return normalized
+    return []
 
 
 def history_downloads(result: dict[str, Any]) -> dict[str, str]:
@@ -14956,9 +14977,35 @@ def read_job_history(workdir: Path, limit: int = 100) -> list[dict[str, Any]]:
         except json.JSONDecodeError:
             continue
         if isinstance(value, dict):
+            input_files = normalize_history_input_files(value.get("input_files", value.get("primary_input")))
+            value["input_files"] = input_files
+            if not value.get("primary_input"):
+                inferred = infer_history_primary_input(value)
+                if inferred:
+                    value["primary_input"] = inferred
             value["download_status"] = history_download_status(workdir, value)
             records.append(value)
     return list(reversed(records[-limit:])) if limit > 0 else list(reversed(records))
+
+
+def infer_history_primary_input(record: dict[str, Any]) -> str:
+    input_files = normalize_history_input_files(record.get("input_files"))
+    if input_files:
+        return input_files[0]
+    downloads = record.get("downloads") if isinstance(record.get("downloads"), dict) else {}
+    preferred_labels = ["pack", "json", "ftbquests_patch"]
+    for label in preferred_labels:
+        candidate = history_primary_input_from_download(downloads.get(label))
+        if candidate:
+            return candidate
+    return ""
+
+
+def history_primary_input_from_download(url: Any) -> str:
+    path = urlparse(str(url or "")).path
+    filename = Path(unquote(path)).name
+    cleaned = filename.strip()
+    return cleaned if cleaned else ""
 
 
 def utc_timestamp() -> str:

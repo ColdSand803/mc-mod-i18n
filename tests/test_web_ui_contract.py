@@ -413,6 +413,24 @@ class WebUiContractTest(unittest.TestCase):
         self.assertIn("providerBadge.setAttribute('data-provider-help-active', provider.value === 'deep-free' ? 'true' : 'false');", INDEX_HTML)
         self.assertIn(".api-box [data-provider-field][hidden] {\n      display: none !important;", INDEX_HTML)
 
+    def test_provider_panel_help_popover_does_not_force_horizontal_scroll(self) -> None:
+        self.assertIn(".config-panel,\n    .results-panel {\n      max-height: calc(100vh - 104px);", INDEX_HTML)
+        self.assertIn("overflow-y: auto;", INDEX_HTML)
+        self.assertIn("overflow-x: hidden;", INDEX_HTML)
+        self.assertIn(".provider-badge-wrap {\n      position: relative;", INDEX_HTML)
+        self.assertIn("min-width: 0;", INDEX_HTML)
+        self.assertIn(".api-box-head .provider-badge-wrap .field-help {\n      position: absolute;", INDEX_HTML)
+        self.assertIn("width: min(420px, min(72vw, calc(100% - 12px)));", INDEX_HTML)
+        self.assertNotIn(".api-box-head .provider-badge-wrap .field-help {\n      position: absolute;\n      left: 0;\n      top: calc(100% + 7px);\n      z-index: 16;\n      display: flex;\n      width: max-content;", INDEX_HTML)
+
+    def test_loading_ai_copy_is_reserved_for_compatible_ai_providers(self) -> None:
+        self.assertIn("const isAi = provider.value === 'openai-compatible' || provider.value === 'anthropic-compatible';", INDEX_HTML)
+        self.assertNotIn("const isAi = Boolean(providerPresets[provider.value]);", INDEX_HTML)
+        self.assertIn("translating: isAi ? ui('loading.stage.translating_ai', '正在分批调用 AI 翻译接口') : ui('loading.stage.translating', '正在生成语言文件')", INDEX_HTML)
+        self.assertIn(": (isAi ? formatUi('loading.request_progress', '翻译请求 {progress}', { progress: progressText }) : ui('loading.running', '任务运行中')))));", INDEX_HTML)
+        self.assertIn("const detail = isAi\n        ? formatUi('loading.detail_ai'", INDEX_HTML)
+        self.assertIn(": formatUi('loading.detail', '翻译器：{provider}，{sourceLabel}：{sourceCount} 个。{cacheText}耗时 {elapsed}s。'", INDEX_HTML)
+
     def test_docs_sidebar_and_help_preview_are_tightened_toward_reference_density(self) -> None:
         self.assertIn(".docs-list.compact {\n      gap: 8px;", INDEX_HTML)
         self.assertIn(".docs-link {\n      display: grid;\n      align-content: center;\n      gap: 6px;", INDEX_HTML)
@@ -478,10 +496,47 @@ class WebUiContractTest(unittest.TestCase):
         self.assertIn(".history-master,\n    .history-detail {\n      min-width: 0;", INDEX_HTML)
         self.assertIn(".history-list {\n      min-height: 0;", INDEX_HTML)
         self.assertIn(".history-detail-body {\n      min-height: 0;", INDEX_HTML)
+        self.assertIn("grid-template-rows: minmax(0, 1fr);", INDEX_HTML)
         self.assertIn("grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);", INDEX_HTML)
         self.assertIn("class=\"history-task-card ${isActive ? 'active' : ''}\"", INDEX_HTML)
         self.assertIn("class=\"history-artifacts\"", INDEX_HTML)
         self.assertIn('overflow-y: auto;', INDEX_HTML)
+
+    def test_history_task_titles_render_primary_input_without_single_line_clamp(self) -> None:
+        self.assertIn("record.primary_input", INDEX_HTML)
+        self.assertIn("const title = record.primary_input || historyKindLabel(record.input_kind);", INDEX_HTML)
+        self.assertIn("return providerName ? `${title} · ${providerName}` : title;", INDEX_HTML)
+        self.assertIn(".history-task-title {\n      display: -webkit-box;", INDEX_HTML)
+        self.assertIn("-webkit-line-clamp: 2;", INDEX_HTML)
+        self.assertNotIn(".history-task-title,\n    .history-task-id,\n    .history-task-meta,", INDEX_HTML)
+
+    def test_history_cards_keep_status_and_progress_text_fully_visible(self) -> None:
+        self.assertIn(".history-status-chip {\n      display: inline-flex;", INDEX_HTML)
+        self.assertIn("padding: 4px 9px;", INDEX_HTML)
+        self.assertIn("line-height: 1.25;", INDEX_HTML)
+        self.assertIn(".history-progress-text {\n      display: flex;", INDEX_HTML)
+        self.assertIn("align-items: center;", INDEX_HTML)
+        self.assertIn("line-height: 1.4;", INDEX_HTML)
+        self.assertNotIn(".history-status-chip {\n      display: inline-flex;\n      align-items: center;\n      gap: 5px;\n      min-height: 24px;\n      padding: 0 9px;", INDEX_HTML)
+
+    def test_history_active_card_uses_stronger_selection_motion(self) -> None:
+        self.assertIn(".history-task-card {\n      width: 100%;", INDEX_HTML)
+        self.assertIn("transition: background-color 140ms ease-out, border-color 140ms ease-out, color 120ms ease-out, transform 160ms ease-out, box-shadow 160ms ease-out;", INDEX_HTML)
+        self.assertIn(".history-task-card.active {\n      border-left-color: var(--accent);", INDEX_HTML)
+        self.assertIn("box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent);", INDEX_HTML)
+        self.assertIn("transform: translateX(4px);", INDEX_HTML)
+
+    def test_history_artifact_rows_use_left_aligned_three_column_layout(self) -> None:
+        self.assertIn(".history-artifact-row {\n      display: grid;", INDEX_HTML)
+        self.assertIn("grid-template-columns: 40px minmax(0, 1fr) auto;", INDEX_HTML)
+        self.assertIn("align-items: center;", INDEX_HTML)
+        self.assertIn(".history-artifact-copy {\n      min-width: 0;", INDEX_HTML)
+        self.assertIn("justify-items: start;", INDEX_HTML)
+        self.assertIn("text-align: left;", INDEX_HTML)
+
+    def test_history_time_format_omits_utc_suffix_marker(self) -> None:
+        self.assertIn("return new Date(text).toLocaleString('sv-SE', { hour12: false }).replace(',', '') + `.${String(date.getMilliseconds()).padStart(3, '0')}`;", INDEX_HTML)
+        self.assertNotIn("return text.replace('T', ' ').replace(/\\+00:00$/, ' UTC').replace(/Z$/, '');", INDEX_HTML)
 
     def test_ghost_dropdowns_have_consistent_motion(self) -> None:
         self.assertIn("--dropdown-motion-offset", INDEX_HTML)
@@ -725,12 +780,6 @@ class WebUiContractTest(unittest.TestCase):
         self.assertIn("fetch('/api/preflight'", INDEX_HTML)
         self.assertIn("preflight.blocked", INDEX_HTML)
         self.assertIn("preflight.summary", INDEX_HTML)
-
-    def test_results_prioritize_failures_and_risk_actions(self) -> None:
-        self.assertIn('id="result-priority-actions"', INDEX_HTML)
-        self.assertIn("renderResultPriorityActions", INDEX_HTML)
-        self.assertIn("result.priority_failed", INDEX_HTML)
-        self.assertIn("result.priority_risk", INDEX_HTML)
 
     def test_advanced_api_help_uses_focus_popover_motion(self) -> None:
         self.assertIn(".api-box label:focus-within .field-help", INDEX_HTML)

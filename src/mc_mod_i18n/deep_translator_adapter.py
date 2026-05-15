@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from functools import lru_cache
+from queue import Empty, Queue
 from typing import Any, Callable
 
-from .translator import TranslationItem, Translator
+from .translator import TranslationItem, Translator, chunked
 
 
 @dataclass(frozen=True)
@@ -231,6 +233,9 @@ class DeepFreeTranslator(Translator):
         unsupported_mode: str = "copy",
         request_timeout: float = 10.0,
         engine_factories: dict[str, Callable[[str, str, float], Any]] | None = None,
+        concurrency: int = 1,
+        batch_size: int = 40,
+        progress_callback: Callable[..., None] | None = None,
     ) -> None:
         if unsupported_mode != "copy":
             raise ValueError("deep-free currently supports unsupported_mode='copy' only")
@@ -242,6 +247,9 @@ class DeepFreeTranslator(Translator):
         self.request_timeout = max(1.0, float(request_timeout or 10.0))
         self.support = deep_free_locale_support(self.source_locale, self.target_locale)
         self.engine_factories = dict(engine_factories or {})
+        self.concurrency = max(1, concurrency)
+        self.batch_size = max(1, batch_size)
+        self.progress_callback = progress_callback
         self.failed_items: dict[str, str] = {}
         self._engine_cache: dict[str, Any] = {}
         self._engine_build_count: dict[str, int] = {}
@@ -268,37 +276,85 @@ class DeepFreeTranslator(Translator):
                 translations[item.id] = item.text
                 failures[item.id] = message
             return translations, failures
-        remaining_items = list(items)
+
+        chunks = chunked(items, self.batch_size)
+        total_chunks = len(chunks)
+        workers = max(1, min(self.concurrency, total_chunks))
+        self._report_progress(0, total_chunks)
+
+        chunk_queue: Queue[list[TranslationItem]] = Queue()
+        for chunk in chunks:
+            chunk_queue.put(chunk)
+
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = [executor.submit(self._translate_chunk_worker, chunk_queue) for _ in range(workers)]
+            for future in as_completed(futures):
+                worker_translations, worker_failures, completed = future.result()
+                translations.update(worker_translations)
+                failures.update(worker_failures)
+                self._report_progress(completed, 0)
+
+        return translations, failures
+
+    def _report_progress(self, completed: int, total: int) -> None:
+        if self.progress_callback:
+            self.progress_callback(completed, total)
+
+    def _translate_chunk_worker(
+        self,
+        chunk_queue: Queue[list[TranslationItem]],
+    ) -> tuple[dict[str, str], dict[str, str], int]:
+        translations: dict[str, str] = {}
+        failures: dict[str, str] = {}
+        completed = 0
+        while True:
+            try:
+                chunk = chunk_queue.get_nowait()
+            except Empty:
+                break
+            chunk_translations, chunk_failures = self._translate_chunk_with_fallback(chunk)
+            translations.update(chunk_translations)
+            failures.update(chunk_failures)
+            completed += 1
+        return translations, failures, completed
+
+    def _translate_chunk_with_fallback(
+        self,
+        items: list[TranslationItem],
+    ) -> tuple[dict[str, str], dict[str, str]]:
+        translations: dict[str, str] = {}
+        failures: dict[str, str] = {}
         item_errors: dict[str, list[str]] = {item.id: [] for item in items}
+        remaining = list(items)
 
         for engine_name in self.engine_order:
-            if not remaining_items:
+            if not remaining:
                 break
             source_engine_locale = self._source_engine_locale(engine_name)
             target_engine_locale = self._target_engine_locale(engine_name)
             if not source_engine_locale or not target_engine_locale:
-                for item in remaining_items:
+                for item in remaining:
                     item_errors[item.id].append(f"{engine_name}: unsupported locale mapping")
                 continue
             try:
                 engine = self._get_engine(engine_name, source_engine_locale, target_engine_locale)
-                batch_result = self._translate_with_engine(engine, remaining_items)
+                batch_result = self._translate_with_engine(engine, remaining)
             except Exception as exc:  # noqa: BLE001
-                for item in remaining_items:
+                for item in remaining:
                     item_errors[item.id].append(f"{engine_name}: {exc}")
                 continue
 
             next_remaining: list[TranslationItem] = []
-            for item in remaining_items:
+            for item in remaining:
                 translated = batch_result.get(item.id)
                 if translated is None:
                     item_errors[item.id].append(f"{engine_name}: empty result")
                     next_remaining.append(item)
                     continue
                 translations[item.id] = translated
-            remaining_items = next_remaining
+            remaining = next_remaining
 
-        for item in remaining_items:
+        for item in remaining:
             translations[item.id] = item.text
             failures[item.id] = "; ".join(item_errors[item.id]) if item_errors[item.id] else "deep-free: no engine available"
         return translations, failures

@@ -232,6 +232,9 @@ def create_translator(args: argparse.Namespace):
             source_locale=getattr(args, "source_locale", "en_us"),
             target_locale=getattr(args, "target_locale", "zh_cn"),
             request_timeout=max(1.0, getattr(args, "api_timeout", 10.0)),
+            concurrency=getattr(args, "api_concurrency", 1),
+            batch_size=max(1, getattr(args, "api_batch_size", 40)),
+            progress_callback=getattr(args, "progress_callback", None),
         )
     elif args.provider == "libretranslate":
         translator = LibreTranslateTranslator(

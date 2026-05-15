@@ -15,6 +15,7 @@ class JobHistoryTest(unittest.TestCase):
             {
                 "status": "done",
                 "created_at": "2026-05-13T10:00:00+08:00",
+                "input_files": ["demo-en_us.json", "extra.json"],
                 "result": {
                     "kind": "json",
                     "provider": "openai-compatible",
@@ -35,6 +36,8 @@ class JobHistoryTest(unittest.TestCase):
         self.assertEqual("done", record["status"])
         self.assertEqual(3, record["success_count"])
         self.assertEqual(1, record["failure_count"])
+        self.assertEqual(["demo-en_us.json", "extra.json"], record["input_files"])
+        self.assertEqual("demo-en_us.json", record["primary_input"])
         self.assertEqual("/download/abc123/out/json-locales-zh_cn.zip", record["downloads"]["json"])
         self.assertEqual("/download/abc123/out/report.json", record["downloads"]["report_json"])
         self.assertEqual("/download/abc123/out/report.csv", record["downloads"]["report_csv"])
@@ -42,6 +45,24 @@ class JobHistoryTest(unittest.TestCase):
         self.assertEqual("out/report.json", record["download_files"]["report_json"])
         self.assertEqual("out/report.csv", record["download_files"]["report_csv"])
         self.assertNotIn("sk-secret", json.dumps(record, ensure_ascii=False))
+
+    def test_build_record_normalizes_primary_input_from_scalar_value(self) -> None:
+        record = build_job_history_record(
+            "jar001",
+            {
+                "status": "done",
+                "created_at": "2026-05-13T10:00:00+08:00",
+                "primary_input": "demo-mod.jar",
+                "result": {
+                    "kind": "jar",
+                    "provider": "deep-free",
+                    "summary": {"translated": 1},
+                },
+            },
+        )
+
+        self.assertEqual(["demo-mod.jar"], record["input_files"])
+        self.assertEqual("demo-mod.jar", record["primary_input"])
 
     def test_history_roundtrip_keeps_newest_with_limit(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
