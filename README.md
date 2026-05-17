@@ -16,6 +16,20 @@ python -m mc_mod_i18n desktop
 
 桌面依赖 `pywebview`。当前 Windows 桌面打包建议使用 Python 3.10-3.12；Python 3.14 环境下 `pywebview` 的 `pythonnet` 依赖可能无法构建。
 
+如果你在仓库内已经安装了本地 Python 3.12（例如 `.\.tools\python-3.12.10\python.exe`），Windows 下推荐直接使用它启动和打包，避免系统里多个 Python 环境混用：
+
+```powershell
+$env:PYTHONPATH="src"
+.\.tools\python-3.12.10\python.exe -m pip install ".[desktop]"
+.\.tools\python-3.12.10\python.exe -m mc_mod_i18n desktop
+```
+
+如需在当前仓库内安装这个本地 Python，可运行：
+
+```powershell
+.\scripts\install_local_python312.ps1
+```
+
 启动本地 UI：
 
 ```bash
@@ -164,6 +178,23 @@ dist/
 ```powershell
 .\scripts\build_exe.ps1 -InstallDesktopDeps -Clean
 ```
+
+如果你正在使用仓库内的 `.\.tools\python-3.12.10\python.exe`，构建脚本会优先使用它，无需额外改 `PATH`。
+
+首次在当前仓库准备桌面打包环境，推荐直接运行：
+
+```powershell
+.\scripts\build_exe.ps1 -InstallPyInstaller -InstallDesktopDeps -Clean
+```
+
+如果 `-Clean` 阶段提示 `dist\mc-mod-i18n\_internal\*.dll` 被占用，请先关闭已经打开的 `mc-mod-i18n.exe`，或执行：
+
+```powershell
+Get-Process | Where-Object { $_.ProcessName -like '*mc-mod-i18n*' -or $_.ProcessName -like '*python*' }
+Stop-Process -Id <PID>
+```
+
+然后重新执行打包命令。
 
 输出：
 
