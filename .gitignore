@@ -36,3 +36,8 @@ Thumbs.db
 .claude
 .codex
 .agents/
+
+# Local toolchains
+.tools/.gitkeep
+.tools/python-3.12.10/
+.tools/python-3.12.10-amd64.exe
