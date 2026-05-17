@@ -12,6 +12,11 @@ dependencies = [
     "deep-translator>=1.11,<2",
 ]
 
+[project.optional-dependencies]
+desktop = [
+    "pywebview>=5,<6",
+]
+
 [project.scripts]
 mc-mod-i18n = "mc_mod_i18n.cli:main"
 

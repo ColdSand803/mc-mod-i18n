@@ -8,10 +8,16 @@ from pathlib import Path
 import unittest
 
 from mc_mod_i18n.ui_i18n import merged_catalog
-from mc_mod_i18n.web import INDEX_HTML, normalize_models_url, parse_models_response
+from mc_mod_i18n.web import INDEX_HTML, normalize_models_url, parse_models_response, unique_filename
 
 
 class WebUiContractTest(unittest.TestCase):
+    def test_unique_filename_preserves_multiple_json_uploads(self) -> None:
+        used: set[str] = set()
+        self.assertEqual("en_us.json", unique_filename("en_us.json", used))
+        self.assertEqual("en_us-2.json", unique_filename("en_us.json", used))
+        self.assertEqual("en_us-3.json", unique_filename("folder/en_us.json", used))
+
     def test_browser_smoke_script_covers_core_ui_interactions(self) -> None:
         script_path = Path(__file__).resolve().parents[1] / "scripts" / "ui_smoke_test.mjs"
         self.assertTrue(script_path.is_file(), "scripts/ui_smoke_test.mjs should exist")
@@ -49,18 +55,88 @@ class WebUiContractTest(unittest.TestCase):
         self.assertIn("输出策略", INDEX_HTML)
         self.assertIn("data-advanced-panel", INDEX_HTML)
         self.assertIn("workflow-step", INDEX_HTML)
-        self.assertIn("步骤 1", INDEX_HTML)
-        self.assertIn("步骤 4", INDEX_HTML)
+        self.assertIn('<div class="workflow-step"><strong>选择输入</strong></div>', INDEX_HTML)
+        self.assertIn('<div class="workflow-step"><strong>运行预检并开始</strong></div>', INDEX_HTML)
+        self.assertNotIn('<div class="workflow-step"><span>1</span>', INDEX_HTML)
+        self.assertNotIn('<div class="workflow-step"><span>4</span>', INDEX_HTML)
+        self.assertNotIn('<div class="workflow-step"><span>步骤 1</span>', INDEX_HTML)
+        self.assertNotIn('<div class="workflow-step"><span>步骤 4</span>', INDEX_HTML)
+        self.assertIn("可选增强项", INDEX_HTML)
+        self.assertIn('class="workflow-rail"', INDEX_HTML)
+        self.assertIn('class="workflow-step-item"', INDEX_HTML)
+        self.assertIn('class="workflow-node"', INDEX_HTML)
+        self.assertIn('class="workspace-option-group workflow-step-card"', INDEX_HTML)
+        self.assertIn(".workflow-step-item::before", INDEX_HTML)
+        self.assertIn("background: var(--line);", INDEX_HTML)
+        self.assertIn("color: var(--accent);", INDEX_HTML)
+        self.assertIn('<details class="inline-advanced-panel" data-advanced-panel>', INDEX_HTML)
+        self.assertIn('class="inline-advanced-panel-body"', INDEX_HTML)
+        self.assertIn(".inline-advanced-panel-body > .api-box", INDEX_HTML)
+        self.assertIn("background: transparent;", INDEX_HTML)
+        self.assertNotIn('<details class="form-card" data-advanced-panel>', INDEX_HTML)
+        self.assertNotIn('data-advanced-panel open', INDEX_HTML)
 
     def test_header_has_single_navigation_system(self) -> None:
         self.assertNotIn('<div class="top-tabs">', INDEX_HTML)
         self.assertNotIn('class="top-search"', INDEX_HTML)
         self.assertIn("当前任务", INDEX_HTML)
 
-    def test_result_summary_groups_outputs_quality_and_performance(self) -> None:
-        self.assertIn("输出产物", INDEX_HTML)
-        self.assertIn("质量概览", INDEX_HTML)
-        self.assertIn("性能概览", INDEX_HTML)
+    def test_side_nav_report_and_hardcoded_switch_result_views(self) -> None:
+        self.assertIn("if (['language', 'report', 'hardcoded', 'api-log'].includes(view))", INDEX_HTML)
+        self.assertIn("resultState.resultView = view;", INDEX_HTML)
+        self.assertIn('data-view="report"', INDEX_HTML)
+        self.assertIn('data-view="hardcoded"', INDEX_HTML)
+
+    def test_result_summary_uses_clickable_cards_with_details(self) -> None:
+        self.assertIn('class="summary-card"', INDEX_HTML)
+        self.assertIn('data-summary-card="${escapeHtml(card.key)}"', INDEX_HTML)
+        self.assertIn('aria-haspopup="dialog"', INDEX_HTML)
+        self.assertIn("bindResultSummaryCards", INDEX_HTML)
+        self.assertIn('class="summary-popover"', INDEX_HTML)
+        self.assertIn(".summary-popover[hidden]", INDEX_HTML)
+        self.assertIn('role="dialog"', INDEX_HTML)
+        self.assertIn('data-summary-close', INDEX_HTML)
+        self.assertIn('data-summary-popover="${escapeHtml(card.key)}"', INDEX_HTML)
+        self.assertIn("closeSummaryPopover();", INDEX_HTML)
+        self.assertIn("bindSummaryOutsideClose", INDEX_HTML)
+        self.assertIn("event.target.closest('[data-summary-card], [data-summary-popover]')", INDEX_HTML)
+        self.assertIn("event.key === 'Escape'", INDEX_HTML)
+        self.assertNotIn("positionSummaryPopover(key);\n        });\n      });", INDEX_HTML)
+        self.assertNotIn('class="summary-modal-backdrop"', INDEX_HTML)
+        self.assertNotIn('class="summary-modal"', INDEX_HTML)
+        self.assertNotIn('class="summary-detail"', INDEX_HTML)
+        self.assertIn("result.processed_jars", INDEX_HTML)
+        self.assertIn("result.new_translation_entries", INDEX_HTML)
+        self.assertIn("result.average_elapsed", INDEX_HTML)
+        self.assertIn("result.report_generated", INDEX_HTML)
+        self.assertIn("已处理 JAR", INDEX_HTML)
+        self.assertIn("新增翻译条目", INDEX_HTML)
+        self.assertIn("平均耗时", INDEX_HTML)
+        self.assertIn("报告生成", INDEX_HTML)
+
+    def test_result_priority_area_surfaces_download_failures_and_review(self) -> None:
+        self.assertNotIn("${renderResultPriorityActions(payload)}", INDEX_HTML)
+        self.assertIn('class="status error api-failure-notice"', INDEX_HTML)
+        self.assertIn('class="api-failure-copy"', INDEX_HTML)
+        self.assertIn("result.api_failure_title", INDEX_HTML)
+        self.assertIn("result.api_failure_action", INDEX_HTML)
+        self.assertIn('class="danger-button" id="retry-api-failures"', INDEX_HTML)
+        self.assertNotIn("result.ready_to_download", INDEX_HTML)
+        self.assertNotIn("renderResultPriorityActions", INDEX_HTML)
+        self.assertNotIn("result.priority_failures_desc", INDEX_HTML)
+        self.assertNotIn('data-priority-filter="issues"', INDEX_HTML)
+        self.assertNotIn('data-priority-review="diff"', INDEX_HTML)
+        self.assertIn("resultState.languageViewMode = hasIssueEntries(payload) ? 'diff' : 'table';", INDEX_HTML)
+
+    def test_result_language_tabs_live_in_card_header(self) -> None:
+        self.assertIn('<div class="view-head">\n                <div class="view-head-main">', INDEX_HTML)
+        self.assertIn('<div class="tabs">\n                    <button type="button" data-result-tab="language"', INDEX_HTML)
+        self.assertNotIn('<div class="view-body">\n                <div class="tabs">', INDEX_HTML)
+        self.assertIn(".view-head .tabs", INDEX_HTML)
+        self.assertIn(".view-head-side", INDEX_HTML)
+        self.assertIn("function setResultView(view)", INDEX_HTML)
+        self.assertIn("switchView(nextView);", INDEX_HTML)
+        self.assertIn("event.stopPropagation();", INDEX_HTML)
 
     def test_language_controls_support_minecraft_locale_input(self) -> None:
         self.assertIn("minecraftLocales", INDEX_HTML)
@@ -149,6 +225,11 @@ class WebUiContractTest(unittest.TestCase):
         self.assertIn('id="settings-page"', INDEX_HTML)
         self.assertIn('data-main-view="settings"', INDEX_HTML)
         self.assertIn('class="settings-layout"', INDEX_HTML)
+        self.assertIn('class="settings-nav"', INDEX_HTML)
+        self.assertIn('class="settings-content"', INDEX_HTML)
+        self.assertIn('data-settings-target="settings-cache-section"', INDEX_HTML)
+        self.assertIn('data-settings-target="settings-presets-section"', INDEX_HTML)
+        self.assertIn("function switchSettingsSection", INDEX_HTML)
         self.assertIn('id="settings-cache-section"', INDEX_HTML)
         self.assertIn('id="settings-locale-section"', INDEX_HTML)
         self.assertIn('class="settings-footer"', INDEX_HTML)
@@ -183,6 +264,13 @@ class WebUiContractTest(unittest.TestCase):
         self.assertIn('id="settings-presets-section"', INDEX_HTML)
         self.assertIn('id="settings-preset-name"', INDEX_HTML)
         self.assertIn('id="settings-preset-select"', INDEX_HTML)
+        self.assertIn('id="settings-preset-select-shell"', INDEX_HTML)
+        self.assertIn('id="settings-preset-menu" role="listbox"', INDEX_HTML)
+        self.assertIn('data-select-trigger="settings_preset"', INDEX_HTML)
+        self.assertIn('data-preset-value="${escapeHtml(item.name)}"', INDEX_HTML)
+        self.assertIn("bindSettingsPresetMenu", INDEX_HTML)
+        self.assertIn("syncSettingsPresetDisplay", INDEX_HTML)
+        self.assertIn("settings.preset_empty", INDEX_HTML)
         self.assertIn('id="settings-preset-save"', INDEX_HTML)
         self.assertIn('id="settings-preset-apply"', INDEX_HTML)
         self.assertIn('id="settings-preset-delete"', INDEX_HTML)
@@ -207,8 +295,10 @@ class WebUiContractTest(unittest.TestCase):
         self.assertIn("settings.memory_section", INDEX_HTML)
 
     def test_settings_layout_uses_content_sized_rows_to_prevent_zoom_overlap(self) -> None:
-        self.assertIn("grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));", INDEX_HTML)
-        self.assertIn("grid-auto-flow: row;", INDEX_HTML)
+        self.assertIn("grid-template-columns: 220px minmax(0, 1fr);", INDEX_HTML)
+        self.assertIn(".settings-nav", INDEX_HTML)
+        self.assertIn(".settings-content", INDEX_HTML)
+        self.assertIn(".settings-section[hidden]", INDEX_HTML)
         self.assertIn("align-content: start;", INDEX_HTML)
         self.assertIn("min-width: 0;", INDEX_HTML)
         self.assertIn("height: fit-content;", INDEX_HTML)
@@ -548,6 +638,16 @@ class WebUiContractTest(unittest.TestCase):
         self.assertIn(".ghost-select .chevron", INDEX_HTML)
         self.assertIn("@media (prefers-reduced-motion: reduce)", INDEX_HTML)
 
+    def test_long_dropdown_labels_do_not_expand_workspace_cards(self) -> None:
+        self.assertIn(".grid-2 > *,\n    .grid-3 > * {\n      min-width: 0;", INDEX_HTML)
+        self.assertIn(".ghost-select,\n    .ghost-file {\n      position: relative;\n      display: grid;\n      gap: 6px;\n      min-width: 0;", INDEX_HTML)
+        self.assertIn(".ghost-select .control,\n    .ghost-file .control {\n      display: flex;\n      align-items: center;\n      justify-content: space-between;\n      gap: 12px;\n      min-width: 0;", INDEX_HTML)
+        self.assertIn("max-width: 100%;\n      box-sizing: border-box;\n      cursor: pointer;", INDEX_HTML)
+        self.assertIn(".ghost-menu {\n      position: absolute;", INDEX_HTML)
+        self.assertIn("min-width: 0;\n      max-width: 100%;\n      box-sizing: border-box;\n      max-height: 280px;", INDEX_HTML)
+        self.assertIn("width: 100%;\n      min-width: 0;\n      max-width: 100%;\n      box-sizing: border-box;", INDEX_HTML)
+        self.assertIn(".ghost-option strong,\n    .ghost-option span {\n      min-width: 0;\n      overflow: hidden;\n      text-overflow: ellipsis;", INDEX_HTML)
+
     def test_failed_retry_controls_and_status_trace_are_exposed(self) -> None:
         self.assertIn('id="retry-api-failures"', INDEX_HTML)
         self.assertIn("retryApiFailures", INDEX_HTML)
@@ -556,10 +656,10 @@ class WebUiContractTest(unittest.TestCase):
         self.assertIn("retry_previous_status", INDEX_HTML)
         self.assertIn("result.retry_status_detail", INDEX_HTML)
 
-    def test_result_report_export_actions_are_exposed(self) -> None:
-        self.assertIn('id="export-report-json"', INDEX_HTML)
-        self.assertIn('id="export-report-csv"', INDEX_HTML)
-        self.assertIn('id="export-failed-json"', INDEX_HTML)
+    def test_result_report_export_actions_are_removed_from_primary_actions(self) -> None:
+        self.assertNotIn('id="export-report-json"', INDEX_HTML)
+        self.assertNotIn('id="export-report-csv"', INDEX_HTML)
+        self.assertNotIn('id="export-failed-json"', INDEX_HTML)
         self.assertIn("exportReportJson", INDEX_HTML)
         self.assertIn("exportReportCsv", INDEX_HTML)
         self.assertIn("exportFailedItemsJson", INDEX_HTML)
@@ -567,28 +667,48 @@ class WebUiContractTest(unittest.TestCase):
         self.assertIn("result.export_report_csv", INDEX_HTML)
         self.assertIn("result.export_failed_json", INDEX_HTML)
 
-    def test_hardcoded_workbench_explains_runtime_patch_requirement(self) -> None:
-        self.assertIn("result.hardcoded_runtime_note", INDEX_HTML)
-        self.assertIn("运行时补丁 Mod", INDEX_HTML)
+    def test_result_card_header_hosts_language_and_hardcoded_actions(self) -> None:
+        self.assertIn("function renderResultHeadActions", INDEX_HTML)
+        self.assertIn('class="view-head-actions"', INDEX_HTML)
+        self.assertIn('id="export-language-edits"', INDEX_HTML)
+        self.assertIn('id="import-hardcoded"', INDEX_HTML)
+        self.assertIn('id="ai-translate-hardcoded"', INDEX_HTML)
+        self.assertIn('id="export-hardcoded"', INDEX_HTML)
+        self.assertIn("选择候选、AI 翻译或导出映射", INDEX_HTML)
+        self.assertIn("可搜索并导出人工修改", INDEX_HTML)
+        self.assertNotIn("result.hardcoded_workbench", INDEX_HTML)
+        self.assertNotIn("硬编码映射工作台", INDEX_HTML)
+        self.assertNotIn("hardcoded-head", INDEX_HTML)
 
     def test_output_preview_exposes_status_filter_diff_summary_and_json_metadata(self) -> None:
-        self.assertIn('id="language-status-filter"', INDEX_HTML)
-        self.assertIn('id="language-condition-filter"', INDEX_HTML)
+        self.assertIn('id="language-status-filter-shell"', INDEX_HTML)
+        self.assertIn('id="language-status-filter-menu"', INDEX_HTML)
+        self.assertIn('id="language-condition-filter-shell"', INDEX_HTML)
+        self.assertIn('id="language-condition-filter-menu"', INDEX_HTML)
         self.assertIn('id="language-view-mode"', INDEX_HTML)
         self.assertIn("languageConditionFilter", INDEX_HTML)
         self.assertIn("languageViewMode", INDEX_HTML)
-        self.assertIn("data-language-condition", INDEX_HTML)
+        self.assertIn("data-language-filter-kind", INDEX_HTML)
+        self.assertIn("data-language-filter-value", INDEX_HTML)
         self.assertIn("data-language-view", INDEX_HTML)
         self.assertIn("data-language-row-issue", INDEX_HTML)
         self.assertIn("['failed', 'api_failed', 'incomplete', 'jar_failed'].includes(entry.status)", INDEX_HTML)
-        self.assertIn("data-language-status", INDEX_HTML)
         self.assertIn("languageStatusFilter", INDEX_HTML)
         self.assertIn("renderLanguageStatusFilters", INDEX_HTML)
         self.assertIn("renderLanguageConditionFilters", INDEX_HTML)
+        self.assertIn("bindLanguageFilterMenu", INDEX_HTML)
+        self.assertIn('class="toolbar-filter-label">JAR:', INDEX_HTML)
+        self.assertIn("result.translation_status_filter", INDEX_HTML)
+        self.assertIn("result.text_status_filter", INDEX_HTML)
+        self.assertIn("翻译状态", INDEX_HTML)
+        self.assertIn("译文状态", INDEX_HTML)
         self.assertIn("renderLanguageDiffCards", INDEX_HTML)
         self.assertIn("language-diff-card", INDEX_HTML)
-        self.assertIn('id="language-preview-summary"', INDEX_HTML)
-        self.assertIn("renderLanguagePreviewSummary", INDEX_HTML)
+        self.assertNotIn('id="language-preview-summary"', INDEX_HTML)
+        self.assertNotIn("renderLanguagePreviewSummary", INDEX_HTML)
+        self.assertNotIn("result.preview_visible", INDEX_HTML)
+        self.assertNotIn("result.preview_changed", INDEX_HTML)
+        self.assertNotIn("result.preview_issues", INDEX_HTML)
         self.assertIn("diff-badge", INDEX_HTML)
         self.assertIn("issue-badge", INDEX_HTML)
         self.assertIn("json_metadata_preview", INDEX_HTML)
@@ -604,6 +724,7 @@ class WebUiContractTest(unittest.TestCase):
         zh_messages = merged_catalog("zh_cn")
         en_messages = merged_catalog("en_us")
         for key in (
+            "action.close",
             "output.ignore_preflight_blockers",
             "preflight.ignored_blockers",
             "preflight.message_total",
@@ -611,15 +732,27 @@ class WebUiContractTest(unittest.TestCase):
             "preflight.warning_count",
             "preflight.more_messages",
             "result.condition_filter",
+            "result.translation_status_filter",
+            "result.text_status_filter",
             "result.condition_issues",
             "result.issue_badge",
             "result.condition_changed",
             "result.condition_unchanged",
             "result.view_mode_table",
             "result.view_mode_diff",
+            "result.api_failure_title",
+            "result.api_failure_action",
+            "result.processed_jars",
+            "result.new_translation_entries",
+            "result.average_elapsed",
+            "result.report_generated",
+            "status.json_locale_detected",
+            "status.json_locale_conflict",
             "settings.memory_clear_scope",
             "settings.memory_clear_confirm",
             "settings.memory_scope_empty",
+            "settings.preset_empty",
+            "settings.preset_saved_config",
         ):
             self.assertIn(key, zh_messages)
             self.assertIn(key, en_messages)
@@ -722,6 +855,24 @@ class WebUiContractTest(unittest.TestCase):
         self.assertIn("ftbquestsDirectoryInput.addEventListener('change', handleFtbquestsInputChange)", INDEX_HTML)
         self.assertIn("const localePattern = /^[a-z]{2,3}_[a-z0-9]{2,8}$/", INDEX_HTML)
 
+    def test_json_upload_infers_source_locale_without_conflicting_multiple_files(self) -> None:
+        self.assertIn("inferLocaleFromJsonUploadPath", INDEX_HTML)
+        self.assertIn("inferJsonSourceLocaleFromFiles", INDEX_HTML)
+        self.assertIn("syncJsonSourceLocaleFromInput", INDEX_HTML)
+        self.assertIn("jsonInput.addEventListener('change', handleJsonInputChange)", INDEX_HTML)
+        self.assertIn("uniqueLocales.length === 1 && uniqueLocales.length === Array.from(files || []).length", INDEX_HTML)
+        self.assertIn("status.json_locale_detected", INDEX_HTML)
+        self.assertIn("status.json_locale_conflict", INDEX_HTML)
+
+    def test_json_deep_free_uses_isolated_translator_and_unique_outputs(self) -> None:
+        source = (Path(__file__).resolve().parents[1] / "src" / "mc_mod_i18n" / "web.py").read_text(encoding="utf-8")
+        self.assertIn('isolate_translator = args.provider == "deep-free"', source)
+        self.assertIn("local_translator = create_translator(args) if isolate_translator else translator", source)
+        self.assertIn("unique_output_name = unique_filename(output_name, output_names)", source)
+        self.assertIn("entries = [replace(entry, file=unique_output_name) for entry in entries]", source)
+        self.assertIn("same_locale = str(args.source_locale or \"\").strip().lower() == str(args.target_locale or \"\").strip().lower()", source)
+        self.assertIn("source locale equals target locale", source)
+
     def test_ui_locale_switching_and_extension_pack_controls_are_exposed(self) -> None:
         self.assertIn('id="ui_locale"', INDEX_HTML)
         self.assertIn('name="ui_locale" id="ui_locale_field"', INDEX_HTML)
@@ -791,6 +942,10 @@ class WebUiContractTest(unittest.TestCase):
         self.assertIn('<span data-i18n="advanced.debug_log">记录 API 调试日志</span>', INDEX_HTML)
         self.assertIn('<span class="field-help" data-i18n="advanced.debug_log_help">会记录请求体、响应头和原始响应到本次任务目录；Authorization/API Key 会被隐藏。</span>', INDEX_HTML)
         self.assertNotIn('</label>\n          <div class="field-help" data-i18n="advanced.debug_log_help"', INDEX_HTML)
+
+    def test_api_debug_log_help_can_escape_open_advanced_panel(self) -> None:
+        self.assertIn(".inline-advanced-panel[open] {\n      position: relative;\n      z-index: 2;\n      overflow: visible;", INDEX_HTML)
+        self.assertIn(".api-debug-log-line:hover,\n    .api-debug-log-line:focus-within {\n      z-index: 40;", INDEX_HTML)
 
     def test_inline_scripts_are_syntax_valid_when_node_is_available(self) -> None:
         node = shutil.which("node")

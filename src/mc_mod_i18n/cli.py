@@ -70,6 +70,16 @@ def main(argv: list[str] | None = None) -> int:
 
         serve(host=args.host, port=args.port, workdir=Path(args.workdir))
         return 0
+    if args.command == "desktop":
+        from .desktop import run_desktop
+
+        return run_desktop(
+            host=args.host,
+            port=args.port,
+            workdir=Path(args.workdir) if args.workdir else None,
+            width=args.width,
+            height=args.height,
+        )
 
     parser.print_help()
     return 1
@@ -131,6 +141,13 @@ def build_parser() -> argparse.ArgumentParser:
     serve.add_argument("--host", default="127.0.0.1")
     serve.add_argument("--port", type=int, default=8765)
     serve.add_argument("--workdir", default=".ui_runs", help="directory for uploaded files and generated outputs")
+
+    desktop = subparsers.add_parser("desktop", help="start the single-window desktop UI")
+    desktop.add_argument("--host", default="127.0.0.1")
+    desktop.add_argument("--port", type=int, default=0, help="local port; 0 chooses an available port")
+    desktop.add_argument("--workdir", default="", help="desktop app data directory; defaults to the user app data folder")
+    desktop.add_argument("--width", type=int, default=1280)
+    desktop.add_argument("--height", type=int, default=860)
     return parser
 
 

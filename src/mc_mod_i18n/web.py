@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import argparse
 import csv
 import hashlib
@@ -86,6 +86,8 @@ SIDEBAR_LOGO_PATH = PROJECT_ROOT / "ui优化方案" / "logo" / "minecraft.svg"
 CO1DSAND_PACK_LOGO_PATHS = (Path.cwd() / "co1dsand_logo.png", PROJECT_ROOT / "co1dsand_logo.png")
 HELP_DOCS_DIRNAME = "docs/help"
 HELP_DOCS_INDEX_FILENAME = "index.json"
+DEFAULT_JOB_HISTORY_LIMIT = 100
+MAX_JOB_HISTORY_LIMIT = 5000
 
 
 INDEX_HTML = r"""<!doctype html>
@@ -1129,6 +1131,7 @@ INDEX_HTML = r"""<!doctype html>
       position: relative;
       display: grid;
       gap: 6px;
+      min-width: 0;
     }
     .ghost-select.open,
     .ghost-file.open {
@@ -1155,6 +1158,9 @@ INDEX_HTML = r"""<!doctype html>
       align-items: center;
       justify-content: space-between;
       gap: 12px;
+      min-width: 0;
+      max-width: 100%;
+      box-sizing: border-box;
       cursor: pointer;
     }
     .ghost-select.open .control,
@@ -1225,6 +1231,9 @@ INDEX_HTML = r"""<!doctype html>
       z-index: 30;
       display: grid;
       gap: 4px;
+      min-width: 0;
+      max-width: 100%;
+      box-sizing: border-box;
       max-height: 280px;
       overflow: auto;
       padding: 6px 8px 6px 6px;
@@ -1357,6 +1366,10 @@ INDEX_HTML = r"""<!doctype html>
       align-items: center;
       justify-content: space-between;
       gap: 12px;
+      width: 100%;
+      min-width: 0;
+      max-width: 100%;
+      box-sizing: border-box;
       min-height: 38px;
       padding: 8px 10px;
       border: 1px solid transparent;
@@ -1386,6 +1399,13 @@ INDEX_HTML = r"""<!doctype html>
     .ghost-option span {
       color: var(--muted);
       font-size: 12px;
+    }
+    .ghost-option strong,
+    .ghost-option span {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
     .ghost-select select,
     .ghost-file input[type="file"] {
@@ -1462,6 +1482,69 @@ INDEX_HTML = r"""<!doctype html>
       display: grid;
       gap: 14px;
       background: var(--panel);
+    }
+    .workflow-rail {
+      position: relative;
+      display: grid;
+      gap: 0;
+    }
+    .workflow-step-item {
+      position: relative;
+      display: grid;
+      grid-template-columns: 34px minmax(0, 1fr);
+      gap: 12px;
+      padding-bottom: 14px;
+    }
+    .workflow-step-item::before {
+      content: "";
+      position: absolute;
+      left: 16px;
+      top: 42px;
+      bottom: -2px;
+      width: 2px;
+      border-radius: 999px;
+      background: var(--line);
+    }
+    .workflow-step-item:last-child {
+      padding-bottom: 0;
+    }
+    .workflow-step-item:last-child::before {
+      display: none;
+    }
+    .workflow-node {
+      position: relative;
+      z-index: 1;
+      width: 34px;
+      height: 34px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid var(--accent-soft-line);
+      border-radius: 999px;
+      background: var(--field-bg);
+      color: var(--accent);
+      font-size: 12px;
+      font-weight: 900;
+      box-shadow: var(--card-shadow-soft);
+    }
+    .workflow-step-card {
+      min-width: 0;
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius-md);
+      background: var(--card-surface-soft);
+      box-shadow: var(--card-shadow-soft);
+    }
+    .workflow-step-card .workflow-step {
+      margin-bottom: 0;
+    }
+    .workflow-step-section {
+      display: grid;
+      gap: 14px;
+      padding-top: 2px;
+    }
+    .workflow-step-section + .workflow-step-section {
+      padding-top: 14px;
+      border-top: 1px solid var(--line);
     }
     .form-card h3 {
       margin: 0;
@@ -1652,6 +1735,10 @@ INDEX_HTML = r"""<!doctype html>
       grid-template-columns: 1fr 1fr 1fr;
       gap: 12px;
     }
+    .grid-2 > *,
+    .grid-3 > * {
+      min-width: 0;
+    }
     .field-help {
       display: inline-flex;
       align-items: center;
@@ -1711,6 +1798,10 @@ INDEX_HTML = r"""<!doctype html>
     }
     .api-debug-log-line {
       position: relative;
+    }
+    .api-debug-log-line:hover,
+    .api-debug-log-line:focus-within {
+      z-index: 40;
     }
     .api-debug-log-line > [data-i18n="advanced.debug_log"]:hover + .field-help,
     .api-debug-log-line:focus-within .field-help {
@@ -1821,6 +1912,37 @@ INDEX_HTML = r"""<!doctype html>
       background: var(--status-error-bg);
       color: var(--status-error-text);
       border-color: var(--status-error-border);
+      box-shadow: inset 4px 0 0 color-mix(in srgb, var(--status-error-border) 72%, transparent);
+    }
+    .api-failure-notice {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .api-failure-copy {
+      display: grid;
+      gap: 4px;
+      min-width: 0;
+    }
+    .api-failure-copy strong {
+      color: var(--status-error-text);
+      font-size: 13px;
+    }
+    .api-failure-copy p {
+      margin: 0;
+      color: var(--status-error-text);
+      font-size: 12px;
+      line-height: 1.45;
+    }
+    .danger-button {
+      border-color: color-mix(in srgb, var(--status-error-border) 82%, var(--line));
+      background: var(--status-error-bg);
+      color: var(--status-error-text);
+    }
+    .danger-button:hover:not(:disabled) {
+      border-color: var(--status-error-border);
+      background: color-mix(in srgb, var(--status-error-bg) 72%, var(--panel));
     }
     .preflight-card {
       display: grid;
@@ -1975,9 +2097,47 @@ INDEX_HTML = r"""<!doctype html>
       justify-content: space-between;
       gap: 12px;
       padding: 14px 16px;
-      border-bottom: 1px solid var(--line);
       background: var(--card-surface-soft);
-      box-shadow: inset 0 -1px 0 rgba(255, 255, 255, .04);
+    }
+    .view-head-main {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+    .view-head-side {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 10px;
+      min-width: 0;
+    }
+    .view-head-actions {
+      display: inline-flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .view-head-actions button {
+      min-height: 36px;
+      padding: 0 12px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      background: var(--field-bg);
+      color: var(--text);
+      font-size: 12px;
+      font-weight: 800;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      box-shadow: none;
+    }
+    .view-head-actions button:hover:not(:disabled) {
+      border-color: var(--control-hover-border);
+      background: var(--control-hover-bg);
+      color: var(--control-hover-text);
     }
     .view-head strong {
       font-size: 14px;
@@ -2123,15 +2283,11 @@ INDEX_HTML = r"""<!doctype html>
       grid-template-columns: minmax(220px, 1fr) minmax(180px, 240px) minmax(200px, 280px);
       gap: 12px;
       align-items: end;
-      padding: 14px;
-      border: 1px solid var(--line);
-      border-radius: var(--radius-md);
-      background: color-mix(in srgb, var(--panel) 76%, var(--field-bg-soft));
-      box-shadow: var(--card-shadow-soft);
       overflow: visible;
     }
     .history-search-control {
       position: relative;
+      display: block;
       min-width: 0;
     }
     .history-search-control i {
@@ -2239,7 +2395,9 @@ INDEX_HTML = r"""<!doctype html>
       min-height: 0;
       display: grid;
       align-content: start;
+      overflow-x: hidden;
       overflow-y: auto;
+      scrollbar-gutter: stable;
       scrollbar-width: thin;
       scrollbar-color: var(--scroll-thumb) transparent;
     }
@@ -2258,18 +2416,15 @@ INDEX_HTML = r"""<!doctype html>
       color: var(--text);
       text-align: left;
       box-shadow: none;
-      transform: none;
-      transition: background-color 140ms ease-out, border-color 140ms ease-out, color 120ms ease-out, transform 160ms ease-out, box-shadow 160ms ease-out;
+      transition: background-color 140ms ease-out, border-color 140ms ease-out, color 120ms ease-out, box-shadow 160ms ease-out;
     }
     .history-task-card:hover:not(:disabled) {
       background: color-mix(in srgb, var(--panel) 30%, var(--field-bg-soft));
-      transform: translateX(2px);
     }
     .history-task-card.active {
       border-left-color: var(--accent);
       background: color-mix(in srgb, var(--accent-soft) 58%, var(--panel));
       box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent);
-      transform: translateX(4px);
     }
     .history-task-top,
     .history-task-foot,
@@ -2320,6 +2475,7 @@ INDEX_HTML = r"""<!doctype html>
     .history-status-chip {
       display: inline-flex;
       align-items: center;
+      justify-self: start;
       gap: 5px;
       min-height: 24px;
       padding: 4px 9px;
@@ -2372,7 +2528,6 @@ INDEX_HTML = r"""<!doctype html>
     .history-detail-body {
       min-height: 0;
       display: grid;
-      grid-template-rows: minmax(0, 1fr);
       align-content: start;
       gap: 16px;
       padding: 20px;
@@ -2382,14 +2537,14 @@ INDEX_HTML = r"""<!doctype html>
     }
     .history-detail-title {
       display: grid;
-      gap: 8px;
+      gap: 4px;
       min-width: 0;
     }
     .history-detail-title h3 {
       margin: 0;
       color: var(--text);
-      font-size: clamp(24px, 2.6vw, 34px);
-      line-height: 1.08;
+      font-size: clamp(20px, 2.2vw, 28px);
+      line-height: 1.14;
     }
     .history-detail-actions,
     .history-artifact-actions {
@@ -2417,6 +2572,11 @@ INDEX_HTML = r"""<!doctype html>
       text-decoration: none;
       font-size: 12px;
       font-weight: 800;
+    }
+    .history-detail-actions a span,
+    .history-detail-actions button span {
+      color: inherit;
+      font-size: inherit;
     }
     .history-detail-actions a.primary {
       border-color: var(--accent);
@@ -2646,6 +2806,7 @@ INDEX_HTML = r"""<!doctype html>
       box-shadow: none;
       will-change: background-color, border-color;
       transition: border-color 120ms ease-out, background-color 120ms ease-out, color 100ms ease-out;
+      transition: border-color var(--motion-fast) ease, background var(--motion-fast) ease, box-shadow var(--motion-fast) ease, transform var(--motion-fast) ease;
     }
     .secondary.docs-link {
       border-color: var(--card-border);
@@ -2653,7 +2814,10 @@ INDEX_HTML = r"""<!doctype html>
       color: var(--text);
       box-shadow: none;
     }
-    .docs-link:hover:not(:disabled),
+    .docs-link:hover:not(:disabled) {
+      border-color: var(--field-border-hover);
+      background: color-mix(in srgb, var(--panel) 26%, var(--field-bg-soft));
+    }
     .secondary.docs-link:hover:not(:disabled) {
       border-color: color-mix(in srgb, var(--line) 84%, var(--accent-soft-line));
       background: color-mix(in srgb, var(--panel) 26%, var(--field-bg-soft));
@@ -2680,12 +2844,15 @@ INDEX_HTML = r"""<!doctype html>
       white-space: nowrap;
       text-overflow: ellipsis;
     }
+    .docs-link strong {
+      font-size: 14px;
+    }
     .docs-link span {
-      width: 100%;
       color: var(--text);
       font-size: 12px;
       line-height: 1.5;
       opacity: .74;
+      width: 100%;
       white-space: nowrap;
       text-overflow: ellipsis;
       overflow: hidden;
@@ -3114,9 +3281,7 @@ INDEX_HTML = r"""<!doctype html>
     .settings-layout {
       min-height: 0;
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
-      grid-auto-flow: row;
-      grid-auto-rows: minmax(min-content, max-content);
+      grid-template-columns: 220px minmax(0, 1fr);
       align-items: start;
       align-content: start;
       gap: 16px;
@@ -3124,6 +3289,50 @@ INDEX_HTML = r"""<!doctype html>
       overflow: auto;
       scrollbar-width: thin;
       scrollbar-color: var(--scroll-thumb) transparent;
+    }
+    .settings-nav {
+      position: sticky;
+      top: 0;
+      display: grid;
+      gap: 8px;
+      align-self: start;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-md);
+      background: var(--card-surface-soft);
+      box-shadow: var(--card-shadow-soft);
+    }
+    .settings-nav button {
+      width: 100%;
+      min-height: 42px;
+      height: auto;
+      display: flex;
+      align-items: center;
+      justify-content: flex-start;
+      gap: 10px;
+      padding: 9px 10px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--muted);
+      box-shadow: none;
+      text-align: left;
+    }
+    .settings-nav button:hover:not(:disabled) {
+      border-color: var(--accent-soft-line);
+      background: var(--accent-soft-hover);
+      color: var(--text);
+      transform: none;
+    }
+    .settings-nav button.active {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+      color: var(--accent);
+      box-shadow: var(--focus-ring);
+    }
+    .settings-content {
+      min-width: 0;
+      display: grid;
+      gap: 16px;
     }
     .settings-section {
       min-width: 0;
@@ -3573,6 +3782,18 @@ INDEX_HTML = r"""<!doctype html>
       flex: 1;
       min-width: 190px;
     }
+    .toolbar-filter-group {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+    .toolbar-filter-label {
+      flex: 0 0 auto;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 800;
+    }
     .toolbar .ghost-select.jar-filter {
       display: inline-flex;
       gap: 0;
@@ -3580,15 +3801,39 @@ INDEX_HTML = r"""<!doctype html>
       min-width: 240px;
       max-width: min(100%, 420px);
     }
+    .toolbar .ghost-select.language-filter {
+      display: inline-flex;
+      gap: 0;
+      flex: 0 1 190px;
+      min-width: 168px;
+      max-width: min(100%, 260px);
+    }
+    .settings-preset-select {
+      width: 100%;
+    }
+    .settings-preset-select .ghost-menu {
+      width: 100%;
+      max-width: 100%;
+    }
+    .hidden-select {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      opacity: 0;
+      pointer-events: none;
+    }
+    .toolbar .ghost-select.language-filter .control,
     .toolbar .ghost-select.jar-filter .control {
       min-height: 40px;
       padding: 0 10px;
       font-size: 12px;
       font-weight: 700;
     }
+    .toolbar .ghost-select.language-filter .value,
     .toolbar .ghost-select.jar-filter .value {
       min-width: 0;
     }
+    .toolbar .ghost-select.language-filter .ghost-menu,
     .toolbar .ghost-select.jar-filter .ghost-menu {
       left: 0;
       right: auto;
@@ -3760,6 +4005,89 @@ INDEX_HTML = r"""<!doctype html>
       font-size: 13px;
       text-transform: none;
       letter-spacing: 0;
+    }
+    .workspace-option-group {
+      display: grid;
+      gap: 14px;
+      padding: 14px;
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius-md);
+      background: var(--card-surface-soft);
+      box-shadow: var(--card-shadow-soft);
+    }
+    .settings-section[hidden] {
+      display: none;
+    }
+    .workspace-option-group > .workflow-step {
+      margin-bottom: 0;
+    }
+    .workspace-option-group > .ghost-file {
+      width: 100%;
+      padding: 0;
+    }
+    .workspace-option-group details.form-card {
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      background: var(--field-bg);
+      box-shadow: none;
+    }
+    .inline-advanced-panel {
+      display: grid;
+      gap: 0;
+      padding: 0;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      background: var(--field-bg);
+      overflow: hidden;
+    }
+    .inline-advanced-panel[open] {
+      position: relative;
+      z-index: 2;
+      overflow: visible;
+    }
+    .inline-advanced-panel summary {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 44px;
+      padding: 0 12px;
+      cursor: pointer;
+      list-style: none;
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 800;
+    }
+    .inline-advanced-panel summary::-webkit-details-marker {
+      display: none;
+    }
+    .inline-advanced-panel summary span {
+      display: inline-flex;
+      align-items: center;
+      gap: 9px;
+      min-width: 0;
+    }
+    .inline-advanced-panel summary::after {
+      content: "+";
+      color: var(--muted);
+      font-size: 16px;
+      font-weight: 800;
+    }
+    .inline-advanced-panel[open] summary::after {
+      content: "-";
+    }
+    .inline-advanced-panel-body {
+      display: grid;
+      gap: 14px;
+      padding: 14px 12px 12px;
+      border-top: 1px solid var(--line);
+    }
+    .inline-advanced-panel-body > .api-box {
+      padding: 0;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      box-shadow: none;
     }
     .provider-risk-banner,
     .preflight-callout,
@@ -4041,8 +4369,9 @@ INDEX_HTML = r"""<!doctype html>
     .tabs {
       display: flex;
       gap: 8px;
-      border-bottom: 1px solid var(--line);
-      padding-bottom: 10px;
+    }
+    .view-head .tabs {
+      flex: 0 0 auto;
     }
     .tabs button {
       height: 34px;
@@ -4064,29 +4393,143 @@ INDEX_HTML = r"""<!doctype html>
     }
     .summary {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 14px;
+      grid-template-columns: repeat(auto-fit, minmax(178px, 1fr));
+      gap: 12px;
+      position: relative;
     }
-    .summary-group {
+    .summary-card {
       display: grid;
-      gap: 10px;
+      grid-template-columns: 42px minmax(0, 1fr);
+      align-items: center;
+      gap: 12px;
+      min-height: 96px;
       padding: 14px;
       border: 1px solid var(--card-border);
       border-radius: var(--radius-md);
       background: var(--card-surface-soft);
+      color: var(--text);
+      text-align: left;
       box-shadow: var(--card-shadow-soft);
+      cursor: pointer;
+      transition: border-color var(--motion-fast) ease, background-color var(--motion-fast) ease, box-shadow var(--motion-fast) ease, transform var(--motion-fast) ease;
     }
-    .summary-group h3 {
-      margin: 0;
-      font-size: 13px;
+    .summary-card:hover {
+      border-color: var(--accent-soft-line);
+      background: var(--accent-soft-hover);
+    }
+    .summary-card:focus-visible {
+      outline: none;
+      border-color: var(--accent);
+      background: var(--accent-soft);
+      box-shadow: var(--focus-ring);
+    }
+    .summary-card-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 42px;
+      height: 42px;
+      border: 1px solid var(--accent-soft-line);
+      border-radius: var(--radius-sm);
+      background: var(--field-bg);
+      color: var(--accent);
+      font-size: 20px;
+    }
+    .summary-card-copy {
+      min-width: 0;
+      display: grid;
+      gap: 4px;
+    }
+    .summary-card-title {
       color: var(--muted);
-      text-transform: uppercase;
+      font-size: 12px;
+      font-weight: 800;
       letter-spacing: 0;
     }
-    .summary-group-grid {
+    .summary-card-value {
+      color: var(--text);
+      font-size: clamp(22px, 2vw, 28px);
+      font-weight: 800;
+      line-height: 1.1;
+      letter-spacing: 0;
+    }
+    .summary-card-label {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .summary-popover {
+      position: fixed;
+      z-index: 220;
+      width: min(420px, calc(100vw - 28px));
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+      gap: 14px;
+      padding: 16px;
+      border: 1px solid var(--card-border);
+      border-radius: var(--radius-md);
+      background: var(--panel);
+      box-shadow: 0 18px 48px rgba(15, 23, 42, .18);
+      transform-origin: top left;
+      animation: summary-popover-in 140ms ease-out;
+    }
+    .summary-popover[hidden] {
+      display: none;
+    }
+    .summary-popover::before {
+      content: "";
+      position: absolute;
+      top: -7px;
+      left: 26px;
+      width: 12px;
+      height: 12px;
+      border-left: 1px solid var(--card-border);
+      border-top: 1px solid var(--card-border);
+      background: var(--panel);
+      transform: rotate(45deg);
+    }
+    .summary-popover-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
       gap: 10px;
+      color: var(--text);
+      font-weight: 800;
+    }
+    .summary-popover-title {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      min-width: 0;
+    }
+    .summary-popover-close {
+      width: 34px;
+      height: 34px;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid var(--line);
+      background: var(--field-bg);
+      color: var(--muted);
+    }
+    .summary-popover-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+      gap: 10px;
+    }
+    @keyframes summary-popover-in {
+      from {
+        opacity: 0;
+        transform: translateY(-4px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
     }
     .metric {
       border: 1px solid var(--card-border);
@@ -4126,25 +4569,8 @@ INDEX_HTML = r"""<!doctype html>
       letter-spacing: .08em;
     }
     .hardcoded-workbench {
-      border-top: 1px solid var(--line);
-      padding-top: 16px;
       display: grid;
       gap: 12px;
-    }
-    .hardcoded-head {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      padding: 12px 14px;
-      border: 1px solid var(--card-border);
-      border-radius: var(--radius-md);
-      background: var(--card-surface-soft);
-      box-shadow: var(--card-shadow-soft);
-    }
-    .hardcoded-head h3 {
-      margin: 0;
-      font-size: 15px;
     }
     .hardcoded-row textarea.invalid {
       border-color: var(--status-error-border);
@@ -4803,7 +5229,6 @@ INDEX_HTML = r"""<!doctype html>
         gap: 10px;
       }
       .api-box-head,
-      .hardcoded-head,
       .pack-name-head,
       .pager,
       .view-head {
@@ -4922,6 +5347,18 @@ INDEX_HTML = r"""<!doctype html>
       .summary {
         grid-template-columns: 1fr;
       }
+      .workflow-step-item {
+        grid-template-columns: 28px minmax(0, 1fr);
+        gap: 10px;
+      }
+      .workflow-step-item::before {
+        left: 13px;
+        top: 36px;
+      }
+      .workflow-node {
+        width: 28px;
+        height: 28px;
+      }
       .pager {
         align-items: stretch;
       }
@@ -5004,9 +5441,11 @@ INDEX_HTML = r"""<!doctype html>
           <div class="panel-copy" data-i18n="panel.copy">上传 JAR，配置翻译器和资源包版本，直接生成资源包、报告和硬编码映射。</div>
         </div>
       </div>
-      <form id="translate-form">
-        <div class="form-card">
-          <div class="workflow-step"><span>步骤 1</span><strong>选择输入</strong></div>
+      <form id="translate-form" class="workflow-rail">
+        <div class="workflow-step-item" data-workflow-step="1">
+          <div class="workflow-node" aria-hidden="true">1</div>
+          <div class="form-card workflow-step-card">
+          <div class="workflow-step"><strong>选择输入</strong></div>
           <h3><i class="ri-archive-2-line"></i><span data-i18n="input.title">输入类型</span></h3>
           <input type="hidden" name="input_kind" id="input_kind" value="jar">
           <div class="mode-switch" role="radiogroup" aria-label="处理类型" data-i18n-aria-label="input.title">
@@ -5030,9 +5469,13 @@ INDEX_HTML = r"""<!doctype html>
           <span class="control"><span class="value" id="json-display">选择 en_us.json 或界面语言包 JSON</span><i class="ri-braces-line icon"></i></span>
           <input id="json-files" name="json_files" type="file" accept=".json,application/json" multiple>
         </label>
+          </div>
         </div>
-        <div class="form-card">
-          <div class="workflow-step"><span>步骤 2</span><strong>选择语言与翻译器</strong></div>
+        <div class="workflow-step-item" data-workflow-step="2">
+          <div class="workflow-node" aria-hidden="true">2</div>
+          <div class="form-card workflow-step-card">
+          <div class="workflow-step"><strong>选择语言与翻译器</strong></div>
+          <div class="workflow-step-section">
           <h3><i class="ri-translate-2"></i><span data-i18n="language.title">Language Settings</span></h3>
         <div class="grid-2">
           <label class="ghost-select locale-select" id="source-locale-select"><span data-i18n="language.source">源语言</span>
@@ -5059,8 +5502,8 @@ INDEX_HTML = r"""<!doctype html>
             </select>
           </label>
         </div>
-        </div>
-        <div class="form-card">
+          </div>
+          <div class="workflow-step-section">
           <h3><i class="ri-cpu-line"></i><span data-i18n="translator.title">Translator & Resource Pack</span></h3>
         <div class="grid-2">
         <label class="ghost-select" id="provider-select"><span data-i18n="translator.provider">翻译器</span>
@@ -5125,28 +5568,21 @@ INDEX_HTML = r"""<!doctype html>
             </select>
           </label>
         </div>
-        <label class="ghost-file"><span data-i18n="translator.glossary">术语表 JSON</span>
-          <span class="control"><span class="value" id="glossary-display">可选 .json 术语表</span><i class="ri-file-list-3-line icon"></i></span>
-          <input name="glossary" type="file" accept=".json">
-        </label>
         <div id="provider-risk-banner" class="provider-risk-banner"></div>
-        </div>
-        <div class="form-card preflight-card" id="preflight-panel">
-          <div class="workflow-step"><span>步骤 3</span><strong>运行预检</strong></div>
-          <div class="preflight-head">
-            <div>
-              <h3><i class="ri-shield-check-line"></i><span data-i18n="preflight.title">翻译前预检</span></h3>
-              <div class="muted" data-i18n="preflight.copy">先扫描输入，不创建最终输出。</div>
-            </div>
-            <button type="button" class="secondary" id="preflight-run"><i class="ri-scan-2-line"></i><span data-i18n="preflight.run">运行预检</span></button>
           </div>
-          <div id="preflight-callout" class="preflight-callout"><strong>步骤 4</strong><p>建议先运行预检，再开始生成。</p><div class="doc-jump-row"><button type="button" class="secondary" id="preflight-doc-link" data-doc-target="preflight"><i class="ri-book-open-line"></i><span>查看预检说明</span></button></div></div>
-          <div id="preflight-summary" class="preflight-summary" hidden></div>
-          <div id="preflight-message-summary" class="preflight-message-summary" hidden></div>
-          <ul id="preflight-messages" class="preflight-list"></ul>
+          </div>
         </div>
-        <details class="form-card" data-advanced-panel>
+        <div class="workflow-step-item" data-workflow-step="3">
+          <div class="workflow-node" aria-hidden="true">3</div>
+          <div class="workspace-option-group workflow-step-card">
+          <div class="workflow-step"><strong>可选增强项</strong></div>
+          <label class="ghost-file"><span data-i18n="translator.glossary">术语表 JSON</span>
+            <span class="control"><span class="value" id="glossary-display">可选 .json 术语表</span><i class="ri-file-list-3-line icon"></i></span>
+            <input name="glossary" type="file" accept=".json">
+          </label>
+        <details class="inline-advanced-panel" data-advanced-panel>
           <summary><span><i class="ri-flashlight-line"></i><span data-i18n="advanced.title">高级 API 设置</span></span></summary>
+          <div class="inline-advanced-panel-body">
           <div id="api-box" class="api-box" hidden>
             <div class="api-box-head api-box-title">
               <div>
@@ -5212,15 +5648,19 @@ INDEX_HTML = r"""<!doctype html>
               <span class="field-help" data-i18n="advanced.timeout_help">连接或读取响应超过该秒数，会进入下一次重试。</span>
             </label>
           </div>
-          <label class="checkline api-debug-log-line" data-provider-field="api_debug_log">
-            <input name="api_debug_log" type="checkbox">
-            <span data-i18n="advanced.debug_log">记录 API 调试日志</span>
-            <span class="field-help" data-i18n="advanced.debug_log_help">会记录请求体、响应头和原始响应到本次任务目录；Authorization/API Key 会被隐藏。</span>
-          </label>
+          <div data-provider-field="api_debug_log">
+            <label class="checkline api-debug-log-line">
+              <input name="api_debug_log" type="checkbox">
+              <span data-i18n="advanced.debug_log">记录 API 调试日志</span>
+              <span class="field-help" data-i18n="advanced.debug_log_help">会记录请求体、响应头和原始响应到本次任务目录；Authorization/API Key 会被隐藏。</span>
+            </label>
+          </div>
+        </div>
         </div>
         </details>
-        <details class="form-card" data-advanced-panel open>
+        <details class="inline-advanced-panel" data-advanced-panel>
           <summary><span><i class="ri-equalizer-line"></i><span data-i18n="output.title">输出策略</span></span></summary>
+        <div class="inline-advanced-panel-body">
         <label class="checkline">
           <input name="overwrite_existing" type="checkbox">
           <span data-i18n="output.overwrite">覆盖 JAR 内已有中文</span>
@@ -5250,10 +5690,30 @@ INDEX_HTML = r"""<!doctype html>
           <input name="scan_hardcoded" type="checkbox" checked>
           <span data-i18n="output.scan_hardcoded">扫描 Ponder / 配置硬编码英文</span>
         </label>
-        <button id="submit" type="submit"><i class="ri-rocket-2-line"></i><span data-i18n="action.start">开始生成</span></button>
-        <button id="cancel-btn" type="button" hidden><i class="ri-stop-circle-line"></i><span data-i18n="action.cancel">中断</span></button>
-        <div id="status" class="status">等待选择 JAR。</div>
+        </div>
         </details>
+        </div>
+        </div>
+        <div class="workflow-step-item" data-workflow-step="4">
+          <div class="workflow-node" aria-hidden="true">4</div>
+          <div class="form-card workflow-step-card preflight-card" id="preflight-panel">
+          <div class="workflow-step"><strong>运行预检并开始</strong></div>
+          <div class="preflight-head">
+            <div>
+              <h3><i class="ri-shield-check-line"></i><span data-i18n="preflight.title">翻译前预检</span></h3>
+              <div class="muted" data-i18n="preflight.copy">先扫描输入，不创建最终输出。</div>
+            </div>
+            <button type="button" class="secondary" id="preflight-run"><i class="ri-scan-2-line"></i><span data-i18n="preflight.run">运行预检</span></button>
+          </div>
+          <div id="preflight-callout" class="preflight-callout"><strong>启动前检查</strong><p>建议先运行预检，再开始生成。</p><div class="doc-jump-row"><button type="button" class="secondary" id="preflight-doc-link" data-doc-target="preflight"><i class="ri-book-open-line"></i><span>查看预检说明</span></button></div></div>
+          <div id="preflight-summary" class="preflight-summary" hidden></div>
+          <div id="preflight-message-summary" class="preflight-message-summary" hidden></div>
+          <ul id="preflight-messages" class="preflight-list"></ul>
+          <button id="submit" type="submit"><i class="ri-rocket-2-line"></i><span data-i18n="action.start">开始生成</span></button>
+          <button id="cancel-btn" type="button" hidden><i class="ri-stop-circle-line"></i><span data-i18n="action.cancel">中断</span></button>
+          <div id="status" class="status">等待选择 JAR。</div>
+          </div>
+        </div>
       </form>
     </section>
 
@@ -5283,8 +5743,8 @@ INDEX_HTML = r"""<!doctype html>
         </div>
         <div class="history-workbench">
           <div class="history-toolbar">
-            <label class="settings-field"><span>按 ID、Provider 或模型搜索</span>
-              <span class="history-search-control"><i class="ri-search-line"></i><input id="history-search" class="ghost-input" placeholder="输入任务 ID、Provider、模型或错误信息" autocomplete="off" spellcheck="false"></span>
+            <label class="history-search-control" aria-label="按 ID、Provider 或模型搜索">
+              <i class="ri-search-line"></i><input id="history-search" class="ghost-input" placeholder="输入任务 ID、Provider、模型或错误信息" autocomplete="off" spellcheck="false">
             </label>
             <label class="ghost-select" id="history-status-filter-shell"><span data-i18n="history.status">状态</span>
               <button type="button" class="control" data-select-trigger="history_status" role="combobox" tabindex="0" aria-haspopup="listbox" aria-expanded="false" aria-controls="history-status-filter-menu"><span class="value" id="history-status-filter-display">全部</span><i class="ri-arrow-down-s-line chevron"></i></button>
@@ -5319,7 +5779,7 @@ INDEX_HTML = r"""<!doctype html>
             <section class="history-detail">
               <div class="history-detail-head">
                 <strong><i class="ri-file-list-3-line"></i><span>任务详情</span></strong>
-                <span>下载、报告和错误定位</span>
+                <div id="history-detail-head-actions" class="history-detail-actions"></div>
               </div>
               <div id="history-detail" class="history-detail-body">
                 <div class="empty">选择一条历史任务查看详情。</div>
@@ -5408,6 +5868,15 @@ INDEX_HTML = r"""<!doctype html>
           <button type="button" class="settings-close" id="settings-close" aria-label="关闭设置" data-i18n-aria-label="settings.close"><i class="ri-close-line"></i></button>
         </div>
         <div class="settings-layout">
+          <aside class="settings-nav" aria-label="设置分类">
+            <button type="button" class="active" data-settings-target="settings-cache-section"><i class="ri-database-2-line"></i><span data-i18n="settings.cache_section">缓存设置</span></button>
+            <button type="button" data-settings-target="settings-presets-section"><i class="ri-save-3-line"></i><span data-i18n="settings.presets_section">配置预设</span></button>
+            <button type="button" data-settings-target="settings-memory-section"><i class="ri-brain-line"></i><span data-i18n="settings.memory_section">翻译记忆</span></button>
+            <button type="button" data-settings-target="settings-history-section"><i class="ri-time-line"></i><span>历史与清理</span></button>
+            <button type="button" data-settings-target="settings-locale-section"><i class="ri-translate-2"></i><span data-i18n="settings.language_section">界面语言</span></button>
+            <button type="button" data-settings-target="settings-glossary-section"><i class="ri-book-2-line"></i><span data-i18n="settings.glossary_section">术语表管理</span></button>
+          </aside>
+          <div class="settings-content">
           <section class="settings-section" id="settings-cache-section" aria-labelledby="settings-cache-title">
             <div class="settings-section-title" id="settings-cache-title"><i class="ri-database-2-line"></i><span data-i18n="settings.cache_section">缓存设置</span></div>
             <label class="settings-field"><span data-i18n="settings.cache_dir">缓存目录</span>
@@ -5422,13 +5891,17 @@ INDEX_HTML = r"""<!doctype html>
               <button type="button" class="danger" id="settings-cache-clear"><i class="ri-delete-bin-6-line"></i><span data-i18n="settings.clear_cache">清空缓存</span></button>
             </div>
           </section>
-          <section class="settings-section" id="settings-presets-section" aria-labelledby="settings-presets-title">
+          <section class="settings-section" id="settings-presets-section" aria-labelledby="settings-presets-title" hidden>
             <div class="settings-section-title" id="settings-presets-title"><i class="ri-save-3-line"></i><span data-i18n="settings.presets_section">配置预设</span></div>
             <label class="settings-field"><span data-i18n="settings.preset_name">预设名称</span>
               <input class="ghost-input" id="settings-preset-name" placeholder="例如：OpenAI 高并发" data-i18n-placeholder="settings.preset_name_placeholder" autocomplete="off" spellcheck="false">
             </label>
             <label class="settings-field"><span data-i18n="settings.saved_presets">已保存预设</span>
-              <select class="ghost-input" id="settings-preset-select"></select>
+              <span class="ghost-select settings-preset-select" id="settings-preset-select-shell">
+                <button type="button" class="control" data-select-trigger="settings_preset" aria-haspopup="listbox" aria-expanded="false" aria-controls="settings-preset-menu"><span class="value" id="settings-preset-display">暂无预设</span><i class="ri-arrow-down-s-line chevron"></i></button>
+                <div class="ghost-menu" id="settings-preset-menu" role="listbox" hidden></div>
+                <select class="hidden-select" id="settings-preset-select" aria-hidden="true" tabindex="-1"></select>
+              </span>
             </label>
             <div class="settings-current">
               <span data-i18n="settings.preset_hint">安全说明</span>
@@ -5441,7 +5914,7 @@ INDEX_HTML = r"""<!doctype html>
               <button type="button" class="danger" id="settings-preset-delete"><i class="ri-delete-bin-6-line"></i><span data-i18n="settings.preset_delete">删除预设</span></button>
             </div>
           </section>
-          <section class="settings-section" id="settings-memory-section" aria-labelledby="settings-memory-title">
+          <section class="settings-section" id="settings-memory-section" aria-labelledby="settings-memory-title" hidden>
             <div class="settings-section-title" id="settings-memory-title"><i class="ri-brain-line"></i><span data-i18n="settings.memory_section">翻译记忆</span></div>
             <div class="settings-current">
               <span data-i18n="settings.current">当前</span>
@@ -5457,7 +5930,30 @@ INDEX_HTML = r"""<!doctype html>
             </div>
             <div class="doc-jump-row"><button type="button" class="secondary" id="memory-doc-link" data-doc-target="translation-memory"><i class="ri-book-open-line"></i><span>查看翻译记忆说明</span></button></div>
           </section>
-          <section class="settings-section" id="settings-locale-section" aria-labelledby="settings-locale-title">
+          <section class="settings-section" id="settings-history-section" aria-labelledby="settings-history-title" hidden>
+            <div class="settings-section-title" id="settings-history-title"><i class="ri-time-line"></i><span>历史与清理</span></div>
+            <label class="settings-field"><span>最多保留任务数</span>
+              <input class="ghost-input" id="settings-history-limit" type="number" min="1" max="5000" placeholder="默认 100" autocomplete="off" spellcheck="false">
+            </label>
+            <div class="settings-current">
+              <span>当前历史</span>
+              <strong id="settings-history-summary">正在读取任务历史...</strong>
+            </div>
+            <label class="settings-field"><span>删除指定任务</span>
+              <input class="ghost-input" id="settings-history-delete-job-ids" placeholder="输入一个或多个任务 ID，用逗号、空格或换行分隔" autocomplete="off" spellcheck="false">
+            </label>
+            <div class="settings-section-actions">
+              <button type="button" class="secondary" id="settings-history-refresh"><i class="ri-refresh-line"></i><span>刷新历史状态</span></button>
+              <button type="button" class="secondary" id="settings-history-trim"><i class="ri-scissors-cut-line"></i><span>按上限立即裁剪</span></button>
+              <button type="button" class="danger" id="settings-history-delete"><i class="ri-delete-bin-line"></i><span>删除指定任务</span></button>
+              <button type="button" class="danger" id="settings-history-clear"><i class="ri-delete-bin-6-line"></i><span>清空任务历史</span></button>
+            </div>
+            <div class="settings-current">
+              <span>说明</span>
+              <strong>这里只清理历史记录索引，不会自动删除各任务目录下已经生成的报告和产物文件。</strong>
+            </div>
+          </section>
+          <section class="settings-section" id="settings-locale-section" aria-labelledby="settings-locale-title" hidden>
             <div class="settings-section-title" id="settings-locale-title"><i class="ri-translate-2"></i><span data-i18n="settings.language_section">界面语言</span></div>
             <label class="settings-field"><span data-i18n="settings.ui_locale_dir">语言拓展包目录</span>
               <input class="ghost-input" id="settings-ui-locale-dir" placeholder="默认：服务工作目录/.ui-locales" data-i18n-placeholder="settings.ui_locale_placeholder" autocomplete="off" spellcheck="false">
@@ -5485,7 +5981,7 @@ INDEX_HTML = r"""<!doctype html>
               <button type="button" class="secondary" id="settings-ui-locale-fill-zh"><i class="ri-file-add-line"></i><span data-i18n="settings.ui_locale_fill_zh">中文补全下载</span></button>
             </div>
           </section>
-          <section class="settings-section" id="settings-glossary-section" aria-labelledby="settings-glossary-title">
+          <section class="settings-section" id="settings-glossary-section" aria-labelledby="settings-glossary-title" hidden>
             <div class="settings-section-title" id="settings-glossary-title"><i class="ri-book-2-line"></i><span data-i18n="settings.glossary_section">术语表管理</span></div>
             <div class="settings-current">
               <span data-i18n="settings.current">当前</span>
@@ -5519,6 +6015,7 @@ INDEX_HTML = r"""<!doctype html>
               <button type="button" id="settings-glossary-save"><i class="ri-save-3-line"></i><span data-i18n="settings.glossary_save">保存术语</span></button>
             </div>
           </section>
+          </div>
         </div>
         <input id="ui-locale-import-file" type="file" accept=".json,application/json" hidden>
         <input id="glossary-import-file" type="file" accept=".json,application/json" hidden>
@@ -5596,6 +6093,9 @@ INDEX_HTML = r"""<!doctype html>
     const settingsCacheClear = document.getElementById('settings-cache-clear');
     const settingsPresetName = document.getElementById('settings-preset-name');
     const settingsPresetSelect = document.getElementById('settings-preset-select');
+    const settingsPresetSelectShell = document.getElementById('settings-preset-select-shell');
+    const settingsPresetMenu = document.getElementById('settings-preset-menu');
+    const settingsPresetDisplay = document.getElementById('settings-preset-display');
     const settingsPresetRefresh = document.getElementById('settings-preset-refresh');
     const settingsPresetApply = document.getElementById('settings-preset-apply');
     const settingsPresetSave = document.getElementById('settings-preset-save');
@@ -5607,6 +6107,13 @@ INDEX_HTML = r"""<!doctype html>
     const settingsMemoryCompact = document.getElementById('settings-memory-compact');
     const settingsMemoryClearScope = document.getElementById('settings-memory-clear-scope');
     const settingsMemoryClear = document.getElementById('settings-memory-clear');
+    const settingsHistoryLimit = document.getElementById('settings-history-limit');
+    const settingsHistorySummary = document.getElementById('settings-history-summary');
+    const settingsHistoryRefresh = document.getElementById('settings-history-refresh');
+    const settingsHistoryTrim = document.getElementById('settings-history-trim');
+    const settingsHistoryDelete = document.getElementById('settings-history-delete');
+    const settingsHistoryClear = document.getElementById('settings-history-clear');
+    const settingsHistoryDeleteJobIds = document.getElementById('settings-history-delete-job-ids');
     const docsSearch = document.getElementById('docs-search');
     const docsList = document.getElementById('docs-list');
     const docsTitle = document.getElementById('docs-title');
@@ -5670,6 +6177,8 @@ INDEX_HTML = r"""<!doctype html>
       reportSearch: '',
       hardcodedSearch: '',
       apiLogSearch: '',
+      summaryPopover: '',
+      summaryOutsideCloseBound: false,
       reportPage: 1,
       hardcodedPage: 1,
       apiLogPage: 1
@@ -5719,6 +6228,8 @@ INDEX_HTML = r"""<!doctype html>
         "status.cancelled_short": "已中断。",
         "status.cancelled_task": "任务已中断。",
         "status.cancel_failed": "中断请求失败：{message}",
+        "status.json_locale_detected": "已从 JSON 文件识别源语言：{locale}",
+        "status.json_locale_conflict": "检测到多个 JSON 源语言，已保持当前源语言选择。",
         "error.ftbquests_missing_input": "请上传 FTB Quests ZIP/SNBT，或选择 quests/lang/en_us 目录",
         "error.json_missing_input": "请上传语言 JSON 文件"
       },
@@ -5735,6 +6246,8 @@ INDEX_HTML = r"""<!doctype html>
         "status.cancelled_short": "Cancelled.",
         "status.cancelled_task": "Task cancelled.",
         "status.cancel_failed": "Cancel request failed: {message}",
+        "status.json_locale_detected": "Detected source language from JSON files: {locale}",
+        "status.json_locale_conflict": "Multiple JSON source languages detected; kept the current source language.",
         "error.ftbquests_missing_input": "Upload an FTB Quests ZIP/SNBT, or choose a quests/lang/en_us directory",
         "error.json_missing_input": "Upload a language JSON file"
       }
@@ -6816,12 +7329,86 @@ INDEX_HTML = r"""<!doctype html>
         return;
       }
       const selected = settingsPresetSelect.value;
-      settingsPresetSelect.innerHTML = (presets || []).map(item => `
+      const items = presets || [];
+      settingsPresetSelect.innerHTML = items.map(item => `
         <option value="${escapeHtml(item.name)}">${escapeHtml(item.name)}</option>
       `).join('');
       if (selected && Array.from(settingsPresetSelect.options).some(option => option.value === selected)) {
         settingsPresetSelect.value = selected;
       }
+      if (settingsPresetMenu) {
+        settingsPresetMenu.innerHTML = items.length ? items.map(item => `
+          <button type="button" class="ghost-option ${settingsPresetSelect.value === item.name ? 'active' : ''}" data-preset-value="${escapeHtml(item.name)}" role="option" aria-selected="${settingsPresetSelect.value === item.name ? 'true' : 'false'}">
+            <strong>${escapeHtml(item.name)}</strong><span>${escapeHtml(item.config?.provider || ui('settings.preset_saved_config', '已保存配置'))}</span>
+          </button>
+        `).join('') : `<div class="ghost-empty">${escapeHtml(ui('settings.preset_empty', '暂无已保存预设'))}</div>`;
+      }
+      syncSettingsPresetDisplay();
+    }
+
+    function syncSettingsPresetDisplay() {
+      if (!settingsPresetDisplay || !settingsPresetSelect) {
+        return;
+      }
+      const selected = settingsPresetSelect.value;
+      settingsPresetDisplay.textContent = selected || ui('settings.preset_empty', '暂无已保存预设');
+      settingsPresetDisplay.title = selected || '';
+    }
+
+    function bindSettingsPresetMenu() {
+      if (!settingsPresetSelectShell || !settingsPresetMenu || !settingsPresetSelect) {
+        return;
+      }
+      const trigger = settingsPresetSelectShell.querySelector('[data-select-trigger]');
+      if (!trigger) {
+        return;
+      }
+      const closeMenu = () => scheduleMenuHide(settingsPresetSelectShell, settingsPresetMenu, trigger);
+      trigger.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (isMenuOpen(settingsPresetSelectShell, settingsPresetMenu)) {
+          closeMenu();
+          return;
+        }
+        document.querySelectorAll('.ghost-select.open').forEach(item => {
+          if (item === settingsPresetSelectShell) {
+            return;
+          }
+          const otherTrigger = item.querySelector('[data-select-trigger]');
+          const otherMenu = item.querySelector('.ghost-menu');
+          if (otherMenu) {
+            scheduleMenuHide(item, otherMenu, otherTrigger);
+          }
+        });
+        openSelectMenu(settingsPresetSelectShell, settingsPresetMenu, trigger);
+      });
+      settingsPresetMenu.addEventListener('click', event => {
+        const option = event.target.closest('[data-preset-value]');
+        if (!option) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        settingsPresetSelect.value = option.dataset.presetValue || '';
+        settingsPresetMenu.querySelectorAll('.ghost-option').forEach(item => {
+          const active = item === option;
+          item.classList.toggle('active', active);
+          item.setAttribute('aria-selected', active ? 'true' : 'false');
+        });
+        syncSettingsPresetDisplay();
+        closeMenu();
+      });
+      document.addEventListener('click', event => {
+        if (!settingsPresetSelectShell.contains(event.target) && !settingsPresetMenu.contains(event.target)) {
+          closeMenu();
+        }
+      });
+      document.addEventListener('keydown', event => {
+        if (event.key === 'Escape') {
+          closeMenu();
+        }
+      });
     }
 
     async function loadConfigPresets() {
@@ -6901,6 +7488,14 @@ INDEX_HTML = r"""<!doctype html>
       }
       renderConfigPresets(payload.presets || []);
       settingsPresetSelect.value = payload.preset.name;
+      syncSettingsPresetDisplay();
+      if (settingsPresetMenu) {
+        settingsPresetMenu.querySelectorAll('.ghost-option').forEach(item => {
+          const active = item.dataset.presetValue === payload.preset.name;
+          item.classList.toggle('active', active);
+          item.setAttribute('aria-selected', active ? 'true' : 'false');
+        });
+      }
       setSettingsStatus(formatUi('settings.preset_saved', '已保存预设 {name}。', { name: payload.preset.name }));
     }
 
@@ -6983,6 +7578,71 @@ INDEX_HTML = r"""<!doctype html>
       return payload;
     }
 
+    function renderHistorySettingsSummary(payload) {
+      if (!settingsHistorySummary) {
+        return;
+      }
+      const count = Number(payload?.count || 0);
+      const limit = Number(payload?.limit || 100);
+      settingsHistorySummary.textContent = `当前 ${count} 条，最多保留 ${limit} 条`;
+      if (settingsHistoryLimit && document.activeElement !== settingsHistoryLimit) {
+        settingsHistoryLimit.value = String(limit);
+      }
+    }
+
+    async function loadHistorySettings(silent = false) {
+      const response = await fetch('/api/jobs/settings');
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error || '任务历史设置读取失败');
+      }
+      renderHistorySettingsSummary(payload);
+      if (!silent) {
+        setSettingsStatus('任务历史状态已刷新。');
+      }
+      return payload;
+    }
+
+    async function saveHistorySettings() {
+      const limit = Math.max(1, Math.min(5000, Number(settingsHistoryLimit?.value || 100) || 100));
+      const response = await fetch('/api/jobs/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ limit })
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error || '任务历史设置保存失败');
+      }
+      renderHistorySettingsSummary(payload);
+      return payload;
+    }
+
+    async function mutateHistorySettings(action, extra = {}) {
+      const response = await fetch('/api/jobs/manage', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, ...extra })
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error || '任务历史操作失败');
+      }
+      renderHistorySettingsSummary(payload);
+      historyRecords = [];
+      if (historyPanel && !historyPanel.hidden) {
+        await loadJobHistory();
+      }
+      return payload;
+    }
+
+    function parseHistoryDeleteJobIds() {
+      return String(settingsHistoryDeleteJobIds?.value || '')
+        .split(/[\s,，]+/)
+        .map(item => item.trim())
+        .filter(Boolean);
+    }
+
     function downloadFilledUiLocale(fillLocale) {
       const locale = uiLocale.value || 'zh_cn';
       window.location.href = `/api/ui-locales/fill/${encodeURIComponent(locale)}${uiLocaleQuery()}&fill_locale=${encodeURIComponent(fillLocale)}`;
@@ -6991,6 +7651,12 @@ INDEX_HTML = r"""<!doctype html>
     function bindSettingsMenu() {
       applyCacheDirSetting(storedCacheDirSetting());
       applyUiLocaleDirSetting(storedUiLocaleDirSetting());
+      bindSettingsPresetMenu();
+      if (settingsHistoryLimit) {
+        settingsHistoryLimit.addEventListener('input', () => {
+          setSettingsStatus('');
+        });
+      }
       if (!settingsDialog) {
         return;
       }
@@ -7091,11 +7757,76 @@ INDEX_HTML = r"""<!doctype html>
         });
       }
       if (settingsSave) {
-        settingsSave.addEventListener('click', () => {
-          applyCacheDirSetting(settingsCacheDir ? settingsCacheDir.value : '', true);
-          applyUiLocaleDirSetting(settingsUiLocaleDir ? settingsUiLocaleDir.value : '', true);
-          setSettingsStatus(ui('settings.saved', '设置已保存。'));
-          refreshUiLocales(true);
+        settingsSave.addEventListener('click', async () => {
+          try {
+            applyCacheDirSetting(settingsCacheDir ? settingsCacheDir.value : '', true);
+            applyUiLocaleDirSetting(settingsUiLocaleDir ? settingsUiLocaleDir.value : '', true);
+            await saveHistorySettings();
+            setSettingsStatus(ui('settings.saved', '设置已保存。'));
+            refreshUiLocales(true);
+          } catch (error) {
+            setSettingsStatus(error.message || ui('settings.save_failed', '设置保存失败'), true);
+          }
+        });
+      }
+      if (settingsHistoryRefresh) {
+        settingsHistoryRefresh.addEventListener('click', async () => {
+          try {
+            await loadHistorySettings();
+          } catch (error) {
+            setSettingsStatus(error.message || '任务历史设置读取失败', true);
+          }
+        });
+      }
+      if (settingsHistoryTrim) {
+        settingsHistoryTrim.addEventListener('click', async () => {
+          settingsHistoryTrim.disabled = true;
+          try {
+            const limit = Math.max(1, Math.min(5000, Number(settingsHistoryLimit?.value || 100) || 100));
+            const payload = await mutateHistorySettings('trim', { limit });
+            setSettingsStatus(`已按上限裁剪历史，删除 ${Number(payload.removed || 0)} 条。`);
+          } catch (error) {
+            setSettingsStatus(error.message || '任务历史裁剪失败', true);
+          } finally {
+            settingsHistoryTrim.disabled = false;
+          }
+        });
+      }
+      if (settingsHistoryDelete) {
+        settingsHistoryDelete.addEventListener('click', async () => {
+          const jobIds = parseHistoryDeleteJobIds();
+          if (!jobIds.length) {
+            setSettingsStatus('请先输入要删除的任务 ID。', true);
+            return;
+          }
+          settingsHistoryDelete.disabled = true;
+          try {
+            const payload = await mutateHistorySettings('delete', { job_ids: jobIds });
+            if (settingsHistoryDeleteJobIds) {
+              settingsHistoryDeleteJobIds.value = '';
+            }
+            setSettingsStatus(`已删除 ${Number(payload.removed || 0)} 条历史记录。`);
+          } catch (error) {
+            setSettingsStatus(error.message || '任务历史删除失败', true);
+          } finally {
+            settingsHistoryDelete.disabled = false;
+          }
+        });
+      }
+      if (settingsHistoryClear) {
+        settingsHistoryClear.addEventListener('click', async () => {
+          settingsHistoryClear.disabled = true;
+          try {
+            const payload = await mutateHistorySettings('clear');
+            if (settingsHistoryDeleteJobIds) {
+              settingsHistoryDeleteJobIds.value = '';
+            }
+            setSettingsStatus(`已清空任务历史，删除 ${Number(payload.removed || 0)} 条记录。`);
+          } catch (error) {
+            setSettingsStatus(error.message || '任务历史清空失败', true);
+          } finally {
+            settingsHistoryClear.disabled = false;
+          }
         });
       }
       if (settingsUiLocaleRefresh) {
@@ -7186,6 +7917,7 @@ INDEX_HTML = r"""<!doctype html>
           }
         });
       }
+      loadHistorySettings(true).catch(() => {});
       if (settingsGlossarySave) {
         settingsGlossarySave.addEventListener('click', async () => {
           settingsGlossarySave.disabled = true;
@@ -7482,6 +8214,86 @@ INDEX_HTML = r"""<!doctype html>
         return uniqueLocales[0];
       }
       return '';
+    }
+
+    function inferLocaleFromJsonUploadPath(path) {
+      const parts = String(path || '')
+        .replace(/\\/g, '/')
+        .split('/')
+        .map(part => part.trim())
+        .filter(Boolean);
+      if (!parts.length) {
+        return '';
+      }
+      const filename = parts[parts.length - 1].toLowerCase();
+      if (!filename.endsWith('.json')) {
+        return '';
+      }
+      const stem = filename.slice(0, -5);
+      const tokens = [
+        normalizeLocaleValue(stem),
+        normalizeLocaleValue(stem.replace(/^mc-mod-i18n-ui[-_]/, '')),
+        normalizeLocaleValue(stem.replace(/^mc_mod_i18n_ui_/, '')),
+        ...stem.split(/[^a-z0-9]+/i).map(normalizeLocaleValue)
+      ].filter(Boolean);
+      return tokens.find(isLikelyFtbquestsLocale) || '';
+    }
+
+    async function inferLocaleFromJsonFile(file) {
+      const pathLocale = inferLocaleFromJsonUploadPath(file.webkitRelativePath || file.name);
+      if (pathLocale) {
+        return pathLocale;
+      }
+      try {
+        const text = await file.text();
+        const data = JSON.parse(text);
+        const locale = normalizeLocaleValue(data?.locale || '');
+        return isLikelyFtbquestsLocale(locale) ? locale : '';
+      } catch (error) {
+        return '';
+      }
+    }
+
+    async function inferJsonSourceLocaleFromFiles(files) {
+      const locales = [];
+      for (const file of Array.from(files || [])) {
+        const locale = await inferLocaleFromJsonFile(file);
+        if (locale) {
+          locales.push(locale);
+        }
+      }
+      const uniqueLocales = [...new Set(locales)];
+      if (uniqueLocales.length === 1 && uniqueLocales.length === Array.from(files || []).length) {
+        return { locale: uniqueLocales[0], conflict: false };
+      }
+      return { locale: '', conflict: uniqueLocales.length > 1 };
+    }
+
+    async function syncJsonSourceLocaleFromInput() {
+      if (inputKind.value !== 'json') {
+        return;
+      }
+      const files = Array.from(jsonInput.files || []);
+      if (!files.length) {
+        return;
+      }
+      const inferred = await inferJsonSourceLocaleFromFiles(files);
+      if (inferred.conflict) {
+        statusBox.className = 'status';
+        statusBox.textContent = ui('status.json_locale_conflict', '检测到多个 JSON 源语言，已保持当前源语言选择。');
+        return;
+      }
+      if (!inferred.locale || inferred.locale === normalizeLocaleValue(sourceLocale.value)) {
+        return;
+      }
+      ensureSelectOption(sourceLocale, inferred.locale, labelForLocale(inferred.locale));
+      sourceLocale.value = inferred.locale;
+      syncSourceLocale();
+      if (sourceLocaleMenu.dataset.localeName) {
+        sourceLocaleMenu.innerHTML = buildLocaleSelectMenuOptions(sourceLocale, 'source_locale');
+      }
+      statusBox.className = 'status';
+      statusBox.textContent = formatUi('status.json_locale_detected', '已从 JSON 文件识别源语言：{locale}', { locale: inferred.locale });
     }
 
     function syncFtbquestsSourceLocaleFromInput() {
@@ -8350,7 +9162,11 @@ INDEX_HTML = r"""<!doctype html>
     }
     ftbquestsInput.addEventListener('change', handleFtbquestsInputChange);
     ftbquestsDirectoryInput.addEventListener('change', handleFtbquestsInputChange);
-    jsonInput.addEventListener('change', syncFiles);
+    function handleJsonInputChange() {
+      syncFiles();
+      syncJsonSourceLocaleFromInput().catch(() => {});
+    }
+    jsonInput.addEventListener('change', handleJsonInputChange);
     if (preflightRun) {
       preflightRun.addEventListener('click', () => {
         runPreflight().catch(error => {
@@ -8371,6 +9187,7 @@ INDEX_HTML = r"""<!doctype html>
         syncInputKind();
         syncFiles();
         syncFtbquestsSourceLocaleFromInput();
+        syncJsonSourceLocaleFromInput().catch(() => {});
       });
     });
     populateLocaleSelect(sourceLocale, 'en_us');
@@ -8402,6 +9219,9 @@ INDEX_HTML = r"""<!doctype html>
     function switchView(view) {
       resultState.mainView = view;
       closeAllSelectMenus();
+      if (['language', 'report', 'hardcoded', 'api-log'].includes(view)) {
+        resultState.resultView = view;
+      }
       const isSettingsView = view === 'settings';
       const isHistoryView = view === 'history';
       const isDocsView = view === 'docs';
@@ -8451,6 +9271,28 @@ INDEX_HTML = r"""<!doctype html>
         renderResultShell();
       }
     }
+
+    function switchSettingsSection(sectionId) {
+      const targetId = sectionId || 'settings-cache-section';
+      document.querySelectorAll('[data-settings-target]').forEach(button => {
+        const isActive = button.dataset.settingsTarget === targetId;
+        button.classList.toggle('active', isActive);
+        button.setAttribute('aria-current', isActive ? 'page' : 'false');
+      });
+      document.querySelectorAll('#settings-page .settings-section').forEach(section => {
+        section.hidden = section.id !== targetId;
+      });
+      if (targetId === 'settings-history-section') {
+        loadHistorySettings(true).catch(() => {});
+      }
+    }
+
+    document.querySelectorAll('[data-settings-target]').forEach(button => {
+      button.addEventListener('click', () => {
+        switchSettingsSection(button.dataset.settingsTarget);
+      });
+    });
+    switchSettingsSection('settings-cache-section');
 
     async function openDocView(slug) {
       switchView('docs');
@@ -8818,7 +9660,7 @@ INDEX_HTML = r"""<!doctype html>
       const kindFilter = historyKindFilter?.value || 'all';
       const query = String(historySearch?.value || '').trim().toLowerCase();
       const rows = historyRecords.filter(record => {
-        return (statusFilter === 'all' || record.status === statusFilter)
+        return (statusFilter === 'all' || historyEffectiveStatus(record) === statusFilter)
           && (kindFilter === 'all' || record.input_kind === kindFilter)
           && (!query || historyRecordHaystack(record).includes(query));
       });
@@ -8839,30 +9681,40 @@ INDEX_HTML = r"""<!doctype html>
         return;
       }
       historyList.innerHTML = rows.map(renderJobHistoryRow).join('');
+      const activeRecord = rows.find(record => record.job_id === activeHistoryJobId) || rows[0];
       historyList.querySelectorAll('[data-history-job]').forEach(button => {
         button.addEventListener('click', () => {
-          activeHistoryJobId = button.dataset.historyJob || '';
-          renderJobHistory();
+          const nextJobId = button.dataset.historyJob || '';
+          if (!nextJobId || nextJobId === activeHistoryJobId) {
+            return;
+          }
+          activeHistoryJobId = nextJobId;
+          historyList.querySelectorAll('[data-history-job]').forEach(card => {
+            const isActive = (card.dataset.historyJob || '') === activeHistoryJobId;
+            card.classList.toggle('active', isActive);
+            card.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+          });
+          renderJobHistoryDetail(rows.find(record => record.job_id === activeHistoryJobId) || activeRecord);
         });
       });
-      renderJobHistoryDetail(rows.find(record => record.job_id === activeHistoryJobId) || rows[0]);
+      renderJobHistoryDetail(activeRecord);
       bindDocTriggers();
     }
 
     function renderJobHistoryRow(record) {
       const progress = historyProgress(record);
-      const statusClass = historyStatusClass(record.status);
+      const statusClass = historyStatusClass(record);
       const isActive = record.job_id === activeHistoryJobId;
       return `
         <button type="button" class="history-task-card ${isActive ? 'active' : ''}" data-history-job="${escapeHtml(record.job_id || '')}" aria-pressed="${isActive ? 'true' : 'false'}">
           <span class="history-task-top">
-            <span class="history-status-chip ${escapeHtml(statusClass)}"><i class="${escapeHtml(historyStatusIcon(record.status))}"></i>${escapeHtml(historyStatusLabel(record.status))}</span>
+            <span class="history-status-chip ${escapeHtml(statusClass)}"><i class="${escapeHtml(historyStatusIcon(record))}"></i>${escapeHtml(historyStatusLabel(record))}</span>
             <span class="history-task-meta">${escapeHtml(formatHistoryTime(record.created_at))}</span>
           </span>
           <strong class="history-task-title" title="${escapeHtml(historyTaskTitle(record))}">${escapeHtml(historyTaskTitle(record))}</strong>
           <span class="history-task-id" title="${escapeHtml(record.job_id || '')}"><i class="ri-terminal-box-line"></i>${escapeHtml(record.job_id || '')}</span>
           <span class="history-progress">
-            <span class="history-progress-track"><span class="history-progress-bar" style="width:${escapeHtml(progress.percentText)}"></span></span>
+            <span class="history-progress-track"><span class="history-progress-bar" style="width:${escapeHtml(progress.barPercentText || progress.percentText)}"></span></span>
             <span class="history-progress-text"><span>${escapeHtml(progress.label)}</span><span>${escapeHtml(progress.percentText)}</span></span>
           </span>
           <span class="history-task-foot">
@@ -8874,28 +9726,28 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function renderJobHistoryDetail(record) {
+      const headActions = document.getElementById('history-detail-head-actions');
       if (!historyDetail) {
         return;
       }
       if (!record) {
         historyDetail.innerHTML = `<div class="empty">选择一条历史任务查看详情。</div>`;
+        if (headActions) headActions.innerHTML = '';
         return;
       }
-      const statusClass = historyStatusClass(record.status);
       const downloads = historyDownloadEntries(record);
       const firstDownload = downloads.find(item => item.available);
       const progress = historyProgress(record);
+      if (headActions) {
+        headActions.innerHTML = `
+          ${firstDownload ? `<a class="primary" href="${escapeHtml(firstDownload.url)}" target="_blank" rel="noopener"><i class="ri-download-cloud-2-line"></i><span>下载主要产物</span></a>` : ''}
+          <button type="button" data-doc-target="history-and-report"><i class="ri-book-open-line"></i><span>查看说明</span></button>
+        `;
+      }
       historyDetail.innerHTML = `
-        <div class="history-detail-title-row">
-          <div class="history-detail-title">
-            <span class="history-status-chip ${escapeHtml(statusClass)}"><i class="${escapeHtml(historyStatusIcon(record.status))}"></i>${escapeHtml(historyStatusLabel(record.status))}</span>
-            <h3>${escapeHtml(historyTaskTitle(record))}</h3>
-            <span class="history-detail-id" title="${escapeHtml(record.job_id || '')}"><i class="ri-terminal-box-line"></i>${escapeHtml(record.job_id || '')}</span>
-          </div>
-          <div class="history-detail-actions">
-            ${firstDownload ? `<a class="primary" href="${escapeHtml(firstDownload.url)}" target="_blank" rel="noopener"><i class="ri-download-cloud-2-line"></i><span>下载主要产物</span></a>` : ''}
-            <button type="button" data-doc-target="history-and-report"><i class="ri-book-open-line"></i><span>查看说明</span></button>
-          </div>
+        <div class="history-detail-title">
+          <h3>${escapeHtml(historyTaskTitle(record))}</h3>
+          <span class="history-detail-id" title="${escapeHtml(record.job_id || '')}"><i class="ri-terminal-box-line"></i>${escapeHtml(record.job_id || '')}</span>
         </div>
         <div class="history-detail-grid">
           ${renderHistoryMetric('ri-robot-2-line', ui('result.provider', 'Provider'), record.provider || '-')}
@@ -8941,15 +9793,28 @@ INDEX_HTML = r"""<!doctype html>
       return kind === 'ftbquests' ? ui('input.ftbquests', 'FTB Quests 任务书') : (kind === 'json' ? ui('input.json', '语言 JSON 文件') : ui('input.jar', 'Mod JAR 语言文件'));
     }
 
-    function historyStatusLabel(status) {
+    function historyEffectiveStatus(record) {
+      const status = record.status;
+      if (status === 'cancelled') return 'cancelled';
+      if (status !== 'done') return 'error';
+      const success = Number(record.success_count || 0);
+      const failure = Number(record.failure_count || 0);
+      if (failure > 0 && success === 0) return 'error';
+      return 'done';
+    }
+
+    function historyStatusLabel(recordOrStatus) {
+      const status = typeof recordOrStatus === 'string' ? recordOrStatus : historyEffectiveStatus(recordOrStatus);
       return status === 'done' ? ui('history.done', '完成') : (status === 'cancelled' ? ui('history.cancelled', '已中断') : ui('history.error', '失败'));
     }
 
-    function historyStatusClass(status) {
+    function historyStatusClass(recordOrStatus) {
+      const status = typeof recordOrStatus === 'string' ? recordOrStatus : historyEffectiveStatus(recordOrStatus);
       return status === 'done' ? 'done' : (status === 'cancelled' ? 'cancelled' : 'error');
     }
 
-    function historyStatusIcon(status) {
+    function historyStatusIcon(recordOrStatus) {
+      const status = typeof recordOrStatus === 'string' ? recordOrStatus : historyEffectiveStatus(recordOrStatus);
       return status === 'done' ? 'ri-checkbox-circle-line' : (status === 'cancelled' ? 'ri-pause-circle-line' : 'ri-error-warning-line');
     }
 
@@ -8975,10 +9840,19 @@ INDEX_HTML = r"""<!doctype html>
       const success = Number(record.success_count || 0);
       const failure = Number(record.failure_count || 0);
       const total = Math.max(0, success + failure);
-      const percent = total ? Math.round((success / total) * 100) : (record.status === 'done' ? 100 : 0);
+      const rawPercent = total ? ((success / total) * 100) : (record.status === 'done' ? 100 : 0);
+      const boundedPercent = Math.max(0, Math.min(100, rawPercent));
+      const roundedPercent = Math.round(boundedPercent);
+      const percentText = total && success > 0 && boundedPercent < 1
+        ? '<1%'
+        : `${roundedPercent}%`;
+      const barPercent = total && success > 0 && boundedPercent < 1
+        ? Math.max(boundedPercent, 0.6)
+        : boundedPercent;
       return {
-        percent,
-        percentText: `${Math.max(0, Math.min(100, percent))}%`,
+        percent: roundedPercent,
+        percentText,
+        barPercentText: `${barPercent}%`,
         label: total ? `${success} / ${total} items` : `${Number(record.processed_sources || 0)} source${Number(record.processed_sources || 0) === 1 ? '' : 's'}`
       };
     }
@@ -9002,8 +9876,8 @@ INDEX_HTML = r"""<!doctype html>
 
     function renderHistoryStats(rows) {
       const total = rows.length;
-      const done = rows.filter(record => record.status === 'done').length;
-      const failed = rows.filter(record => record.status === 'error').length;
+      const done = rows.filter(record => historyEffectiveStatus(record) === 'done').length;
+      const failed = rows.filter(record => historyEffectiveStatus(record) === 'error').length;
       const generated = rows.reduce((sum, record) => sum + Number(record.generated_files || 0), 0);
       const cards = [
         ['任务总数', total, ''],
@@ -9689,6 +10563,8 @@ INDEX_HTML = r"""<!doctype html>
       resultState.languageSearch = '';
       resultState.languageJarFilter = '全部';
       resultState.languageStatusFilter = 'all';
+      resultState.languageConditionFilter = 'all';
+      resultState.languageViewMode = hasIssueEntries(payload) ? 'diff' : 'table';
       resultState.languageFilteredCacheKey = '';
       resultState.languageFilteredEntries = [];
       resultState.languageEdits = {};
@@ -9698,6 +10574,7 @@ INDEX_HTML = r"""<!doctype html>
       resultState.reportSearch = '';
       resultState.hardcodedSearch = '';
       resultState.apiLogSearch = '';
+      resultState.summaryPopover = '';
       resultState.reportPage = 1;
       resultState.hardcodedPage = 1;
       resultState.apiLogPage = 1;
@@ -9716,73 +10593,61 @@ INDEX_HTML = r"""<!doctype html>
       const hardcodedCount = hardcodedState.entries.length;
       const apiFailureCount = payload.api_failure_count || summary.api_failed || 0;
       const candidateCount = payload.hardcoded_count || 0;
-      const reportEntryCount = summary ? Object.values(summary).reduce((a, b) => a + b, 0) : (Array.isArray(payload.entries) ? payload.entries.length : 0);
       const isFtbquestsResult = payload.kind === 'ftbquests';
       const isJsonResult = payload.kind === 'json';
+      const reportEntryCount = summary ? Object.values(summary).reduce((a, b) => a + b, 0) : (Array.isArray(payload.entries) ? payload.entries.length : 0);
+      const processedSourceCount = isFtbquestsResult || isJsonResult ? (payload.processed_sources || 1) : (payload.processed_jars || 0);
       headerJob.textContent = payload.job_id || ui('header.not_started', '未开始');
-      const languageHeadTitle = resultState.activeTab === 'hardcoded'
-        ? ui('result.hardcoded', '硬编码映射')
-        : (isFtbquestsResult ? ui('result.ftbquests', '任务书结果') : (isJsonResult ? ui('result.json', 'JSON 结果') : ui('result.language', '语言结果')));
       const languageHeadDesc = resultState.activeTab === 'hardcoded'
         ? ui('result.hardcoded_desc', '选择候选、AI 翻译或导出映射')
         : (isFtbquestsResult ? ui('result.ftbquests_desc', '可搜索 FTB Quests 翻译条目并下载补丁') : (isJsonResult ? ui('result.json_desc', '可搜索 JSON 语言文件翻译条目并下载结果') : ui('result.language_desc', '可搜索并导出人工修改')));
+      const headActions = renderResultHeadActions({ isJsonResult, isFtbquestsResult });
       results.innerHTML = `
         <div class="actions">
           <button type="button" data-view="language"><i class="ri-folder-open-line"></i><span>${escapeHtml(ui('result.workspace', '工作区'))}</span></button>
           ${payload.pack_url ? `<button type="button" id="download-pack" data-pack-url="${escapeHtml(payload.pack_url)}" data-pack-name="${escapeHtml(payload.pack_filename || defaultPackFilename(payload.pack_url))}"><i class="ri-download-2-line"></i><span>${escapeHtml(ui('result.download_pack', '下载资源包'))}</span></button>` : ''}
           ${payload.ftbquests_patch_url ? `<button type="button" id="download-ftbquests" data-download-url="${escapeHtml(payload.ftbquests_patch_url)}"><i class="ri-download-2-line"></i><span>${escapeHtml(ui('result.download_ftbquests', '下载任务书补丁'))}</span></button>` : ''}
           ${payload.json_url ? `<button type="button" id="download-json" data-download-url="${escapeHtml(payload.json_url)}"><i class="ri-download-2-line"></i><span>${escapeHtml(ui('result.download_json', '下载 JSON'))}</span></button>` : ''}
-          <button type="button" id="export-report-json"><i class="ri-download-2-line"></i><span>${escapeHtml(ui('result.export_report_json', '导出报告 JSON'))}</span></button>
-          <button type="button" id="export-report-csv"><i class="ri-file-excel-2-line"></i><span>${escapeHtml(ui('result.export_report_csv', '导出报告 CSV'))}</span></button>
-          <button type="button" id="export-failed-json"><i class="ri-error-warning-line"></i><span>${escapeHtml(ui('result.export_failed_json', '导出失败项'))}</span></button>
           <button type="button" data-view="report"><i class="ri-file-list-3-line"></i><span>${escapeHtml(ui('result.open_report', '打开报告'))}</span></button>
           ${isFtbquestsResult || isJsonResult ? '' : `<button type="button" data-view="hardcoded"><i class="ri-file-search-line"></i><span>${escapeHtml(ui('result.hardcoded_report', '硬编码报告'))}</span></button>`}
           <button type="button" data-view="api-log"><i class="ri-bug-line"></i><span>${escapeHtml(ui('result.api_log', 'API 调试日志'))}</span></button>
-          ${apiFailureCount && !isFtbquestsResult && !isJsonResult ? `<button type="button" id="retry-api-failures"><i class="ri-refresh-line"></i><span>${escapeHtml(ui('result.retry_failed', '重试失败项'))}</span></button>` : ''}
         </div>
         ${apiFailureCount ? `
-          <div class="status error">
-            ${escapeHtml(formatUi('result.api_failure_notice', '汉化翻译存在异常缺失 {count} 条。可打开 API 调试日志查看报错记录，或手动重试失败项。', { count: apiFailureCount }))}
+          <div class="status error api-failure-notice">
+            <div class="api-failure-copy">
+              <strong>${escapeHtml(formatUi('result.api_failure_title', '汉化翻译存在异常缺失 {count} 条。', { count: apiFailureCount }))}</strong>
+              <p>${escapeHtml(ui('result.api_failure_action', '可打开 API 调试日志查看报错记录，或手动重试失败项。'))}</p>
+            </div>
+            ${!isFtbquestsResult && !isJsonResult ? `<button type="button" class="danger-button" id="retry-api-failures"><i class="ri-refresh-line"></i><span>${escapeHtml(ui('result.retry_failed', '重试失败项'))}</span></button>` : ''}
           </div>
         ` : ''}
-        <div class="summary">
-          <section class="summary-group">
-            <h3>${escapeHtml(ui('result.outputs', '输出产物'))}</h3>
-            <div class="summary-group-grid">
-              <div class="metric"><strong>${isFtbquestsResult || isJsonResult ? (payload.processed_sources || 1) : payload.processed_jars}</strong><span>${escapeHtml(isFtbquestsResult ? ui('result.ftbquests_input', '任务书输入') : (isJsonResult ? ui('result.json_input', 'JSON 输入') : ui('result.jar_input', 'JAR')))}</span></div>
-              <div class="metric"><strong>${payload.generated_files}</strong><span>${escapeHtml(isFtbquestsResult ? ui('result.tasks', '任务书文件') : (isJsonResult ? ui('result.json_files', 'JSON 文件') : ui('result.language_files', '语言文件')))}</span></div>
-              <div class="metric"><strong>${isFtbquestsResult ? (payload.legacy_files || 0) : (isJsonResult ? (summary.skipped || 0) : hardcodedCount)}</strong><span>${escapeHtml(isFtbquestsResult ? ui('result.legacy_snbt', '旧版 SNBT') : (isJsonResult ? ui('result.skipped_items', '跳过项') : ui('result.hardcoded_mapping', '硬编码映射')))}</span></div>
-            </div>
-          </section>
-          <section class="summary-group">
-            <h3>${escapeHtml(ui('result.quality', '质量概览'))}</h3>
-            <div class="summary-group-grid">
-              <div class="metric"><strong>${summary.translated || 0}</strong><span>${escapeHtml(ui('result.new_translation', '新增翻译'))}</span></div>
-              <div class="metric"><strong>${summary.existing || 0}</strong><span>${escapeHtml(ui('result.existing_translation', '已有译文'))}</span></div>
-              <div class="metric"><strong>${apiFailureCount + (summary.failed || 0) + (summary.incomplete || 0)}</strong><span>${escapeHtml(ui('result.to_process', '需处理'))}</span></div>
-              <div class="metric"><strong>${reportEntryCount}</strong><span>${escapeHtml(ui('result.report_entries', '报告条目'))}</span></div>
-            </div>
-          </section>
-          <section class="summary-group">
-            <h3>${escapeHtml(ui('result.performance', '性能概览'))}</h3>
-            <div class="summary-group-grid">
-              <div class="metric"><strong>${formatSeconds(payload.elapsed_seconds)}</strong><span>${escapeHtml(ui('result.elapsed', '耗时'))}</span></div>
-              <div class="metric"><strong>${payload.cache_hits || 0}</strong><span>${escapeHtml(ui('result.cache_hits', '缓存命中'))}</span></div>
-              <div class="metric"><strong>${payload.memory_hits || 0}</strong><span>${escapeHtml(ui('result.memory_hits', '记忆命中'))}</span></div>
-              <div class="metric"><strong>${payload.cache_misses || 0}</strong><span>${escapeHtml(ui('result.actual_translation', '实际翻译'))}</span></div>
-              <div class="metric"><strong>${candidateCount}</strong><span>${escapeHtml(ui('result.candidate_text', '候选文本'))}</span></div>
-            </div>
-          </section>
-        </div>
+        ${renderResultSummaryCards({
+          payload,
+          summary,
+          hardcodedCount,
+          apiFailureCount,
+          candidateCount,
+          reportEntryCount,
+          isFtbquestsResult,
+          isJsonResult,
+          processedSourceCount
+        })}
         <div class="system-views">
           <div class="view-shell ${resultState.resultView === 'language' ? 'active' : ''}" data-result-view="language">
             <div class="view-frame">
-              <div class="view-head"><strong>${languageHeadTitle}</strong><span class="muted">${languageHeadDesc}</span></div>
-              <div class="view-body">
-                <div class="tabs">
-                  <button type="button" data-result-tab="language" class="${resultState.activeTab === 'language' ? 'active' : ''}"><i class="ri-language-line"></i><span>${escapeHtml(isFtbquestsResult ? ui('result.ftbquests', '任务书结果') : (isJsonResult ? ui('result.json', 'JSON 结果') : ui('result.language', '语言结果')))}</span></button>
-                  ${isFtbquestsResult || isJsonResult ? '' : `<button type="button" data-result-tab="hardcoded" class="${resultState.activeTab === 'hardcoded' ? 'active' : ''}" ${hardcodedCount ? '' : 'disabled'}><i class="ri-draft-line"></i><span>${escapeHtml(ui('result.hardcoded', '硬编码映射'))}</span></button>`}
+              <div class="view-head">
+                <div class="view-head-main">
+                  <div class="tabs">
+                    <button type="button" data-result-tab="language" class="${resultState.activeTab === 'language' ? 'active' : ''}"><i class="ri-language-line"></i><span>${escapeHtml(isFtbquestsResult ? ui('result.ftbquests', '任务书结果') : (isJsonResult ? ui('result.json', 'JSON 结果') : ui('result.language', '语言结果')))}</span></button>
+                    ${isFtbquestsResult || isJsonResult ? '' : `<button type="button" data-result-tab="hardcoded" class="${resultState.activeTab === 'hardcoded' ? 'active' : ''}" ${hardcodedCount ? '' : 'disabled'}><i class="ri-draft-line"></i><span>${escapeHtml(ui('result.hardcoded', '硬编码映射'))}</span></button>`}
+                  </div>
                 </div>
+                <div class="view-head-side">
+                  <span class="muted">${languageHeadDesc}</span>
+                  ${headActions}
+                </div>
+              </div>
+              <div class="view-body">
                 <div id="result-tab-panel" class="tab-panel">
                   ${resultState.activeTab === 'hardcoded' ? renderHardcodedWorkbench() : renderLanguageResults(payload)}
                 </div>
@@ -9800,6 +10665,7 @@ INDEX_HTML = r"""<!doctype html>
           </div>
         </div>
       `;
+      bindResultSummaryCards();
       bindResultTabs();
       bindViewButtons();
       if (resultState.resultView === 'language') {
@@ -9809,6 +10675,208 @@ INDEX_HTML = r"""<!doctype html>
           bindLanguageResults();
         }
       }
+    }
+
+    function renderResultHeadActions(context) {
+      const { isJsonResult, isFtbquestsResult } = context;
+      if (resultState.activeTab === 'hardcoded') {
+        return `
+          <div class="view-head-actions">
+            <button type="button" id="import-hardcoded"><i class="ri-upload-2-line"></i><span>${escapeHtml(ui('result.import_map', '导入 map'))}</span></button>
+            <button type="button" id="ai-translate-hardcoded"><i class="ri-sparkling-2-line"></i><span>${escapeHtml(ui('result.ai_translate_selected', 'AI 翻译所选'))}</span></button>
+            <button type="button" id="export-hardcoded"><i class="ri-download-2-line"></i><span>${escapeHtml(ui('result.export_filled', '导出已填写'))}</span></button>
+            <input id="hardcoded-map-file" class="hidden-file" type="file" accept=".json,application/json">
+          </div>
+        `;
+      }
+      if (isJsonResult || isFtbquestsResult) {
+        return '';
+      }
+      return `
+        <div class="view-head-actions">
+          <button type="button" id="export-language-edits"><i class="ri-download-2-line"></i><span>${escapeHtml(ui('result.export_edits', '导出已修改译文'))}</span></button>
+        </div>
+      `;
+    }
+
+    function resultSummaryMetric(value, label) {
+      return `<div class="metric"><strong>${escapeHtml(String(value ?? 0))}</strong><span>${escapeHtml(label)}</span></div>`;
+    }
+
+    function renderResultSummaryCards(context) {
+      const {
+        payload,
+        summary,
+        hardcodedCount,
+        apiFailureCount,
+        candidateCount,
+        reportEntryCount,
+        isFtbquestsResult,
+        isJsonResult,
+        processedSourceCount
+      } = context;
+      const toProcessCount = apiFailureCount + (summary.failed || 0) + (summary.incomplete || 0);
+      const outputThirdValue = isFtbquestsResult ? (payload.legacy_files || 0) : (isJsonResult ? (summary.skipped || 0) : hardcodedCount);
+      const outputThirdLabel = isFtbquestsResult ? ui('result.legacy_snbt', '旧版 SNBT') : (isJsonResult ? ui('result.skipped_items', '跳过项') : ui('result.hardcoded_mapping', '硬编码映射'));
+      const outputPrimaryLabel = isFtbquestsResult ? ui('result.ftbquests_input', '任务书输入') : (isJsonResult ? ui('result.json_input', 'JSON 输入') : ui('result.jar_input', 'JAR'));
+      const outputFileLabel = isFtbquestsResult ? ui('result.tasks', '任务书文件') : (isJsonResult ? ui('result.json_files', 'JSON 文件') : ui('result.language_files', '语言文件'));
+      const cards = [
+        {
+          key: 'outputs',
+          icon: 'ri-archive-stack-line',
+          title: ui('result.processed_jars', '已处理 JAR'),
+          value: processedSourceCount,
+          label: outputPrimaryLabel
+        },
+        {
+          key: 'quality',
+          icon: 'ri-translate-2',
+          title: ui('result.new_translation_entries', '新增翻译条目'),
+          value: summary.translated || 0,
+          label: ui('result.new_translation', '新增翻译')
+        },
+        {
+          key: 'performance',
+          icon: 'ri-timer-flash-line',
+          title: ui('result.average_elapsed', '平均耗时'),
+          value: formatSeconds(payload.elapsed_seconds),
+          label: ui('result.elapsed', '耗时')
+        },
+        {
+          key: 'report',
+          icon: 'ri-file-chart-line',
+          title: ui('result.report_generated', '报告生成'),
+          value: reportEntryCount,
+          label: ui('result.report_entries', '报告条目')
+        }
+      ];
+      const cardMarkup = cards.map(card => `
+        <button type="button" class="summary-card" data-summary-card="${escapeHtml(card.key)}" aria-haspopup="dialog">
+          <span class="summary-card-icon"><i class="${escapeHtml(card.icon)}"></i></span>
+          <span class="summary-card-copy">
+            <span class="summary-card-title">${escapeHtml(card.title)}</span>
+            <span class="summary-card-value">${escapeHtml(String(card.value))}</span>
+            <span class="summary-card-label">${escapeHtml(card.label)}</span>
+          </span>
+        </button>
+      `).join('');
+      const detailMarkup = {
+        outputs: `
+          ${resultSummaryMetric(processedSourceCount, outputPrimaryLabel)}
+          ${resultSummaryMetric(payload.generated_files || 0, outputFileLabel)}
+          ${resultSummaryMetric(outputThirdValue, outputThirdLabel)}
+        `,
+        quality: `
+          ${resultSummaryMetric(summary.translated || 0, ui('result.new_translation', '新增翻译'))}
+          ${resultSummaryMetric(summary.existing || 0, ui('result.existing_translation', '已有译文'))}
+          ${resultSummaryMetric(toProcessCount, ui('result.to_process', '需处理'))}
+        `,
+        performance: `
+          ${resultSummaryMetric(formatSeconds(payload.elapsed_seconds), ui('result.elapsed', '耗时'))}
+          ${resultSummaryMetric(payload.cache_hits || 0, ui('result.cache_hits', '缓存命中'))}
+          ${resultSummaryMetric(payload.memory_hits || 0, ui('result.memory_hits', '记忆命中'))}
+          ${resultSummaryMetric(payload.cache_misses || 0, ui('result.actual_translation', '实际翻译'))}
+          ${resultSummaryMetric(candidateCount, ui('result.candidate_text', '候选文本'))}
+        `,
+        report: `
+          ${resultSummaryMetric(reportEntryCount, ui('result.report_entries', '报告条目'))}
+        `
+      };
+      const popoverMarkup = cards.map(card => `
+        <section class="summary-popover" role="dialog" aria-label="${escapeHtml(card.title)}" data-summary-popover="${escapeHtml(card.key)}" hidden>
+          <div class="summary-popover-head">
+            <div class="summary-popover-title"><i class="${escapeHtml(card.icon)}"></i><span>${escapeHtml(card.title)}</span></div>
+            <button type="button" class="summary-popover-close" data-summary-close aria-label="${escapeHtml(ui('action.close', '关闭'))}"><i class="ri-close-line"></i></button>
+          </div>
+          <div class="summary-popover-grid">${detailMarkup[card.key]}</div>
+        </section>
+      `).join('');
+      return `
+        <div class="summary">
+          ${cardMarkup}
+          ${popoverMarkup}
+        </div>
+      `;
+    }
+
+    function bindResultSummaryCards() {
+      results.querySelectorAll('[data-summary-card]').forEach(button => {
+        button.addEventListener('click', event => {
+          event.stopPropagation();
+          const key = button.dataset.summaryCard || 'outputs';
+          const popover = Array.from(results.querySelectorAll('[data-summary-popover]')).find(item => item.dataset.summaryPopover === key);
+          const shouldOpen = !popover || popover.hidden;
+          closeSummaryPopover();
+          if (shouldOpen && popover) {
+            resultState.summaryPopover = key;
+            popover.hidden = false;
+            positionSummaryPopover(key);
+          }
+        });
+      });
+      results.querySelectorAll('[data-summary-close]').forEach(button => {
+        button.addEventListener('click', event => {
+          event.stopPropagation();
+          closeSummaryPopover();
+        });
+      });
+      results.querySelectorAll('[data-summary-popover]').forEach(popover => {
+        popover.addEventListener('click', event => {
+          event.stopPropagation();
+        });
+      });
+      bindSummaryOutsideClose();
+    }
+
+    function bindSummaryOutsideClose() {
+      if (resultState.summaryOutsideCloseBound) {
+        return;
+      }
+      resultState.summaryOutsideCloseBound = true;
+      document.addEventListener('click', event => {
+        if (!resultState.summaryPopover) {
+          return;
+        }
+        if (event.target.closest('[data-summary-card], [data-summary-popover]')) {
+          return;
+        }
+        closeSummaryPopover();
+      });
+      document.addEventListener('keydown', event => {
+        if (event.key === 'Escape') {
+          closeSummaryPopover();
+        }
+      });
+    }
+
+    function closeSummaryPopover() {
+      results.querySelectorAll('[data-summary-popover]').forEach(popover => {
+        popover.hidden = true;
+      });
+      resultState.summaryPopover = '';
+    }
+
+    function positionSummaryPopover(key) {
+      if (!key) {
+        return;
+      }
+      const button = Array.from(results.querySelectorAll('[data-summary-card]')).find(item => item.dataset.summaryCard === key);
+      const popover = Array.from(results.querySelectorAll('[data-summary-popover]')).find(item => item.dataset.summaryPopover === key);
+      if (!button || !popover) {
+        return;
+      }
+      const rect = button.getBoundingClientRect();
+      const gutter = 14;
+      const width = Math.min(420, window.innerWidth - gutter * 2);
+      const left = Math.max(gutter, Math.min(rect.left, window.innerWidth - width - gutter));
+      const top = Math.min(rect.bottom + 10, window.innerHeight - gutter - popover.offsetHeight);
+      popover.style.left = `${Math.round(left)}px`;
+      popover.style.top = `${Math.max(gutter, Math.round(top))}px`;
+      popover.style.width = `${Math.round(width)}px`;
+    }
+
+    function hasIssueEntries(payload) {
+      return (payload.entries || []).some(entry => ['failed', 'api_failed', 'incomplete', 'jar_failed'].includes(entry.status));
     }
 
     function splitJarPath(value) {
@@ -9895,26 +10963,39 @@ INDEX_HTML = r"""<!doctype html>
       const activeDisplay = jarFilterDisplayLabel(activeLabel);
       const jarMenuOptions = renderJarFilterOptions(jarNames, activeLabel);
       const isJsonResult = payload.kind === 'json';
+      const statusOptions = languageStatusOptions(payload);
+      const conditionOptions = languageConditionOptions(payload.entries || []);
+      const activeStatus = statusOptions.find(([value]) => value === resultState.languageStatusFilter) || statusOptions[0];
+      const activeCondition = conditionOptions.find(([value]) => value === resultState.languageConditionFilter) || conditionOptions[0];
       return `
         <div class="toolbar">
-          <div class="ghost-select jar-filter" id="language-jar-filter-shell"${isJsonResult ? ' hidden' : ''}>
-            <button type="button" class="control" data-select-trigger="jar-filter" aria-haspopup="listbox" aria-expanded="false" aria-controls="language-jar-filter-menu"><span class="value" id="language-jar-filter-display" title="${escapeHtml(activeLabel)}">${escapeHtml(activeDisplay)}</span><i class="ri-arrow-down-s-line chevron"></i></button>
-            <div class="ghost-menu" id="language-jar-filter-menu" role="listbox" hidden>${jarMenuOptions}</div>
+          <div class="toolbar-filter-group"${isJsonResult ? ' hidden' : ''}>
+            <span class="toolbar-filter-label">JAR:</span>
+            <div class="ghost-select jar-filter" id="language-jar-filter-shell">
+              <button type="button" class="control" data-select-trigger="jar-filter" aria-haspopup="listbox" aria-expanded="false" aria-controls="language-jar-filter-menu"><span class="value" id="language-jar-filter-display" title="${escapeHtml(activeLabel)}">${escapeHtml(activeDisplay)}</span><i class="ri-arrow-down-s-line chevron"></i></button>
+              <div class="ghost-menu" id="language-jar-filter-menu" role="listbox" hidden>${jarMenuOptions}</div>
+            </div>
           </div>
-          <div class="status-filter" id="language-status-filter" aria-label="${escapeHtml(ui('result.status_filter', '状态筛选'))}">
-            ${renderLanguageStatusFilters(payload)}
+          <div class="toolbar-filter-group">
+            <span class="toolbar-filter-label">${escapeHtml(ui('result.translation_status_filter', '翻译状态'))}:</span>
+            <div class="ghost-select language-filter" id="language-status-filter-shell">
+              <button type="button" class="control" data-select-trigger="language-status-filter" aria-haspopup="listbox" aria-expanded="false" aria-controls="language-status-filter-menu"><span class="value" id="language-status-filter-display">${escapeHtml(activeStatus[1])}</span><i class="ri-arrow-down-s-line chevron"></i></button>
+              <div class="ghost-menu" id="language-status-filter-menu" role="listbox" hidden>${renderLanguageFilterOptions(statusOptions, resultState.languageStatusFilter, 'status')}</div>
+            </div>
           </div>
-          <div class="status-filter" id="language-condition-filter" aria-label="${escapeHtml(ui('result.condition_filter', '条件筛选'))}">
-            ${renderLanguageConditionFilters(payload)}
+          <div class="toolbar-filter-group">
+            <span class="toolbar-filter-label">${escapeHtml(ui('result.text_status_filter', '译文状态'))}:</span>
+            <div class="ghost-select language-filter" id="language-condition-filter-shell">
+              <button type="button" class="control" data-select-trigger="language-condition-filter" aria-haspopup="listbox" aria-expanded="false" aria-controls="language-condition-filter-menu"><span class="value" id="language-condition-filter-display">${escapeHtml(activeCondition[1])}</span><i class="ri-arrow-down-s-line chevron"></i></button>
+              <div class="ghost-menu" id="language-condition-filter-menu" role="listbox" hidden>${renderLanguageFilterOptions(conditionOptions, resultState.languageConditionFilter, 'condition')}</div>
+            </div>
           </div>
           <div class="language-view-mode status-filter" id="language-view-mode" aria-label="${escapeHtml(ui('result.view_mode', '查看模式'))}">
             <button type="button" data-language-view="table" class="${resultState.languageViewMode === 'table' ? 'active' : ''}">${escapeHtml(ui('result.view_mode_table', '表格'))}</button>
             <button type="button" data-language-view="diff" class="${resultState.languageViewMode === 'diff' ? 'active' : ''}">${escapeHtml(ui('result.view_mode_diff', '对比'))}</button>
           </div>
           <input id="language-search" value="${escapeHtml(resultState.languageSearch)}" placeholder="${escapeHtml(ui('result.search_language', '搜索状态、Mod ID、Key、原文或译文'))}">
-          ${isJsonResult ? '' : `<button type="button" id="export-language-edits"><i class="ri-download-2-line"></i><span>${escapeHtml(ui('result.export_edits', '导出已修改译文'))}</span></button>`}
         </div>
-        ${renderLanguagePreviewSummary(payload)}
         ${renderJsonMetadataPreview(payload)}
         <div id="language-result-content" class="view-content">
           ${renderLanguageResultTable(payload)}
@@ -9922,7 +11003,7 @@ INDEX_HTML = r"""<!doctype html>
       `;
     }
 
-    function renderLanguageStatusFilters(payload) {
+    function languageStatusOptions(payload) {
       const entries = payload.entries || [];
       const counts = {};
       entries.forEach(entry => {
@@ -9941,8 +11022,12 @@ INDEX_HTML = r"""<!doctype html>
         const label = status === 'all'
           ? formatUi('result.all_count', '全部 {count}', { count })
           : formatUi('result.status_count', '{status} {count}', { status: statusLabel(status), count });
-        return `<button type="button" data-language-status="${escapeHtml(status)}" class="${resultState.languageStatusFilter === status ? 'active' : ''}">${escapeHtml(label)}</button>`;
-      }).join('');
+        return [status, label];
+      });
+    }
+
+    function renderLanguageStatusFilters(payload) {
+      return renderLanguageFilterOptions(languageStatusOptions(payload), resultState.languageStatusFilter, 'status');
     }
 
     function languageConditionOptions(entries) {
@@ -9973,22 +11058,13 @@ INDEX_HTML = r"""<!doctype html>
       if (!options.some(([value]) => value === resultState.languageConditionFilter)) {
         resultState.languageConditionFilter = 'all';
       }
-      return options.map(([value, label]) => `
-        <button type="button" data-language-condition="${escapeHtml(value)}" class="${resultState.languageConditionFilter === value ? 'active' : ''}">${escapeHtml(label)}</button>
-      `).join('');
+      return renderLanguageFilterOptions(options, resultState.languageConditionFilter, 'condition');
     }
 
-    function renderLanguagePreviewSummary(payload) {
-      const entries = getFilteredLanguageEntries(payload);
-      const changed = entries.filter(entry => String(entry.target ?? '') !== String(entry.source ?? '')).length;
-      const issues = entries.filter(entry => ['failed', 'api_failed', 'incomplete', 'jar_failed'].includes(entry.status)).length;
-      return `
-        <div class="preview-summary" id="language-preview-summary">
-          <span class="preview-chip">${escapeHtml(formatUi('result.preview_visible', '预览 {count} 条', { count: entries.length }))}</span>
-          <span class="preview-chip">${escapeHtml(formatUi('result.preview_changed', '译文变化 {count} 条', { count: changed }))}</span>
-          <span class="preview-chip">${escapeHtml(formatUi('result.preview_issues', '待处理 {count} 条', { count: issues }))}</span>
-        </div>
-      `;
+    function renderLanguageFilterOptions(options, activeValue, kind) {
+      return options.map(([value, label]) => `
+        <button type="button" class="ghost-option ${activeValue === value ? 'active' : ''}" data-language-filter-kind="${escapeHtml(kind)}" data-language-filter-value="${escapeHtml(value)}" role="option" aria-selected="${activeValue === value ? 'true' : 'false'}">${escapeHtml(label)}</button>
+      `).join('');
     }
 
     function renderJsonMetadataPreview(payload) {
@@ -10131,10 +11207,6 @@ INDEX_HTML = r"""<!doctype html>
         renderResultShell();
         return;
       }
-      const summary = document.getElementById('language-preview-summary');
-      if (summary) {
-        summary.outerHTML = renderLanguagePreviewSummary(resultState.payload);
-      }
       target.innerHTML = renderLanguageResultTable(resultState.payload);
       bindLanguageContentControls();
       bindLanguageTextareas();
@@ -10144,6 +11216,7 @@ INDEX_HTML = r"""<!doctype html>
       document.querySelectorAll('[data-result-tab]').forEach(button => {
         button.addEventListener('click', () => {
           resultState.activeTab = button.dataset.resultTab;
+          resultState.summaryPopover = '';
           renderResultShell();
         });
       });
@@ -10151,18 +11224,10 @@ INDEX_HTML = r"""<!doctype html>
 
     function bindViewButtons() {
       results.querySelectorAll('button[data-view]').forEach(button => {
-        button.addEventListener('click', () => {
-          resultState.resultView = button.dataset.view || 'language';
-          renderResultShell();
-        });
-      });
-      document.querySelectorAll('[data-priority-filter="issues"]').forEach(button => {
-        button.addEventListener('click', () => {
-          resultState.resultView = 'language';
-          resultState.activeTab = 'language';
-          resultState.languageConditionFilter = 'issues';
-          resultState.languageViewMode = 'diff';
-          resultState.languagePage = 1;
+        button.addEventListener('click', event => {
+          event.preventDefault();
+          event.stopPropagation();
+          setResultView(button.dataset.view || 'language');
           renderResultShell();
         });
       });
@@ -10246,19 +11311,15 @@ INDEX_HTML = r"""<!doctype html>
           }
         });
       }
-      const exportReportJsonButton = document.getElementById('export-report-json');
-      if (exportReportJsonButton) {
-        exportReportJsonButton.addEventListener('click', () => exportReportJson());
-      }
-      const exportReportCsvButton = document.getElementById('export-report-csv');
-      if (exportReportCsvButton) {
-        exportReportCsvButton.addEventListener('click', () => exportReportCsv());
-      }
-      const exportFailedJsonButton = document.getElementById('export-failed-json');
-      if (exportFailedJsonButton) {
-        exportFailedJsonButton.addEventListener('click', () => exportFailedItemsJson());
-      }
       bindDocTriggers();
+    }
+
+    function setResultView(view) {
+      const nextView = view || 'language';
+      resultState.resultView = nextView;
+      resultState.mainView = nextView;
+      resultState.summaryPopover = '';
+      switchView(nextView);
     }
 
     function renderReportContent() {
@@ -10859,6 +11920,62 @@ INDEX_HTML = r"""<!doctype html>
       });
     }
 
+    function bindLanguageFilterMenu(shell, kind) {
+      const trigger = shell.querySelector('[data-select-trigger]');
+      const menu = shell.querySelector('.ghost-menu');
+      if (!trigger || !menu) {
+        return;
+      }
+      const closeMenu = () => scheduleMenuHide(shell, menu, trigger);
+      trigger.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (isMenuOpen(shell, menu)) {
+          closeMenu();
+          return;
+        }
+        document.querySelectorAll('.ghost-select.open').forEach(item => {
+          if (item === shell) {
+            return;
+          }
+          const otherTrigger = item.querySelector('[data-select-trigger]');
+          const otherMenu = item.querySelector('.ghost-menu');
+          if (otherMenu) {
+            scheduleMenuHide(item, otherMenu, otherTrigger);
+          }
+        });
+        openSelectMenu(shell, menu, trigger);
+      });
+      menu.addEventListener('click', event => {
+        const option = event.target.closest('[data-language-filter-value]');
+        if (!option) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        const value = option.dataset.languageFilterValue || 'all';
+        if (kind === 'status') {
+          resultState.languageStatusFilter = value;
+        } else {
+          resultState.languageConditionFilter = value;
+        }
+        resultState.languageFilteredCacheKey = '';
+        resultState.languagePage = 1;
+        closeMenu();
+        renderResultShell();
+      });
+      document.addEventListener('click', event => {
+        if (!shell.contains(event.target) && !menu.contains(event.target)) {
+          closeMenu();
+        }
+      });
+      document.addEventListener('keydown', event => {
+        if (event.key === 'Escape') {
+          closeMenu();
+        }
+      });
+    }
+
     function bindLanguageResults() {
       const search = document.getElementById('language-search');
       if (!search) {
@@ -10868,6 +11985,14 @@ INDEX_HTML = r"""<!doctype html>
       if (jarShell) {
         bindJarFilterMenu(jarShell);
       }
+      const statusShell = document.getElementById('language-status-filter-shell');
+      if (statusShell) {
+        bindLanguageFilterMenu(statusShell, 'status');
+      }
+      const conditionShell = document.getElementById('language-condition-filter-shell');
+      if (conditionShell) {
+        bindLanguageFilterMenu(conditionShell, 'condition');
+      }
       search.addEventListener('input', () => {
         clearTimeout(languageSearchDebounce);
         languageSearchDebounce = window.setTimeout(() => {
@@ -10876,22 +12001,6 @@ INDEX_HTML = r"""<!doctype html>
           resultState.languagePage = 1;
           renderLanguageResultContent();
         }, 200);
-      });
-      document.querySelectorAll('[data-language-status]').forEach(button => {
-        button.addEventListener('click', () => {
-          resultState.languageStatusFilter = button.dataset.languageStatus || 'all';
-          resultState.languageFilteredCacheKey = '';
-          resultState.languagePage = 1;
-          renderResultShell();
-        });
-      });
-      document.querySelectorAll('[data-language-condition]').forEach(button => {
-        button.addEventListener('click', () => {
-          resultState.languageConditionFilter = button.dataset.languageCondition || 'all';
-          resultState.languageFilteredCacheKey = '';
-          resultState.languagePage = 1;
-          renderResultShell();
-        });
       });
       const exportButton = document.getElementById('export-language-edits');
       if (exportButton) {
@@ -11076,19 +12185,6 @@ INDEX_HTML = r"""<!doctype html>
       }).join('');
       return `
         <div class="hardcoded-workbench">
-          <div class="hardcoded-head">
-            <div>
-              <h3>${escapeHtml(ui('result.hardcoded_workbench', '硬编码映射工作台'))}</h3>
-              <div class="muted">${escapeHtml(ui('result.hardcoded_workbench_desc', '填写 translation 后可导出 hardcoded-map.json。'))}</div>
-              <div class="muted">${escapeHtml(ui('result.hardcoded_runtime_note', '注意：硬编码映射不会随资源包自动生效，需要运行时补丁 Mod、Mixin 或对应配置模板读取。'))}</div>
-            </div>
-            <div class="actions">
-              <button type="button" id="import-hardcoded"><i class="ri-upload-2-line"></i><span>${escapeHtml(ui('result.import_map', '导入 map'))}</span></button>
-              <button type="button" id="ai-translate-hardcoded"><i class="ri-sparkling-2-line"></i><span>${escapeHtml(ui('result.ai_translate_selected', 'AI 翻译所选'))}</span></button>
-              <button type="button" id="export-hardcoded"><i class="ri-download-2-line"></i><span>${escapeHtml(ui('result.export_filled', '导出已填写'))}</span></button>
-              <input id="hardcoded-map-file" class="hidden-file" type="file" accept=".json,application/json">
-            </div>
-          </div>
           <div class="toolbar">
             <button type="button" id="select-hardcoded-page"><i class="ri-checkbox-multiple-line"></i><span>${escapeHtml(ui('result.select_page', '全选当前页'))}</span></button>
             <span id="hardcoded-selected-count" class="muted">${escapeHtml(formatUi('result.selected_count', '已选 {count} 条', { count: hardcodedState.selected.size }))}</span>
@@ -11561,7 +12657,8 @@ def make_handler(workdir: Path):
                 snapshot = dict(job)
         if snapshot is not None:
             with history_lock:
-                append_job_history(workdir, build_job_history_record(job_id, snapshot))
+                history_limit = read_job_history_settings(workdir).get("limit", DEFAULT_JOB_HISTORY_LIMIT)
+                append_job_history(workdir, build_job_history_record(job_id, snapshot), limit=history_limit)
 
     def get_job(job_id: str) -> dict[str, Any] | None:
         with jobs_lock:
@@ -11596,6 +12693,15 @@ def make_handler(workdir: Path):
                 return
             if parsed.path == "/api/jobs":
                 self._send_json({"ok": True, "jobs": read_job_history(workdir)})
+                return
+            if parsed.path == "/api/jobs/settings":
+                settings = read_job_history_settings(workdir)
+                history_rows = read_job_history(workdir, limit=0)
+                self._send_json({
+                    "ok": True,
+                    "limit": settings.get("limit", DEFAULT_JOB_HISTORY_LIMIT),
+                    "count": len(history_rows),
+                })
                 return
             if parsed.path == "/api/docs":
                 try:
@@ -11713,6 +12819,20 @@ def make_handler(workdir: Path):
                     self._send_json(payload)
                 except Exception as exc:
                     self._send_json({"ok": False, "error": str(exc)}, status=500)
+                return
+            if parsed.path == "/api/jobs/settings":
+                try:
+                    payload = self._handle_job_history_settings()
+                    self._send_json(payload)
+                except Exception as exc:
+                    self._send_json({"ok": False, "error": str(exc)}, status=400)
+                return
+            if parsed.path == "/api/jobs/manage":
+                try:
+                    payload = self._handle_job_history_manage()
+                    self._send_json(payload)
+                except Exception as exc:
+                    self._send_json({"ok": False, "error": str(exc)}, status=400)
                 return
             if parsed.path == "/api/translation-memory":
                 try:
@@ -11864,6 +12984,43 @@ def make_handler(workdir: Path):
             cache_root = resolve_cache_root(workdir, str(payload.get("cache_dir", "") or ""))
             removed = clear_cache_directory(cache_root, workdir)
             return {"ok": True, "cache_dir": str(cache_root), "removed": removed}
+
+        def _handle_job_history_settings(self) -> dict[str, Any]:
+            length = int(self.headers.get("Content-Length") or "0")
+            body = self.rfile.read(length)
+            payload = json.loads(body.decode("utf-8") or "{}")
+            with history_lock:
+                settings = write_job_history_settings(workdir, limit=payload.get("limit", DEFAULT_JOB_HISTORY_LIMIT))
+                trimmed = trim_job_history(workdir, limit=settings["limit"])
+                history_rows = read_job_history(workdir, limit=0)
+            return {
+                "ok": True,
+                "limit": settings["limit"],
+                "count": len(history_rows),
+                "trimmed": trimmed,
+            }
+
+        def _handle_job_history_manage(self) -> dict[str, Any]:
+            length = int(self.headers.get("Content-Length") or "0")
+            body = self.rfile.read(length)
+            payload = json.loads(body.decode("utf-8") or "{}")
+            action = str(payload.get("action", "") or "").strip()
+            with history_lock:
+                if action == "trim":
+                    result = trim_job_history(workdir, limit=payload.get("limit"))
+                elif action == "clear":
+                    result = clear_job_history(workdir)
+                elif action == "delete":
+                    job_ids = payload.get("job_ids")
+                    if not isinstance(job_ids, list):
+                        raise ValueError("删除任务需要提供 job_ids 列表")
+                    result = delete_job_history_records(workdir, [str(item or "") for item in job_ids])
+                else:
+                    raise ValueError("未知任务历史操作")
+                history_rows = read_job_history(workdir, limit=0)
+            result["limit"] = read_job_history_settings(workdir).get("limit", DEFAULT_JOB_HISTORY_LIMIT)
+            result["count"] = len(history_rows)
+            return result
 
         def _cache_root_from_query(self, query: str) -> Path:
             values = parse_qs(query or "")
@@ -12208,8 +13365,9 @@ def make_handler(workdir: Path):
             api_debug_log_path = out_dir / "api-debug.jsonl"
 
             json_paths: list[Path] = []
+            uploaded_names: set[str] = set()
             for index, part in enumerate(uploaded, start=1):
-                filename = sanitize_filename(part.filename or f"language-{index}.json")
+                filename = unique_filename(part.filename or f"language-{index}.json", uploaded_names)
                 if not filename.lower().endswith(".json"):
                     continue
                 path = upload_dir / filename
@@ -12304,6 +13462,7 @@ def make_handler(workdir: Path):
                 api_key_env=fields.get("api_key_env", "OPENAI_API_KEY") or "OPENAI_API_KEY",
                 api_key=fields.get("api_key", "").strip(),
                 api_debug_log=str(api_debug_log_path) if fields.get("api_debug_log") == "on" else "",
+                ignore_translation_memory=fields.get("ignore_translation_memory") == "on",
                 api_concurrency=progress_total,
                 api_retries=max(1, min(10, int(fields.get("api_retries", "5") or "5"))),
                 api_batch_size=api_batch_size,
@@ -12328,6 +13487,7 @@ def make_handler(workdir: Path):
                     "api_timeout": args.api_timeout,
                     "model": args.model,
                     "ignore_cache": True,
+                    "ignore_translation_memory": args.ignore_translation_memory,
                     "cache_dir": str(cache_root),
                     "translation_memory_path": args.translation_memory_path,
                 },
@@ -13880,6 +15040,7 @@ def process_json_language_file(
         raise ValueError(f"{path.name} 不是有效 JSON：{exc}") from exc
     schema, root, entries = parse_json_translation_payload(data, path.name)
     output_name = json_target_filename(path.name, args.source_locale, args.target_locale, schema)
+    same_locale = str(args.source_locale or "").strip().lower() == str(args.target_locale or "").strip().lower()
     report: list[ReportEntry] = []
     items: list[TranslationItem] = []
     item_sources: dict[str, tuple[str, str]] = {}
@@ -13904,6 +15065,21 @@ def process_json_language_file(
             continue
         if value == "":
             entries[key] = value
+            continue
+        if same_locale:
+            entries[key] = value
+            report.append(
+                ReportEntry(
+                    jar=path.name,
+                    mod_id="json",
+                    file=output_name,
+                    key=key,
+                    source=value,
+                    target=value,
+                    status="existing",
+                    message="source locale equals target locale",
+                )
+            )
             continue
         item_id = f"{path.name}\u001f{key}"
         item_sources[item_id] = (key, value)
@@ -14235,8 +15411,10 @@ def run_json_translate_job(
     try:
         started_at = time.perf_counter()
         translator = create_translator(args)
+        isolate_translator = args.provider == "deep-free"
         report_entries: list[ReportEntry] = []
         output_paths: list[Path] = []
+        output_names: set[str] = set()
         json_metadata_preview: list[dict[str, str]] = []
         translated_total = 0
         failed_total = 0
@@ -14245,7 +15423,12 @@ def run_json_translate_job(
             if cancel_event and cancel_event.is_set():
                 raise RuntimeError("cancelled")
             update_job(job_id, stage="processing_file", files_completed=index - 1, files_total=len(json_paths), current_file=path.name)
-            output_name, output_data, entries, translated_count, failed_count, skipped_count = process_json_language_file(path, args, translator)
+            local_translator = create_translator(args) if isolate_translator else translator
+            output_name, output_data, entries, translated_count, failed_count, skipped_count = process_json_language_file(path, args, local_translator)
+            unique_output_name = unique_filename(output_name, output_names)
+            if unique_output_name != output_name:
+                entries = [replace(entry, file=unique_output_name) for entry in entries]
+                output_name = unique_output_name
             metadata_preview = json_output_metadata_preview(output_name, output_data)
             if metadata_preview:
                 json_metadata_preview.append(metadata_preview)
@@ -14667,6 +15850,19 @@ def sanitize_filename(filename: str) -> str:
     return name or "upload.bin"
 
 
+def unique_filename(filename: str, used: set[str]) -> str:
+    name = sanitize_filename(filename)
+    stem = Path(name).stem or "file"
+    suffix = Path(name).suffix
+    candidate = name
+    index = 2
+    while candidate.lower() in used:
+        candidate = f"{stem}-{index}{suffix}"
+        index += 1
+    used.add(candidate.lower())
+    return candidate
+
+
 def sanitize_relative_upload_path(filename: str) -> str:
     raw = str(filename or "").replace("\\", "/")
     segments: list[str] = []
@@ -14962,6 +16158,101 @@ def append_job_history(workdir: Path, record: dict[str, Any], limit: int = 100) 
         "".join(json.dumps(item, ensure_ascii=False, sort_keys=True) + "\n" for item in existing),
         encoding="utf-8",
     )
+
+
+def job_history_settings_path(workdir: Path) -> Path:
+    jobs_dir = workdir / "jobs"
+    jobs_dir.mkdir(parents=True, exist_ok=True)
+    return jobs_dir / "settings.json"
+
+
+def normalize_job_history_limit(value: Any, default: int = DEFAULT_JOB_HISTORY_LIMIT) -> int:
+    try:
+        limit = int(value)
+    except (TypeError, ValueError):
+        limit = default
+    return max(1, min(MAX_JOB_HISTORY_LIMIT, limit))
+
+
+def read_job_history_settings(workdir: Path) -> dict[str, int]:
+    path = job_history_settings_path(workdir)
+    if not path.is_file():
+        return {"limit": DEFAULT_JOB_HISTORY_LIMIT}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"limit": DEFAULT_JOB_HISTORY_LIMIT}
+    if not isinstance(payload, dict):
+        return {"limit": DEFAULT_JOB_HISTORY_LIMIT}
+    return {"limit": normalize_job_history_limit(payload.get("limit"))}
+
+
+def write_job_history_settings(workdir: Path, *, limit: int) -> dict[str, int]:
+    normalized_limit = normalize_job_history_limit(limit)
+    payload = {"limit": normalized_limit}
+    job_history_settings_path(workdir).write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return payload
+
+
+def trim_job_history(workdir: Path, *, limit: int | None = None) -> dict[str, Any]:
+    settings = read_job_history_settings(workdir)
+    normalized_limit = normalize_job_history_limit(limit if limit is not None else settings.get("limit", DEFAULT_JOB_HISTORY_LIMIT))
+    jobs_dir = workdir / "jobs"
+    jobs_dir.mkdir(parents=True, exist_ok=True)
+    index_path = jobs_dir / "index.jsonl"
+    records = list(reversed(read_job_history(workdir, limit=0)))
+    before = len(records)
+    for item in records:
+        if isinstance(item, dict):
+            item.pop("download_status", None)
+    kept = records[-normalized_limit:] if normalized_limit > 0 else records
+    index_path.write_text(
+        "".join(json.dumps(item, ensure_ascii=False, sort_keys=True) + "\n" for item in kept),
+        encoding="utf-8",
+    )
+    return {"ok": True, "before": before, "after": len(kept), "removed": max(0, before - len(kept)), "limit": normalized_limit}
+
+
+def delete_job_history_records(workdir: Path, job_ids: list[str]) -> dict[str, Any]:
+    normalized_ids = {sanitize_job_id(job_id) for job_id in job_ids if sanitize_job_id(job_id)}
+    jobs_dir = workdir / "jobs"
+    jobs_dir.mkdir(parents=True, exist_ok=True)
+    index_path = jobs_dir / "index.jsonl"
+    records = list(reversed(read_job_history(workdir, limit=0)))
+    before = len(records)
+    kept: list[dict[str, Any]] = []
+    removed_ids: list[str] = []
+    for item in records:
+        job_id = sanitize_job_id(str(item.get("job_id") or "")) if isinstance(item, dict) else ""
+        if job_id and job_id in normalized_ids:
+            removed_ids.append(job_id)
+            continue
+        if isinstance(item, dict):
+            item.pop("download_status", None)
+            kept.append(item)
+    index_path.write_text(
+        "".join(json.dumps(item, ensure_ascii=False, sort_keys=True) + "\n" for item in kept),
+        encoding="utf-8",
+    )
+    return {
+        "ok": True,
+        "before": before,
+        "after": len(kept),
+        "removed": max(0, before - len(kept)),
+        "removed_job_ids": removed_ids,
+    }
+
+
+def clear_job_history(workdir: Path) -> dict[str, Any]:
+    jobs_dir = workdir / "jobs"
+    jobs_dir.mkdir(parents=True, exist_ok=True)
+    index_path = jobs_dir / "index.jsonl"
+    before = len(read_job_history(workdir, limit=0))
+    index_path.write_text("", encoding="utf-8")
+    return {"ok": True, "before": before, "after": 0, "removed": before}
 
 
 def read_job_history(workdir: Path, limit: int = 100) -> list[dict[str, Any]]:

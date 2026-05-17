@@ -4,6 +4,18 @@ Minecraft Mod JAR 自动汉化工具。当前版本实现 CLI MVP：扫描 Mod J
 
 ## 使用
 
+启动桌面版（单窗口应用）：
+
+```bash
+$env:PYTHONPATH="src"
+python -m pip install ".[desktop]"
+python -m mc_mod_i18n desktop
+```
+
+桌面模式会自动选择可用本地端口，并默认使用用户应用数据目录保存任务历史和运行数据。
+
+桌面依赖 `pywebview`。当前 Windows 桌面打包建议使用 Python 3.10-3.12；Python 3.14 环境下 `pywebview` 的 `pythonnet` 依赖可能无法构建。
+
 启动本地 UI：
 
 ```bash
@@ -147,6 +159,12 @@ dist/
 .\scripts\build_exe.ps1 -Clean
 ```
 
+如需同时安装桌面窗口依赖：
+
+```powershell
+.\scripts\build_exe.ps1 -InstallDesktopDeps -Clean
+```
+
 输出：
 
 ```text
@@ -154,6 +172,12 @@ dist/
 └─ mc-mod-i18n/
    ├─ mc-mod-i18n.exe
    └─ _internal/
+```
+
+双击启动桌面版：
+
+```powershell
+.\dist\mc-mod-i18n\mc-mod-i18n.exe
 ```
 
 启动 UI：
