@@ -1,0 +1,290 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+from urllib.parse import unquote, urlparse
+
+from .provider_checks import redact_secret
+from .web_utils import safe_run_path, sanitize_job_id, utc_timestamp
+
+
+DEFAULT_JOB_HISTORY_LIMIT = 100
+MAX_JOB_HISTORY_LIMIT = 5000
+
+
+def build_job_history_record(job_id: str, job: dict[str, Any]) -> dict[str, Any]:
+    result = job.get("result") if isinstance(job.get("result"), dict) else {}
+    summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
+    input_kind = str(result.get("kind") or job.get("input_kind") or "jar")
+    raw_input_files = result.get("input_files", job.get("input_files"))
+    primary_input_value = result.get("primary_input", job.get("primary_input"))
+    input_files = normalize_history_input_files(raw_input_files if raw_input_files is not None else primary_input_value)
+    primary_input = str(primary_input_value or (input_files[0] if input_files else ""))
+    success_count = int(summary.get("translated", 0) or 0) + int(summary.get("existing", 0) or 0)
+    failure_count = (
+        int(summary.get("api_failed", 0) or 0)
+        + int(summary.get("failed", 0) or 0)
+        + int(summary.get("jar_failed", 0) or 0)
+        + int(summary.get("incomplete", 0) or 0)
+    )
+    return {
+        "job_id": job_id,
+        "created_at": str(job.get("created_at") or utc_timestamp()),
+        "updated_at": utc_timestamp(),
+        "status": str(job.get("status") or "unknown"),
+        "input_kind": input_kind,
+        "input_files": input_files,
+        "primary_input": primary_input,
+        "target_locale": str(job.get("target_locale") or result.get("target_locale") or ""),
+        "provider": str(result.get("provider") or job.get("provider") or ""),
+        "model": str(result.get("model") or job.get("model") or ""),
+        "processed_sources": int(result.get("processed_sources") or result.get("processed_jars") or 0),
+        "generated_files": int(result.get("generated_files") or 0),
+        "success_count": success_count,
+        "failure_count": failure_count,
+        "summary": sanitize_history_value(summary),
+        "downloads": history_downloads(result),
+        "download_files": history_download_files(job_id, result),
+        "error": str(job.get("error") or ""),
+    }
+
+
+def normalize_history_input_files(value: Any) -> list[str]:
+    if isinstance(value, str):
+        cleaned = value.strip()
+        return [cleaned] if cleaned else []
+    if isinstance(value, list):
+        normalized: list[str] = []
+        for item in value:
+            text = str(item or "").strip()
+            if text:
+                normalized.append(text)
+        return normalized
+    return []
+
+
+def history_downloads(result: dict[str, Any]) -> dict[str, str]:
+    mapping = {
+        "pack": "pack_url",
+        "json": "json_url",
+        "ftbquests_patch": "ftbquests_patch_url",
+        "report": "report_url",
+        "report_json": "report_json_url",
+        "report_csv": "report_csv_url",
+        "failed_items": "failed_items_url",
+        "hardcoded_report": "hardcoded_report_url",
+        "hardcoded_map": "hardcoded_map_url",
+        "api_debug_log": "api_debug_log_url",
+    }
+    return {
+        label: str(result.get(key) or "")
+        for label, key in mapping.items()
+        if result.get(key)
+    }
+
+
+def history_download_files(job_id: str, result: dict[str, Any]) -> dict[str, str]:
+    files: dict[str, str] = {}
+    for label, url in history_downloads(result).items():
+        relative = history_download_relative_path(job_id, url)
+        if relative:
+            files[label] = relative
+    return files
+
+
+def history_download_relative_path(job_id: str, url: str) -> str:
+    path = urlparse(str(url or "")).path
+    for prefix in (f"/download/{job_id}/", f"/report/{job_id}/"):
+        if path.startswith(prefix):
+            return path.removeprefix(prefix)
+    return ""
+
+
+def history_download_status(workdir: Path, record: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    job_id = str(record.get("job_id") or "")
+    downloads = record.get("downloads") if isinstance(record.get("downloads"), dict) else {}
+    files = record.get("download_files") if isinstance(record.get("download_files"), dict) else {}
+    status: dict[str, dict[str, Any]] = {}
+    for label, url in downloads.items():
+        relative = str(files.get(label) or history_download_relative_path(job_id, str(url or "")) or "")
+        exists = False
+        if relative:
+            try:
+                exists = safe_run_path(workdir, f"{job_id}/{relative}" if not relative.startswith(f"{job_id}/") else relative).is_file()
+            except ValueError:
+                exists = False
+        status[str(label)] = {"exists": exists, "relative_path": relative}
+    return status
+
+
+def sanitize_history_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        sanitized: dict[str, Any] = {}
+        for key, item in value.items():
+            key_text = str(key)
+            if "api_key" in key_text.lower() or key_text.lower() in {"authorization", "x-api-key"}:
+                continue
+            sanitized[key_text] = sanitize_history_value(item)
+        return sanitized
+    if isinstance(value, list):
+        return [sanitize_history_value(item) for item in value]
+    if isinstance(value, str):
+        return redact_secret(value, value if value.startswith("sk-") else "")
+    return value
+
+
+def append_job_history(workdir: Path, record: dict[str, Any], limit: int = 100) -> None:
+    jobs_dir = workdir / "jobs"
+    jobs_dir.mkdir(parents=True, exist_ok=True)
+    index_path = jobs_dir / "index.jsonl"
+    existing = list(reversed(read_job_history(workdir, limit=max(limit * 2, limit + 1))))
+    existing = [item for item in existing if item.get("job_id") != record.get("job_id")]
+    existing.append(record)
+    for item in existing:
+        item.pop("download_status", None)
+    if limit > 0:
+        existing = existing[-limit:]
+    index_path.write_text(
+        "".join(json.dumps(item, ensure_ascii=False, sort_keys=True) + "\n" for item in existing),
+        encoding="utf-8",
+    )
+
+
+def job_history_settings_path(workdir: Path) -> Path:
+    jobs_dir = workdir / "jobs"
+    jobs_dir.mkdir(parents=True, exist_ok=True)
+    return jobs_dir / "settings.json"
+
+
+def normalize_job_history_limit(value: Any, default: int = DEFAULT_JOB_HISTORY_LIMIT) -> int:
+    try:
+        limit = int(value)
+    except (TypeError, ValueError):
+        limit = default
+    return max(1, min(MAX_JOB_HISTORY_LIMIT, limit))
+
+
+def read_job_history_settings(workdir: Path) -> dict[str, int]:
+    path = job_history_settings_path(workdir)
+    if not path.is_file():
+        return {"limit": DEFAULT_JOB_HISTORY_LIMIT}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"limit": DEFAULT_JOB_HISTORY_LIMIT}
+    if not isinstance(payload, dict):
+        return {"limit": DEFAULT_JOB_HISTORY_LIMIT}
+    return {"limit": normalize_job_history_limit(payload.get("limit"))}
+
+
+def write_job_history_settings(workdir: Path, *, limit: int) -> dict[str, int]:
+    normalized_limit = normalize_job_history_limit(limit)
+    payload = {"limit": normalized_limit}
+    job_history_settings_path(workdir).write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return payload
+
+
+def trim_job_history(workdir: Path, *, limit: int | None = None) -> dict[str, Any]:
+    settings = read_job_history_settings(workdir)
+    normalized_limit = normalize_job_history_limit(limit if limit is not None else settings.get("limit", DEFAULT_JOB_HISTORY_LIMIT))
+    jobs_dir = workdir / "jobs"
+    jobs_dir.mkdir(parents=True, exist_ok=True)
+    index_path = jobs_dir / "index.jsonl"
+    records = list(reversed(read_job_history(workdir, limit=0)))
+    before = len(records)
+    for item in records:
+        if isinstance(item, dict):
+            item.pop("download_status", None)
+    kept = records[-normalized_limit:] if normalized_limit > 0 else records
+    index_path.write_text(
+        "".join(json.dumps(item, ensure_ascii=False, sort_keys=True) + "\n" for item in kept),
+        encoding="utf-8",
+    )
+    return {"ok": True, "before": before, "after": len(kept), "removed": max(0, before - len(kept)), "limit": normalized_limit}
+
+
+def delete_job_history_records(workdir: Path, job_ids: list[str]) -> dict[str, Any]:
+    normalized_ids = {sanitize_job_id(job_id) for job_id in job_ids if sanitize_job_id(job_id)}
+    jobs_dir = workdir / "jobs"
+    jobs_dir.mkdir(parents=True, exist_ok=True)
+    index_path = jobs_dir / "index.jsonl"
+    records = list(reversed(read_job_history(workdir, limit=0)))
+    before = len(records)
+    kept: list[dict[str, Any]] = []
+    removed_ids: list[str] = []
+    for item in records:
+        job_id = sanitize_job_id(str(item.get("job_id") or "")) if isinstance(item, dict) else ""
+        if job_id and job_id in normalized_ids:
+            removed_ids.append(job_id)
+            continue
+        if isinstance(item, dict):
+            item.pop("download_status", None)
+            kept.append(item)
+    index_path.write_text(
+        "".join(json.dumps(item, ensure_ascii=False, sort_keys=True) + "\n" for item in kept),
+        encoding="utf-8",
+    )
+    return {
+        "ok": True,
+        "before": before,
+        "after": len(kept),
+        "removed": max(0, before - len(kept)),
+        "removed_job_ids": removed_ids,
+    }
+
+
+def clear_job_history(workdir: Path) -> dict[str, Any]:
+    jobs_dir = workdir / "jobs"
+    jobs_dir.mkdir(parents=True, exist_ok=True)
+    index_path = jobs_dir / "index.jsonl"
+    before = len(read_job_history(workdir, limit=0))
+    index_path.write_text("", encoding="utf-8")
+    return {"ok": True, "before": before, "after": 0, "removed": before}
+
+
+def read_job_history(workdir: Path, limit: int = 100) -> list[dict[str, Any]]:
+    index_path = workdir / "jobs" / "index.jsonl"
+    if not index_path.is_file():
+        return []
+    records: list[dict[str, Any]] = []
+    for line in index_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            input_files = normalize_history_input_files(value.get("input_files", value.get("primary_input")))
+            value["input_files"] = input_files
+            if not value.get("primary_input"):
+                inferred = infer_history_primary_input(value)
+                if inferred:
+                    value["primary_input"] = inferred
+            value["download_status"] = history_download_status(workdir, value)
+            records.append(value)
+    return list(reversed(records[-limit:])) if limit > 0 else list(reversed(records))
+
+
+def infer_history_primary_input(record: dict[str, Any]) -> str:
+    input_files = normalize_history_input_files(record.get("input_files"))
+    if input_files:
+        return input_files[0]
+    downloads = record.get("downloads") if isinstance(record.get("downloads"), dict) else {}
+    preferred_labels = ["pack", "json", "ftbquests_patch"]
+    for label in preferred_labels:
+        candidate = history_primary_input_from_download(downloads.get(label))
+        if candidate:
+            return candidate
+    return ""
+
+
+def history_primary_input_from_download(url: Any) -> str:
+    path = urlparse(str(url or "")).path
+    filename = Path(unquote(path)).name
+    cleaned = filename.strip()
+    return cleaned if cleaned else ""

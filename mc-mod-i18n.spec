@@ -12,6 +12,7 @@ a = Analysis(
     datas=[
         (str(root / "docs" / "help"), "docs/help"),
         (str(root / "logo"), "logo"),
+        (str(root / "src" / "mc_mod_i18n" / "templates"), "mc_mod_i18n/templates"),
     ],
     hiddenimports=["webview"],
     hookspath=[],

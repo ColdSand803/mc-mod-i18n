@@ -22,3 +22,6 @@ mc-mod-i18n = "mc_mod_i18n.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+mc_mod_i18n = ["templates/*.html"]
