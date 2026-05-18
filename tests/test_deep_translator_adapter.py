@@ -220,7 +220,7 @@ class DeepTranslatorAdapterTest(unittest.TestCase):
         self.assertEqual("DeepFreeTranslator", translator.__class__.__name__)
 
     def test_web_ui_exposes_deep_free_provider(self) -> None:
-        self.assertIn('<option value="deep-free">Deep Translator（免费试用）</option>', INDEX_HTML)
+        self.assertIn('<option value="deep-free" data-i18n="provider.deep-free">Deep Translator（免费试用）</option>', INDEX_HTML)
         self.assertIn("'deep-free': {", INDEX_HTML)
         self.assertIn("免费公共翻译源", INDEX_HTML)
 

@@ -8,12 +8,21 @@ import unittest
 from mc_mod_i18n.web import (
     clear_translation_memory,
     compact_translation_memory,
+    resolve_cache_root,
     translation_memory_path,
     translation_memory_stats,
 )
 
 
 class TranslationMemoryManagementTest(unittest.TestCase):
+    def test_default_cache_root_uses_unified_workdir_cache_folder(self) -> None:
+        with TemporaryDirectory() as tmp:
+            workdir = Path(tmp)
+
+            cache_root = resolve_cache_root(workdir, "")
+
+        self.assertEqual((workdir / "cache").resolve(), cache_root)
+
     def test_stats_clear_and_compact_translation_memory(self) -> None:
         with TemporaryDirectory() as tmp:
             cache_root = Path(tmp)

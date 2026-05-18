@@ -25,6 +25,112 @@ class UiI18nTest(unittest.TestCase):
             with self.subTest(code=code):
                 self.assertEqual(set(), base_keys - set(entry["messages"]))
 
+    def test_docs_and_help_ui_messages_are_bilingual(self) -> None:
+        required = (
+            "docs.subtitle",
+            "docs.directory",
+            "docs.filter_hint",
+            "docs.search",
+            "docs.search_placeholder",
+            "docs.select_prompt",
+            "docs.detail",
+            "docs.related_topics",
+            "docs.empty",
+            "docs.builtin",
+            "docs.no_related",
+            "docs.category.start",
+            "docs.category.providers",
+            "docs.category.workflow",
+            "docs.category.operations",
+            "docs.category.support",
+            "docs.category.default",
+            "docs.applies.workspace",
+            "docs.applies.history",
+            "docs.applies.report",
+            "docs.applies.api_log",
+            "docs.applies.settings",
+            "docs.applies.hardcoded",
+            "docs.applies.preflight",
+            "docs.applies.output_policy",
+            "docs.applies.translation_memory",
+            "docs.applies.hardcoded_scan",
+            "docs.applies.provider",
+            "help.subtitle",
+            "help.topic_scenarios",
+            "help.quick_check",
+            "help.quick_check_subtitle",
+            "help.preview_empty",
+            "help.common_causes",
+            "help.next_steps",
+            "help.open_full_doc",
+            "help.no_recommendations",
+            "help.default_summary",
+            "help.default_cause",
+            "help.default_next",
+            "help.topic.quick_start.title",
+            "help.topic.quick_start.summary",
+            "help.issue.quick_start.summary",
+            "help.issue.quick_start.cause_1",
+            "help.issue.quick_start.next_1",
+        )
+        for key in required:
+            with self.subTest(key=key):
+                self.assertIn(key, BUILTIN_UI_LOCALES["zh_cn"]["messages"])
+                self.assertIn(key, BUILTIN_UI_LOCALES["en_us"]["messages"])
+                self.assertNotEqual(key, translate_ui(key, "zh_cn"))
+                self.assertNotEqual(key, translate_ui(key, "en_us"))
+
+    def test_high_visibility_web_ui_strings_are_bilingual(self) -> None:
+        required = (
+            "workflow.input_step",
+            "workflow.language_step",
+            "workflow.optional_step",
+            "workflow.preflight_step",
+            "advanced.apply_key",
+            "advanced.region_help",
+            "docs.open_provider",
+            "docs.open_output",
+            "docs.open_preflight",
+            "docs.open_history",
+            "docs.open_memory",
+            "docs.open_report",
+            "docs.open_api_log",
+            "history.detail",
+            "history.select_detail",
+            "history.no_detail",
+            "history.open_primary",
+            "history.open_help",
+            "history.progress",
+            "history.error_message",
+            "history.artifacts",
+            "history.open_artifact",
+            "history.stats.total",
+            "history.stats.done",
+            "history.stats.failed",
+            "history.stats.generated",
+            "settings.history_section",
+            "settings.history_limit",
+            "settings.history_limit_placeholder",
+            "settings.history_current",
+            "settings.history_delete_ids",
+            "settings.history_delete_ids_placeholder",
+            "settings.history_refresh",
+            "settings.history_trim",
+            "settings.history_delete",
+            "settings.history_clear",
+            "settings.history_note",
+            "settings.history_note_body",
+            "pack_dialog.review_title",
+            "pack_dialog.review_body",
+            "result.api_log_deep_free_empty",
+        )
+        for key in required:
+            with self.subTest(key=key):
+                self.assertIn(key, BUILTIN_UI_LOCALES["zh_cn"]["messages"])
+                self.assertIn(key, BUILTIN_UI_LOCALES["en_us"]["messages"])
+                self.assertNotEqual(key, translate_ui(key, "zh_cn"))
+                self.assertNotEqual(key, translate_ui(key, "en_us"))
+
     def test_parse_ui_locale_package_supports_schema_and_flat_json(self) -> None:
         package = parse_ui_locale_package(
             {
@@ -33,11 +139,13 @@ class UiI18nTest(unittest.TestCase):
                 "name": "French",
                 "native_name": "Français",
                 "messages": {"app.title": "Titre"},
+                "docs": [{"slug": "quick-start", "title": "Demarrage", "content": "# Demarrage"}],
             },
             "fr_fr.json",
         )
         self.assertEqual("fr_fr", package["locale"])
         self.assertEqual({"app.title": "Titre"}, package["messages"])
+        self.assertEqual("quick-start", package["docs"][0]["slug"])
 
         flat = parse_ui_locale_package({"app.title": "Titel"}, "de_de.json")
         self.assertEqual("de_de", flat["locale"])
@@ -69,10 +177,23 @@ class UiI18nTest(unittest.TestCase):
             self.assertEqual("Atelier", exported["messages"]["app.brand.name"])
             self.assertIn("nav.workspace", exported["messages"])
 
+    def test_export_ui_locale_package_includes_help_docs_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            docs_root = Path(__file__).resolve().parents[1] / "docs" / "help"
+            exported = export_ui_locale_package("ja_jp", root, {"ja_jp": "日本語"}, docs_root)
+
+            self.assertEqual("ja_jp", exported["locale"])
+            self.assertEqual("日本語", exported["name"])
+            self.assertIn("docs", exported)
+            quick_start = next(item for item in exported["docs"] if item["slug"] == "quick-start")
+            self.assertEqual("快速开始", quick_start["title"])
+            self.assertIn("# 快速开始", quick_start["content"])
+
     def test_resolve_ui_locale_root_defaults_to_workdir(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = resolve_ui_locale_root(Path(tmp), "")
-            self.assertEqual(Path(tmp, ".ui-locales").resolve(), root)
+            self.assertEqual(Path(tmp, "extensions", "ui-locales").resolve(), root)
 
     def test_translate_ui_formats_and_falls_back(self) -> None:
         self.assertEqual("Upload a language JSON file", translate_ui("error.json_missing_input", "en_us"))

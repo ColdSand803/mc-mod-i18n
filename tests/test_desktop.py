@@ -44,6 +44,7 @@ class DesktopModeTest(unittest.TestCase):
             self.assertTrue((root / "cache").is_dir())
             self.assertTrue((root / "outputs").is_dir())
             self.assertTrue((root / "extensions").is_dir())
+            self.assertTrue((root / "extensions" / "ui-locales").is_dir())
             self.assertTrue((root / "logs").is_dir())
 
     def test_build_desktop_server_binds_ephemeral_port(self) -> None:
@@ -57,6 +58,32 @@ class DesktopModeTest(unittest.TestCase):
                 self.assertGreater(port, 0)
             finally:
                 server.server_close()
+
+    def test_default_zoom_counteracts_windows_dpi_scale(self) -> None:
+        from mc_mod_i18n.desktop import effective_desktop_zoom
+
+        self.assertEqual(1.0, effective_desktop_zoom(override=0, dpi_scale=1.0))
+        self.assertAlmostEqual(0.6667, effective_desktop_zoom(override=0, dpi_scale=1.5), places=4)
+        self.assertEqual(0.8, effective_desktop_zoom(override=0.8, dpi_scale=1.5))
+
+    def test_desktop_zoom_script_compensates_layout_viewport(self) -> None:
+        from mc_mod_i18n.desktop import desktop_zoom_script
+
+        script = desktop_zoom_script(0.6667)
+
+        self.assertIn("document.documentElement.style.zoom = '0.6667';", script)
+        self.assertIn("dataset.desktopZoom", script)
+        self.assertIn("--desktop-vw", script)
+        self.assertIn("--desktop-vh", script)
+        self.assertIn("window.innerWidth / zoom", script)
+        self.assertIn("window.innerHeight / zoom", script)
+        self.assertIn("addEventListener('resize'", script)
+
+    def test_desktop_command_accepts_zoom_override(self) -> None:
+        parser = build_parser()
+        args = parser.parse_args(["desktop", "--zoom", "0.67"])
+
+        self.assertEqual(0.67, args.zoom)
 
 
 if __name__ == "__main__":

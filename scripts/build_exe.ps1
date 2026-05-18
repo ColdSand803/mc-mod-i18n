@@ -33,6 +33,88 @@ function Invoke-Python {
     }
 }
 
+function Convert-PngToIco {
+    param(
+        [Parameter(Mandatory)]
+        [string]$PngPath,
+        [Parameter(Mandatory)]
+        [string]$IcoPath
+    )
+
+    if (-not (Test-Path -LiteralPath $PngPath)) {
+        throw "Application icon source was not found: $PngPath"
+    }
+
+    Add-Type -AssemblyName System.Drawing
+    if ($null -eq ("NativeMethods" -as [type])) {
+        Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+
+public static class NativeMethods {
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool DestroyIcon(IntPtr handle);
+}
+"@
+    }
+
+    $iconDir = Split-Path -Parent $IcoPath
+    if (-not (Test-Path -LiteralPath $iconDir)) {
+        New-Item -ItemType Directory -Path $iconDir | Out-Null
+    }
+
+    $sourceImage = [System.Drawing.Image]::FromFile($PngPath)
+    try {
+        $size = 256
+        $resized = New-Object System.Drawing.Bitmap $size, $size, ([System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+        try {
+            $graphics = [System.Drawing.Graphics]::FromImage($resized)
+            try {
+                $graphics.Clear([System.Drawing.Color]::Transparent)
+                $graphics.CompositingQuality = [System.Drawing.Drawing2D.CompositingQuality]::HighQuality
+                $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+                $graphics.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
+
+                $sourceSize = [Math]::Min($sourceImage.Width, $sourceImage.Height)
+                $sourceX = [int](($sourceImage.Width - $sourceSize) / 2)
+                $sourceY = [int](($sourceImage.Height - $sourceSize) / 2)
+                $sourceRect = New-Object System.Drawing.Rectangle $sourceX, $sourceY, $sourceSize, $sourceSize
+                $targetRect = New-Object System.Drawing.Rectangle 0, 0, $size, $size
+                $graphics.DrawImage($sourceImage, $targetRect, $sourceRect, [System.Drawing.GraphicsUnit]::Pixel)
+            }
+            finally {
+                $graphics.Dispose()
+            }
+
+            $iconHandle = $resized.GetHicon()
+            try {
+                $icon = [System.Drawing.Icon]::FromHandle($iconHandle)
+                try {
+                    $stream = [System.IO.File]::Open($IcoPath, [System.IO.FileMode]::Create, [System.IO.FileAccess]::Write)
+                    try {
+                        $icon.Save($stream)
+                    }
+                    finally {
+                        $stream.Dispose()
+                    }
+                }
+                finally {
+                    $icon.Dispose()
+                }
+            }
+            finally {
+                [NativeMethods]::DestroyIcon($iconHandle) | Out-Null
+            }
+        }
+        finally {
+            $resized.Dispose()
+        }
+    }
+    finally {
+        $sourceImage.Dispose()
+    }
+}
+
 Write-Host "Using Python: $Python"
 
 if ($InstallPyInstaller) {
@@ -74,6 +156,29 @@ if ($Clean) {
         }
     }
 }
+
+$BrandingConfig = Join-Path $Root "logo\branding.json"
+$BrandLogo = "cat"
+if (Test-Path -LiteralPath $BrandingConfig) {
+    try {
+        $branding = Get-Content -LiteralPath $BrandingConfig -Raw | ConvertFrom-Json
+        if ($branding.brand_logo -in @("cat", "grass", "sign")) {
+            $BrandLogo = $branding.brand_logo
+        }
+    }
+    catch {
+        Write-Warning "Could not read branding config, falling back to cat logo: $($_.Exception.Message)"
+    }
+}
+$BrandLogoSources = @{
+    cat = "logo\png\co1dsand_logo_cat.png"
+    grass = "logo\png\minecraft.png"
+    sign = "logo\png\co1dsand_logo_sign.png"
+}
+$IconSource = Join-Path $Root $BrandLogoSources[$BrandLogo]
+$ExeIcon = Join-Path $Root "logo\app.ico"
+Convert-PngToIco -PngPath $IconSource -IcoPath $ExeIcon
+Write-Host "Using exe icon: $ExeIcon ($BrandLogo)"
 
 Invoke-Python -Arguments @("-m", "PyInstaller", ".\mc-mod-i18n.spec", "--noconfirm")
 

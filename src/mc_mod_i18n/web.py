@@ -13,6 +13,7 @@ from pathlib import Path
 import re
 import shutil
 from secrets import token_hex
+import sys
 import tempfile
 from threading import Event, Lock, Thread
 import time
@@ -66,12 +67,15 @@ from .report import (
 )
 from .translator import GlossaryTranslator, LOCALE_DISPLAY_NAMES, TranslationItem, get_provider_preset, is_ai_provider
 from .ui_i18n import (
+    BUILTIN_UI_LOCALES,
     FALLBACK_UI_LOCALE,
+    MINECRAFT_LOCALES,
     build_ui_locale_filled_package,
     build_ui_locale_missing_template,
     check_ui_locale_package,
     export_ui_locale_package,
     list_ui_locales,
+    minecraft_locale_display_names,
     parse_ui_locale_package,
     resolve_ui_locale,
     resolve_ui_locale_root,
@@ -82,12 +86,222 @@ from .validator import validate_translation
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-SIDEBAR_LOGO_PATH = PROJECT_ROOT / "ui优化方案" / "logo" / "minecraft.svg"
-CO1DSAND_PACK_LOGO_PATHS = (Path.cwd() / "co1dsand_logo.png", PROJECT_ROOT / "co1dsand_logo.png")
 HELP_DOCS_DIRNAME = "docs/help"
 HELP_DOCS_INDEX_FILENAME = "index.json"
 DEFAULT_JOB_HISTORY_LIMIT = 100
 MAX_JOB_HISTORY_LIMIT = 5000
+DEFAULT_BRAND_LOGO = "cat"
+SYSTEM_SETTINGS_DIRNAME = "settings"
+SYSTEM_SETTINGS_FILENAME = "system.json"
+BRANDING_CONFIG_FILENAME = "branding.json"
+DEFAULT_CACHE_DIRNAME = "cache"
+DEFAULT_UI_LOCALE_DIR = Path("extensions") / "ui-locales"
+MINECRAFT_LOCALES_JSON = json.dumps(MINECRAFT_LOCALES, ensure_ascii=False)
+
+
+def _locale_options_html(selected_locale: str) -> str:
+    rows: list[str] = []
+    for value, label in MINECRAFT_LOCALES:
+        selected = " selected" if value == selected_locale else ""
+        option_text = f"{value} - {label}"
+        rows.append(f'<option value="{html.escape(value)}"{selected}>{html.escape(option_text)}</option>')
+    return "\n".join(f"              {row}" for row in rows)
+
+
+def _ui_locale_options_html(selected_locale: str) -> str:
+    rows: list[str] = []
+    for value, entry in BUILTIN_UI_LOCALES.items():
+        selected = " selected" if value == selected_locale else ""
+        label = str(entry.get("name") or value)
+        rows.append(f'<option value="{html.escape(value)}"{selected}>{html.escape(label)}</option>')
+    return "\n".join(f"              {row}" for row in rows)
+
+BRAND_LOGO_OPTIONS: tuple[dict[str, str], ...] = (
+    {
+        "id": "cat",
+        "label": "猫猫头像",
+        "menu_name": "猫 PNG",
+        "png": "co1dsand_logo_cat.png",
+        "svg": "co1dsand_logo_cat.svg",
+        "ico": "co1dsand_logo_cat.ico",
+    },
+    {
+        "id": "grass",
+        "label": "草方块",
+        "menu_name": "草方块",
+        "png": "minecraft.png",
+        "svg": "minecraft.svg",
+        "ico": "minecraft.ico",
+    },
+    {
+        "id": "sign",
+        "label": "签名标识",
+        "menu_name": "签名 PNG",
+        "png": "co1dsand_logo_sign.png",
+        "svg": "co1dsand_logo_sign.svg",
+        "ico": "co1dsand_logo_sign.ico",
+    },
+)
+BRAND_LOGO_BY_ID = {item["id"]: item for item in BRAND_LOGO_OPTIONS}
+
+
+def bundled_resource_root() -> Path:
+    meipass = getattr(sys, "_MEIPASS", "")
+    return Path(meipass) if meipass else PROJECT_ROOT
+
+
+def logo_root(root: Path | None = None) -> Path:
+    return (root or bundled_resource_root()) / "logo"
+
+
+def normalize_brand_logo_choice(value: Any) -> str:
+    normalized = str(value or "").strip().lower().replace("-", "_")
+    aliases = {
+        "cat_png": "cat",
+        "cat_logo": "cat",
+        "minecraft": "grass",
+        "grass_block": "grass",
+        "grass_png": "grass",
+        "sign_png": "sign",
+        "signature": "sign",
+        "logo_sign": "sign",
+    }
+    normalized = aliases.get(normalized, normalized)
+    return normalized if normalized in BRAND_LOGO_BY_ID else DEFAULT_BRAND_LOGO
+
+
+def brand_logo_options_payload() -> list[dict[str, str]]:
+    return [
+        {"id": item["id"], "label": item["label"], "menu_name": item["menu_name"]}
+        for item in BRAND_LOGO_OPTIONS
+    ]
+
+
+def brand_logo_asset_path(choice: Any, kind: str = "png", root: Path | None = None) -> Path:
+    option = BRAND_LOGO_BY_ID[normalize_brand_logo_choice(choice)]
+    base = logo_root(root)
+    if kind == "png":
+        return base / "png" / option["png"]
+    if kind == "svg":
+        return base / "svg" / option["svg"]
+    if kind == "ico":
+        return base / option["ico"]
+    raise ValueError(f"unsupported logo asset kind: {kind}")
+
+
+def sidebar_logo_path() -> Path:
+    return brand_logo_asset_path("grass", "svg")
+
+
+def cat_ico_path() -> Path:
+    return brand_logo_asset_path("cat", "ico")
+
+
+def default_cache_root(workdir: Path) -> Path:
+    return (workdir / DEFAULT_CACHE_DIRNAME).resolve()
+
+
+def default_ui_locale_root(workdir: Path) -> Path:
+    return (workdir / DEFAULT_UI_LOCALE_DIR).resolve()
+
+
+def system_settings_payload(workdir: Path, settings: dict[str, Any] | None = None) -> dict[str, Any]:
+    current = settings or read_system_settings(workdir)
+    return {
+        **current,
+        "brand_options": brand_logo_options_payload(),
+        "data_dir": str(workdir.resolve()),
+        "default_cache_dir": str(default_cache_root(workdir)),
+        "default_ui_locale_dir": str(default_ui_locale_root(workdir)),
+    }
+
+
+def system_settings_path(workdir: Path) -> Path:
+    settings_dir = workdir / SYSTEM_SETTINGS_DIRNAME
+    settings_dir.mkdir(parents=True, exist_ok=True)
+    return settings_dir / SYSTEM_SETTINGS_FILENAME
+
+
+def branding_config_path(root: Path | None = None) -> Path:
+    return logo_root(root) / BRANDING_CONFIG_FILENAME
+
+
+def read_branding_build_config(root: Path | None = None) -> dict[str, str]:
+    path = branding_config_path(root)
+    if not path.is_file():
+        return {"brand_logo": DEFAULT_BRAND_LOGO}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"brand_logo": DEFAULT_BRAND_LOGO}
+    if not isinstance(payload, dict):
+        return {"brand_logo": DEFAULT_BRAND_LOGO}
+    return {"brand_logo": normalize_brand_logo_choice(payload.get("brand_logo"))}
+
+
+def write_branding_build_config(brand_logo: Any, root: Path | None = None) -> None:
+    target_root = root or PROJECT_ROOT
+    if getattr(sys, "_MEIPASS", ""):
+        return
+    path = branding_config_path(target_root)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps({"brand_logo": normalize_brand_logo_choice(brand_logo)}, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        return
+
+
+def should_sync_branding_build_config(workdir: Path, sync_build_config: bool = False) -> bool:
+    if getattr(sys, "_MEIPASS", ""):
+        return False
+    if sync_build_config:
+        return True
+    try:
+        workdir.resolve().relative_to(PROJECT_ROOT.resolve())
+    except ValueError:
+        return False
+    return True
+
+
+def read_system_settings(workdir: Path) -> dict[str, Any]:
+    path = system_settings_path(workdir)
+    if not path.is_file():
+        return {"brand_logo": DEFAULT_BRAND_LOGO}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"brand_logo": DEFAULT_BRAND_LOGO}
+    if not isinstance(payload, dict):
+        return {"brand_logo": DEFAULT_BRAND_LOGO}
+    return {"brand_logo": normalize_brand_logo_choice(payload.get("brand_logo"))}
+
+
+def write_system_settings(workdir: Path, *, brand_logo: Any, sync_build_config: bool = False) -> dict[str, Any]:
+    payload = {"brand_logo": normalize_brand_logo_choice(brand_logo)}
+    path = system_settings_path(workdir)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    if should_sync_branding_build_config(workdir, sync_build_config=sync_build_config):
+        write_branding_build_config(payload["brand_logo"])
+    return payload
+
+
+def co1dsand_pack_logo_paths(
+    root: Path | None = None,
+    *,
+    brand_logo: Any = DEFAULT_BRAND_LOGO,
+) -> tuple[Path, ...]:
+    selected = normalize_brand_logo_choice(brand_logo)
+    candidates = [brand_logo_asset_path(selected, "png", root)]
+    if selected != DEFAULT_BRAND_LOGO:
+        candidates.append(brand_logo_asset_path(DEFAULT_BRAND_LOGO, "png", root))
+    if root is None:
+        candidates.append(brand_logo_asset_path(selected, "png", Path.cwd()))
+        if selected != DEFAULT_BRAND_LOGO:
+            candidates.append(brand_logo_asset_path(DEFAULT_BRAND_LOGO, "png", Path.cwd()))
+    return tuple(dict.fromkeys(candidates))
 
 
 INDEX_HTML = r"""<!doctype html>
@@ -96,7 +310,7 @@ INDEX_HTML = r"""<!doctype html>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>mc-mod-i18n</title>
-  <link rel="icon" href="/assets/logo/minecraft.svg" type="image/svg+xml">
+  <link rel="icon" href="/assets/logo/current-favicon">
   <link href="https://cdn.jsdelivr.net/npm/remixicon@4.5.0/fonts/remixicon.css" rel="stylesheet">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -210,6 +424,7 @@ INDEX_HTML = r"""<!doctype html>
       --motion-base: 220ms;
       --dropdown-motion-offset: 8px;
       --focus-ring: 0 0 0 3px rgba(38, 104, 168, .14);
+      --app-vh: var(--desktop-vh, 100vh);
     }
     :root[data-theme="dark"] {
       color-scheme: dark;
@@ -929,11 +1144,11 @@ INDEX_HTML = r"""<!doctype html>
       background: var(--bg);
       color: var(--text);
       letter-spacing: 0;
-      min-height: 100vh;
+      min-height: var(--app-vh);
       overflow: hidden;
     }
     .app-shell {
-      min-height: 100vh;
+      min-height: var(--app-vh);
       display: grid;
       grid-template-columns: minmax(260px, 300px) minmax(0, 1fr);
       background: var(--surface);
@@ -943,7 +1158,7 @@ INDEX_HTML = r"""<!doctype html>
       background: var(--sidebar);
       display: flex;
       flex-direction: column;
-      min-height: 100vh;
+      min-height: var(--app-vh);
       padding: 22px 18px;
       overflow: auto;
     }
@@ -1035,7 +1250,7 @@ INDEX_HTML = r"""<!doctype html>
     }
     .content-shell {
       min-width: 0;
-      height: 100vh;
+      height: var(--app-vh);
       display: flex;
       flex-direction: column;
       overflow: hidden;
@@ -1451,7 +1666,7 @@ INDEX_HTML = r"""<!doctype html>
     }
     .config-panel,
     .results-panel {
-      max-height: calc(100vh - 104px);
+      max-height: calc(var(--app-vh) - 104px);
       overflow-y: auto;
       overflow-x: hidden;
     }
@@ -2242,8 +2457,8 @@ INDEX_HTML = r"""<!doctype html>
     .history-page {
       grid-column: 1 / -1;
       min-height: 0;
-      height: calc(100vh - 104px);
-      max-height: calc(100vh - 104px);
+      height: calc(var(--app-vh) - 104px);
+      max-height: calc(var(--app-vh) - 104px);
       overflow: hidden;
     }
     .history-page {
@@ -2416,7 +2631,7 @@ INDEX_HTML = r"""<!doctype html>
       color: var(--text);
       text-align: left;
       box-shadow: none;
-      transition: background-color 140ms ease-out, border-color 140ms ease-out, color 120ms ease-out, box-shadow 160ms ease-out;
+      transition: background-color 140ms ease-out, border-color 140ms ease-out, color 120ms ease-out, transform 160ms ease-out, box-shadow 160ms ease-out;
     }
     .history-task-card:hover:not(:disabled) {
       background: color-mix(in srgb, var(--panel) 30%, var(--field-bg-soft));
@@ -2425,6 +2640,7 @@ INDEX_HTML = r"""<!doctype html>
       border-left-color: var(--accent);
       background: color-mix(in srgb, var(--accent-soft) 58%, var(--panel));
       box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent);
+      transform: translateX(4px);
     }
     .history-task-top,
     .history-task-foot,
@@ -2527,13 +2743,17 @@ INDEX_HTML = r"""<!doctype html>
     }
     .history-detail-body {
       min-height: 0;
-      display: grid;
+      display: flex;
+      flex-direction: column;
       align-content: start;
       gap: 16px;
       padding: 20px;
       overflow-y: auto;
       scrollbar-width: thin;
       scrollbar-color: var(--scroll-thumb) transparent;
+    }
+    .history-detail-body > * {
+      flex: 0 0 auto;
     }
     .history-detail-title {
       display: grid;
@@ -2617,7 +2837,8 @@ INDEX_HTML = r"""<!doctype html>
     }
     .history-artifacts {
       display: grid;
-      overflow: hidden;
+      grid-template-rows: auto auto;
+      overflow: visible;
       border: 1px solid var(--card-border);
       border-radius: var(--radius-md);
       background: var(--panel);
@@ -2631,6 +2852,12 @@ INDEX_HTML = r"""<!doctype html>
       padding: 14px 16px;
       border-bottom: 1px solid var(--line);
       background: color-mix(in srgb, var(--panel) 76%, var(--field-bg-soft));
+    }
+    .history-artifacts-list {
+      min-height: 0;
+      overflow: visible;
+      scrollbar-width: thin;
+      scrollbar-color: var(--scroll-thumb) transparent;
     }
     .history-artifact-row {
       display: grid;
@@ -3189,6 +3416,11 @@ INDEX_HTML = r"""<!doctype html>
       padding: 18px 22px;
       border-bottom: 1px solid var(--line);
       background: var(--panel);
+      overflow: visible;
+    }
+    .settings-head > div:first-child {
+      position: relative;
+      min-width: 0;
     }
     .pack-name-head strong,
     .settings-head strong {
@@ -3203,6 +3435,55 @@ INDEX_HTML = r"""<!doctype html>
       color: var(--muted);
       font-size: 13px;
       line-height: 1.45;
+    }
+    .settings-head .card-head-copy {
+      position: absolute;
+      left: 0;
+      top: calc(100% + 9px);
+      z-index: 36;
+      display: flex;
+      align-items: center;
+      width: max-content;
+      max-width: min(420px, calc(100vw - 44px));
+      min-height: auto;
+      margin-top: 0;
+      padding: 8px 10px;
+      border: 1px solid var(--help-border);
+      border-radius: 12px;
+      background: var(--help-bg);
+      color: var(--help-text);
+      font-size: 12px;
+      font-weight: 600;
+      line-height: 1.45;
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transform: translateY(-6px) scale(.98);
+      transform-origin: top left;
+      box-shadow: 0 14px 34px rgba(15, 23, 42, .14);
+      transition: opacity var(--motion-base) ease, visibility var(--motion-base) ease, transform var(--motion-base) ease, box-shadow var(--motion-base) ease;
+    }
+    .settings-head .card-head-copy::before {
+      content: "";
+      position: absolute;
+      left: 18px;
+      top: -5px;
+      width: 9px;
+      height: 9px;
+      border-left: 1px solid var(--help-border);
+      border-top: 1px solid var(--help-border);
+      background: var(--help-bg);
+      transform: rotate(45deg);
+    }
+    .settings-head:hover,
+    .settings-head:focus-within {
+      z-index: 38;
+    }
+    .settings-head:hover .card-head-copy,
+    .settings-head:focus-within .card-head-copy {
+      opacity: 1;
+      visibility: visible;
+      transform: translateY(0) scale(1);
     }
     .pack-name-close,
     .settings-close {
@@ -3269,6 +3550,77 @@ INDEX_HTML = r"""<!doctype html>
       color: var(--text);
       font-size: 13px;
       overflow-wrap: anywhere;
+    }
+    .branding-options {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .branding-option {
+      min-width: 0;
+      display: grid;
+      grid-template-columns: 44px minmax(0, 1fr);
+      align-items: center;
+      gap: 10px;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      background: var(--field-bg);
+      color: var(--text);
+      text-align: left;
+      box-shadow: none;
+      cursor: pointer;
+    }
+    .branding-option:hover:not(:disabled) {
+      border-color: var(--accent-soft-line);
+      background: var(--accent-soft-hover);
+      transform: none;
+    }
+    .branding-option.active {
+      border-color: var(--accent);
+      background: var(--accent-soft);
+      color: var(--accent);
+      box-shadow: var(--focus-ring);
+    }
+    .branding-preview {
+      width: 44px;
+      height: 44px;
+      display: grid;
+      place-items: center;
+      border-radius: 8px;
+      background: var(--field-bg-soft);
+      overflow: hidden;
+    }
+    .branding-preview img {
+      width: auto;
+      height: auto;
+      max-width: 36px;
+      max-height: 36px;
+      object-fit: contain;
+      border-radius: 6px;
+    }
+    .branding-copy {
+      min-width: 0;
+      display: grid;
+      gap: 2px;
+    }
+    .branding-option strong {
+      display: block;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: inherit;
+      font-size: 13px;
+      line-height: 1.3;
+    }
+    .branding-menu-name {
+      display: block;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.3;
     }
     .history-download-missing {
       display: inline-flex;
@@ -5134,6 +5486,9 @@ INDEX_HTML = r"""<!doctype html>
       .settings-layout {
         grid-template-columns: 1fr;
       }
+      .branding-options {
+        grid-template-columns: 1fr;
+      }
     }
     @media (max-width: 880px) {
       body { overflow: auto; }
@@ -5216,6 +5571,9 @@ INDEX_HTML = r"""<!doctype html>
         grid-template-columns: 1fr;
         overflow: visible;
       }
+      .branding-options {
+        grid-template-columns: 1fr;
+      }
       .settings-footer {
         align-items: stretch;
         flex-direction: column;
@@ -5269,6 +5627,7 @@ INDEX_HTML = r"""<!doctype html>
       .history-page {
         height: auto;
         max-height: none;
+        overflow: visible;
       }
       .history-workbench {
         overflow: visible;
@@ -5286,6 +5645,9 @@ INDEX_HTML = r"""<!doctype html>
       }
       .history-detail-grid {
         grid-template-columns: 1fr;
+      }
+      .history-detail-body {
+        overflow: visible;
       }
       .metric {
         min-height: 88px;
@@ -5390,7 +5752,7 @@ INDEX_HTML = r"""<!doctype html>
   <div class="app-shell">
     <aside class="side-nav">
       <div class="side-brand">
-        <div class="mark"><img src="/assets/logo/minecraft.svg" alt="翻译工作台" data-i18n-aria-label="app.brand.alt"></div>
+        <div class="mark"><img src="/assets/logo/current" alt="翻译工作台" data-i18n-aria-label="app.brand.alt"></div>
         <div><strong data-i18n="app.brand.name">翻译工作台</strong><span data-i18n="app.brand.subtitle">mc-mod-i18n 本地版</span></div>
       </div>
       <nav class="nav-list">
@@ -5414,16 +5776,15 @@ INDEX_HTML = r"""<!doctype html>
         </div>
         <div class="header-meta">
           <div class="ghost-select ui-locale-select" id="ui-locale-select" title="界面语言" data-i18n-title="ui_locale.title">
-            <button type="button" class="control" data-select-trigger="ui_locale" aria-haspopup="listbox" aria-expanded="false" aria-controls="ui-locale-menu"><span class="value" id="ui-locale-display">简体中文</span><i class="ri-global-line chevron"></i></button>
+            <button type="button" class="control" data-select-trigger="ui_locale" aria-haspopup="listbox" aria-expanded="false" aria-controls="ui-locale-menu"><span class="value" id="ui-locale-display" data-i18n="ui_locale.zh_cn">简体中文</span><i class="ri-global-line chevron"></i></button>
             <div class="ghost-menu" id="ui-locale-menu" role="listbox" hidden></div>
             <select id="ui_locale" tabindex="-1" aria-hidden="true">
-              <option value="zh_cn" selected>简体中文</option>
-              <option value="en_us">English</option>
+__UI_LOCALE_OPTIONS_HTML__
             </select>
           </div>
           <div class="theme-picker" id="theme-picker">
             <button type="button" id="theme-toggle" class="theme-toggle" title="主题" data-i18n-title="theme.title_plain" aria-haspopup="listbox" aria-expanded="false" aria-controls="theme-menu">
-              <span class="theme-trigger-main"><i class="ri-computer-line" data-theme-icon></i><span data-theme-label>跟随系统</span></span>
+              <span class="theme-trigger-main"><i class="ri-computer-line" data-theme-icon></i><span data-theme-label data-i18n="theme.auto">跟随系统</span></span>
               <span class="theme-swatches theme-trigger-swatches" data-theme-trigger-swatches aria-hidden="true"></span>
               <i class="ri-arrow-down-s-line chevron" aria-hidden="true"></i>
             </button>
@@ -5445,7 +5806,7 @@ INDEX_HTML = r"""<!doctype html>
         <div class="workflow-step-item" data-workflow-step="1">
           <div class="workflow-node" aria-hidden="true">1</div>
           <div class="form-card workflow-step-card">
-          <div class="workflow-step"><strong>选择输入</strong></div>
+          <div class="workflow-step"><strong data-i18n="workflow.input_step">选择输入</strong></div>
           <h3><i class="ri-archive-2-line"></i><span data-i18n="input.title">输入类型</span></h3>
           <input type="hidden" name="input_kind" id="input_kind" value="jar">
           <div class="mode-switch" role="radiogroup" aria-label="处理类型" data-i18n-aria-label="input.title">
@@ -5454,19 +5815,19 @@ INDEX_HTML = r"""<!doctype html>
             <button type="button" data-input-kind="json" aria-pressed="false"><i class="ri-braces-line"></i><span data-i18n="input.json">语言 JSON 文件</span></button>
           </div>
         <label class="ghost-file mode-dependent" id="jar-file-wrap"><span data-i18n="file.jar">Mod JAR</span>
-          <span class="control"><span class="value" id="jars-display">选择一个或多个 JAR</span><i class="ri-folder-upload-line icon"></i></span>
+          <span class="control"><span class="value" id="jars-display" data-i18n="file.jar.placeholder">选择一个或多个 JAR</span><i class="ri-folder-upload-line icon"></i></span>
           <input id="jars" name="jars" type="file" accept=".jar" multiple required>
         </label>
         <label class="ghost-file mode-dependent" id="ftbquests-file-wrap" hidden><span data-i18n="file.ftbquests">FTB Quests / 整合包 ZIP</span>
-          <span class="control"><span class="value" id="ftbquests-display">选择整合包 ZIP、quests ZIP 或 en_us.snbt</span><i class="ri-folder-upload-line icon"></i></span>
+          <span class="control"><span class="value" id="ftbquests-display" data-i18n="file.ftbquests.placeholder">选择整合包 ZIP、quests ZIP 或 en_us.snbt</span><i class="ri-folder-upload-line icon"></i></span>
           <input id="ftbquests-files" name="ftbquests_files" type="file" accept=".zip,.snbt" multiple>
         </label>
         <label class="ghost-file mode-dependent" id="ftbquests-directory-wrap" hidden><span data-i18n="file.ftbquests_dir">FTB Quests 目录</span>
-          <span class="control"><span class="value" id="ftbquests-directory-display">选择 quests、lang 或 en_us 目录</span><i class="ri-folder-open-line icon"></i></span>
+          <span class="control"><span class="value" id="ftbquests-directory-display" data-i18n="file.ftbquests_dir.placeholder">选择 quests、lang 或 en_us 目录</span><i class="ri-folder-open-line icon"></i></span>
           <input id="ftbquests-directory" name="ftbquests_directory_files" type="file" webkitdirectory directory multiple>
         </label>
         <label class="ghost-file mode-dependent" id="json-file-wrap" hidden><span data-i18n="file.json">语言 JSON</span>
-          <span class="control"><span class="value" id="json-display">选择 en_us.json 或界面语言包 JSON</span><i class="ri-braces-line icon"></i></span>
+          <span class="control"><span class="value" id="json-display" data-i18n="file.json.placeholder">选择 en_us.json 或界面语言包 JSON</span><i class="ri-braces-line icon"></i></span>
           <input id="json-files" name="json_files" type="file" accept=".json,application/json" multiple>
         </label>
           </div>
@@ -5474,7 +5835,7 @@ INDEX_HTML = r"""<!doctype html>
         <div class="workflow-step-item" data-workflow-step="2">
           <div class="workflow-node" aria-hidden="true">2</div>
           <div class="form-card workflow-step-card">
-          <div class="workflow-step"><strong>选择语言与翻译器</strong></div>
+          <div class="workflow-step"><strong data-i18n="workflow.language_step">选择语言与翻译器</strong></div>
           <div class="workflow-step-section">
           <h3><i class="ri-translate-2"></i><span data-i18n="language.title">Language Settings</span></h3>
         <div class="grid-2">
@@ -5482,23 +5843,14 @@ INDEX_HTML = r"""<!doctype html>
             <div class="control locale-control" data-select-trigger="source_locale" role="combobox" tabindex="0" aria-haspopup="listbox" aria-expanded="false" aria-controls="source-locale-menu"><span class="value locale-control-value" id="source-locale-display"></span><input type="search" class="locale-control-input" data-locale-control-search="source_locale" placeholder="搜索代码或语言" data-i18n-placeholder="language.search_source" autocomplete="off" spellcheck="false" aria-label="搜索源语言" data-i18n-aria-label="language.search_source"><i class="ri-arrow-down-s-line chevron"></i></div>
             <div class="ghost-menu" id="source-locale-menu" role="listbox" hidden></div>
             <select name="source_locale" id="source_locale" tabindex="-1" aria-hidden="true">
-              <option value="en_us" selected>en_us - English (US)</option>
-              <option value="en_gb">en_gb - English (UK)</option>
-              <option value="zh_cn">zh_cn - 简体中文</option>
-              <option value="zh_tw">zh_tw - 繁体中文</option>
-              <option value="ja_jp">ja_jp - 日本語</option>
-              <option value="ko_kr">ko_kr - 한국어</option>
+__SOURCE_LOCALE_OPTIONS_HTML__
             </select>
           </label>
           <label class="ghost-select locale-select" id="target-locale-select"><span data-i18n="language.target">目标语言</span>
             <div class="control locale-control" data-select-trigger="target_locale" role="combobox" tabindex="0" aria-haspopup="listbox" aria-expanded="false" aria-controls="target-locale-menu"><span class="value locale-control-value" id="target-locale-display"></span><input type="search" class="locale-control-input" data-locale-control-search="target_locale" placeholder="搜索代码或语言" data-i18n-placeholder="language.search_target" autocomplete="off" spellcheck="false" aria-label="搜索目标语言" data-i18n-aria-label="language.search_target"><i class="ri-arrow-down-s-line chevron"></i></div>
             <div class="ghost-menu" id="target-locale-menu" role="listbox" hidden></div>
             <select name="target_locale" id="target_locale" tabindex="-1" aria-hidden="true">
-              <option value="zh_cn" selected>zh_cn - 简体中文</option>
-              <option value="zh_tw">zh_tw - 繁体中文</option>
-              <option value="en_us">en_us - English (US)</option>
-              <option value="ja_jp">ja_jp - 日本語</option>
-              <option value="ko_kr">ko_kr - 한국어</option>
+__TARGET_LOCALE_OPTIONS_HTML__
             </select>
           </label>
         </div>
@@ -5510,14 +5862,14 @@ INDEX_HTML = r"""<!doctype html>
             <button type="button" class="control" data-select-trigger="provider"><span class="value" id="provider-display"></span><i class="ri-arrow-down-s-line chevron"></i></button>
             <div class="ghost-menu" id="provider-menu" hidden></div>
             <select name="provider" id="provider" tabindex="-1" aria-hidden="true">
-              <option value="glossary">离线术语表（有限）</option>
-              <option value="copy">复制原文</option>
-              <option value="argos">Argos Translate（离线）</option>
-              <option value="deep-free">Deep Translator（免费试用）</option>
-              <option value="libretranslate">LibreTranslate（自托管/托管）</option>
-              <option value="azure-translator">Azure Translator</option>
-              <option value="openai-compatible">兼容 OpenAI</option>
-              <option value="anthropic-compatible">兼容 Anthropic</option>
+              <option value="glossary" data-i18n="provider.glossary">离线术语表（有限）</option>
+              <option value="copy" data-i18n="provider.copy">复制原文</option>
+              <option value="argos" data-i18n="provider.argos">Argos Translate（离线）</option>
+              <option value="deep-free" data-i18n="provider.deep-free">Deep Translator（免费试用）</option>
+              <option value="libretranslate" data-i18n="provider.libretranslate">LibreTranslate（自托管/托管）</option>
+              <option value="azure-translator" data-i18n="provider.azure-translator">Azure Translator</option>
+              <option value="openai-compatible" data-i18n="provider.openai-compatible">兼容 OpenAI</option>
+              <option value="anthropic-compatible" data-i18n="provider.anthropic-compatible">兼容 Anthropic</option>
             </select>
           </label>
           <label class="ghost-select" id="pack-format-select"><span data-i18n="translator.pack_format">资源包格式</span>
@@ -5575,9 +5927,9 @@ INDEX_HTML = r"""<!doctype html>
         <div class="workflow-step-item" data-workflow-step="3">
           <div class="workflow-node" aria-hidden="true">3</div>
           <div class="workspace-option-group workflow-step-card">
-          <div class="workflow-step"><strong>可选增强项</strong></div>
+          <div class="workflow-step"><strong data-i18n="workflow.optional_step">可选增强项</strong></div>
           <label class="ghost-file"><span data-i18n="translator.glossary">术语表 JSON</span>
-            <span class="control"><span class="value" id="glossary-display">可选 .json 术语表</span><i class="ri-file-list-3-line icon"></i></span>
+            <span class="control"><span class="value" id="glossary-display" data-i18n="translator.glossary.placeholder">可选 .json 术语表</span><i class="ri-file-list-3-line icon"></i></span>
             <input name="glossary" type="file" accept=".json">
           </label>
         <details class="inline-advanced-panel" data-advanced-panel>
@@ -5591,10 +5943,10 @@ INDEX_HTML = r"""<!doctype html>
                   <span id="provider-badge" class="pill provider-badge" tabindex="0">AI</span>
                   <span id="provider-help" class="field-help" data-i18n="advanced.provider_help">选择翻译器后会自动填入推荐 BaseURL 和模型。</span>
                 </span>
-                <a id="api-key-link" href="#" target="_blank" rel="noopener" class="btn-key-apply" data-provider-field="api_key_link" hidden>申请 Key <i class="ri-external-link-line"></i></a>
+                <a id="api-key-link" href="#" target="_blank" rel="noopener" class="btn-key-apply" data-provider-field="api_key_link" hidden><span data-i18n="advanced.apply_key">申请 Key</span> <i class="ri-external-link-line"></i></a>
               </div>
             <div>
-              <div class="doc-jump-row"><button type="button" class="secondary" id="provider-doc-link" data-doc-target="providers"><i class="ri-book-open-line"></i><span>查看翻译器说明</span></button></div>
+              <div class="doc-jump-row"><button type="button" class="secondary" id="provider-doc-link" data-doc-target="providers"><i class="ri-book-open-line"></i><span data-i18n="docs.open_provider">查看翻译器说明</span></button></div>
             </div>
             </div>
           <label class="model-field" data-provider-field="model_field"><span data-i18n="advanced.model">模型</span>
@@ -5620,7 +5972,7 @@ INDEX_HTML = r"""<!doctype html>
           </label>
           <label data-provider-field="api_region"><span>Region</span>
             <input name="api_region" id="api_region" value="">
-            <span class="field-help">Azure Translator 等服务需要 region，例如 global、eastasia。</span>
+            <span class="field-help" data-i18n="advanced.region_help">Azure Translator 等服务需要 region，例如 global、eastasia。</span>
           </label>
           <label data-provider-field="api_key_env"><span data-i18n="advanced.api_key_env">API Key 环境变量</span>
             <input name="api_key_env" id="api_key_env" value="OPENAI_API_KEY">
@@ -5631,7 +5983,7 @@ INDEX_HTML = r"""<!doctype html>
             <span id="provider-test-status" class="provider-test-status" aria-live="polite"></span>
           </div>
           <label><span data-i18n="advanced.concurrency">并发请求数</span>
-            <input name="api_concurrency" id="api_concurrency" type="number" value="2" min="1" placeholder="正在计算推荐并发...">
+            <input name="api_concurrency" id="api_concurrency" type="number" value="2" min="1" placeholder="正在计算推荐并发..." data-i18n-placeholder="advanced.concurrency_calculating">
             <span class="field-help" id="api-concurrency-help" data-i18n="advanced.concurrency_help">内容很多时可并发翻译多个批次；中转站限流时调低到 1。</span>
           </label>
           <label><span data-i18n="advanced.retries">断线重试次数</span>
@@ -5681,7 +6033,7 @@ INDEX_HTML = r"""<!doctype html>
           <input name="ignore_preflight_blockers" type="checkbox">
           <span data-i18n="output.ignore_preflight_blockers">忽略预检阻断并继续</span>
         </label>
-        <div class="doc-jump-row"><button type="button" class="secondary" id="output-doc-link" data-doc-target="output-strategy"><i class="ri-book-open-line"></i><span>查看输出策略说明</span></button></div>
+        <div class="doc-jump-row"><button type="button" class="secondary" id="output-doc-link" data-doc-target="output-strategy"><i class="ri-book-open-line"></i><span data-i18n="docs.open_output">查看输出策略说明</span></button></div>
         <input type="hidden" name="cache_dir" id="cache_dir">
         <input type="hidden" name="ui_locale" id="ui_locale_field" value="zh_cn">
         <input type="hidden" name="ui_locale_dir" id="ui_locale_dir">
@@ -5697,7 +6049,7 @@ INDEX_HTML = r"""<!doctype html>
         <div class="workflow-step-item" data-workflow-step="4">
           <div class="workflow-node" aria-hidden="true">4</div>
           <div class="form-card workflow-step-card preflight-card" id="preflight-panel">
-          <div class="workflow-step"><strong>运行预检并开始</strong></div>
+          <div class="workflow-step"><strong data-i18n="workflow.preflight_step">运行预检并开始</strong></div>
           <div class="preflight-head">
             <div>
               <h3><i class="ri-shield-check-line"></i><span data-i18n="preflight.title">翻译前预检</span></h3>
@@ -5705,13 +6057,13 @@ INDEX_HTML = r"""<!doctype html>
             </div>
             <button type="button" class="secondary" id="preflight-run"><i class="ri-scan-2-line"></i><span data-i18n="preflight.run">运行预检</span></button>
           </div>
-          <div id="preflight-callout" class="preflight-callout"><strong>启动前检查</strong><p>建议先运行预检，再开始生成。</p><div class="doc-jump-row"><button type="button" class="secondary" id="preflight-doc-link" data-doc-target="preflight"><i class="ri-book-open-line"></i><span>查看预检说明</span></button></div></div>
+          <div id="preflight-callout" class="preflight-callout"><strong data-i18n="preflight.callout_title">启动前检查</strong><p data-i18n="preflight.callout_body">建议先运行预检，再开始生成。</p><div class="doc-jump-row"><button type="button" class="secondary" id="preflight-doc-link" data-doc-target="preflight"><i class="ri-book-open-line"></i><span data-i18n="docs.open_preflight">查看预检说明</span></button></div></div>
           <div id="preflight-summary" class="preflight-summary" hidden></div>
           <div id="preflight-message-summary" class="preflight-message-summary" hidden></div>
           <ul id="preflight-messages" class="preflight-list"></ul>
           <button id="submit" type="submit"><i class="ri-rocket-2-line"></i><span data-i18n="action.start">开始生成</span></button>
           <button id="cancel-btn" type="button" hidden><i class="ri-stop-circle-line"></i><span data-i18n="action.cancel">中断</span></button>
-          <div id="status" class="status">等待选择 JAR。</div>
+          <div id="status" class="status" data-i18n="status.waiting_jar">等待选择 JAR。</div>
           </div>
         </div>
       </form>
@@ -5734,20 +6086,20 @@ INDEX_HTML = r"""<!doctype html>
         <div class="settings-head">
           <div>
             <strong data-i18n="history.title">任务历史</strong>
-            <span data-i18n="history.subtitle">找回最近任务的下载、报告和日志。</span>
+            <span class="card-head-copy" role="tooltip" data-i18n="history.subtitle">找回最近任务的下载、报告和日志。</span>
           </div>
           <div class="settings-actions">
-            <button type="button" class="secondary" id="history-doc-link" data-doc-target="history-and-report"><i class="ri-book-open-line"></i><span>查看历史说明</span></button>
+            <button type="button" class="secondary" id="history-doc-link" data-doc-target="history-and-report"><i class="ri-book-open-line"></i><span data-i18n="docs.open_history">查看历史说明</span></button>
             <button type="button" class="secondary" id="history-refresh"><i class="ri-refresh-line"></i><span data-i18n="history.refresh">刷新</span></button>
           </div>
         </div>
         <div class="history-workbench">
           <div class="history-toolbar">
-            <label class="history-search-control" aria-label="按 ID、Provider 或模型搜索">
-              <i class="ri-search-line"></i><input id="history-search" class="ghost-input" placeholder="输入任务 ID、Provider、模型或错误信息" autocomplete="off" spellcheck="false">
+            <label class="history-search-control" aria-label="按 ID、Provider 或模型搜索" data-i18n-aria-label="history.search_label">
+              <i class="ri-search-line"></i><input id="history-search" class="ghost-input" placeholder="输入任务 ID、Provider、模型或错误信息" data-i18n-placeholder="history.search_placeholder" autocomplete="off" spellcheck="false">
             </label>
             <label class="ghost-select" id="history-status-filter-shell"><span data-i18n="history.status">状态</span>
-              <button type="button" class="control" data-select-trigger="history_status" role="combobox" tabindex="0" aria-haspopup="listbox" aria-expanded="false" aria-controls="history-status-filter-menu"><span class="value" id="history-status-filter-display">全部</span><i class="ri-arrow-down-s-line chevron"></i></button>
+              <button type="button" class="control" data-select-trigger="history_status" role="combobox" tabindex="0" aria-haspopup="listbox" aria-expanded="false" aria-controls="history-status-filter-menu"><span class="value" id="history-status-filter-display" data-i18n="history.all">全部</span><i class="ri-arrow-down-s-line chevron"></i></button>
               <div class="ghost-menu" id="history-status-filter-menu" role="listbox" hidden></div>
               <select id="history-status-filter">
                 <option value="all" data-i18n="history.all">全部</option>
@@ -5757,7 +6109,7 @@ INDEX_HTML = r"""<!doctype html>
               </select>
             </label>
             <label class="ghost-select" id="history-kind-filter-shell"><span data-i18n="history.kind">输入类型</span>
-              <button type="button" class="control" data-select-trigger="history_kind" role="combobox" tabindex="0" aria-haspopup="listbox" aria-expanded="false" aria-controls="history-kind-filter-menu"><span class="value" id="history-kind-filter-display">全部</span><i class="ri-arrow-down-s-line chevron"></i></button>
+              <button type="button" class="control" data-select-trigger="history_kind" role="combobox" tabindex="0" aria-haspopup="listbox" aria-expanded="false" aria-controls="history-kind-filter-menu"><span class="value" id="history-kind-filter-display" data-i18n="history.all">全部</span><i class="ri-arrow-down-s-line chevron"></i></button>
               <div class="ghost-menu" id="history-kind-filter-menu" role="listbox" hidden></div>
               <select id="history-kind-filter">
                 <option value="all" data-i18n="history.all">全部</option>
@@ -5778,11 +6130,11 @@ INDEX_HTML = r"""<!doctype html>
             </section>
             <section class="history-detail">
               <div class="history-detail-head">
-                <strong><i class="ri-file-list-3-line"></i><span>任务详情</span></strong>
+                <strong><i class="ri-file-list-3-line"></i><span data-i18n="history.detail">任务详情</span></strong>
                 <div id="history-detail-head-actions" class="history-detail-actions"></div>
               </div>
               <div id="history-detail" class="history-detail-body">
-                <div class="empty">选择一条历史任务查看详情。</div>
+                <div class="empty" data-i18n="history.select_detail">选择一条历史任务查看详情。</div>
               </div>
             </section>
           </div>
@@ -5794,33 +6146,33 @@ INDEX_HTML = r"""<!doctype html>
         <div class="settings-head">
           <div>
             <strong data-i18n="nav.docs">文档</strong>
-            <span>快速开始、翻译器选择与关键流程说明。</span>
+            <span class="card-head-copy" role="tooltip" data-i18n="docs.subtitle">快速开始、翻译器选择与关键流程说明。</span>
           </div>
         </div>
         <div class="docs-page-shell docs-layout">
           <div class="docs-stage">
             <aside class="docs-sidebar">
               <div class="docs-sidebar-head">
-                <strong><i class="ri-menu-search-line"></i><span>文档目录</span></strong>
-                <span>按标题、摘要、关键词和适用范围筛选。</span>
+                <strong><i class="ri-menu-search-line"></i><span data-i18n="docs.directory">文档目录</span></strong>
+                <span data-i18n="docs.filter_hint">按标题、摘要、关键词和适用范围筛选。</span>
               </div>
               <div class="docs-sidebar-body">
-                <label class="settings-field docs-search"><span>搜索文档</span>
-                  <input class="ghost-input" id="docs-search" placeholder="按标题、摘要或关键词筛选" autocomplete="off" spellcheck="false">
+                <label class="settings-field docs-search"><span data-i18n="docs.search">搜索文档</span>
+                  <input class="ghost-input" id="docs-search" placeholder="按标题、摘要或关键词筛选" data-i18n-placeholder="docs.search_placeholder" autocomplete="off" spellcheck="false">
                 </label>
                 <div id="docs-list" class="docs-list compact"></div>
               </div>
             </aside>
             <section class="docs-detail">
               <div class="docs-detail-head">
-                <strong><i class="ri-file-text-line"></i><span id="docs-title">请选择文档</span></strong>
-                <span>文档详情</span>
+                <strong><i class="ri-file-text-line"></i><span id="docs-title" data-i18n="docs.select_prompt">请选择文档</span></strong>
+                <span data-i18n="docs.detail">文档详情</span>
               </div>
               <div class="docs-body">
                 <div id="docs-meta" class="docs-meta"></div>
                 <div id="docs-content" class="docs-content"></div>
                 <div class="docs-related-block">
-                  <strong>相关主题</strong>
+                  <strong data-i18n="docs.related_topics">相关主题</strong>
                   <div id="docs-related" class="docs-related"></div>
                 </div>
               </div>
@@ -5834,22 +6186,22 @@ INDEX_HTML = r"""<!doctype html>
         <div class="settings-head">
           <div>
             <strong data-i18n="nav.help">帮助</strong>
-            <span>按问题场景先做快速判断，再决定是否进入完整文档。</span>
+            <span class="card-head-copy" role="tooltip" data-i18n="help.subtitle">按问题场景先做快速判断，再决定是否进入完整文档。</span>
           </div>
         </div>
         <div class="docs-page-shell">
           <div class="help-topic-grid">
             <div class="help-topic-column">
               <section class="settings-section">
-                <div class="settings-section-title"><i class="ri-questionnaire-line"></i><span data-i18n="nav.help">问题场景</span></div>
+                <div class="settings-section-title"><i class="ri-questionnaire-line"></i><span data-i18n="help.topic_scenarios">问题场景</span></div>
                 <div id="help-topics" class="help-topic-list"></div>
               </section>
             </div>
             <div class="help-topic-column">
               <section class="help-preview-card">
                 <div class="help-preview-head">
-                  <strong><i class="ri-life-buoy-line"></i><span>快速判断</span></strong>
-                  <span>先看原因和下一步</span>
+                  <strong><i class="ri-life-buoy-line"></i><span data-i18n="help.quick_check">快速判断</span></strong>
+                  <span data-i18n="help.quick_check_subtitle">先看原因和下一步</span>
                 </div>
                 <div id="help-doc-preview"></div>
               </section>
@@ -5863,28 +6215,66 @@ INDEX_HTML = r"""<!doctype html>
         <div class="settings-head">
           <div>
             <strong id="settings-title" data-i18n="settings.title">设置</strong>
-            <span data-i18n="settings.subtitle">缓存、语言包与本地维护</span>
+            <span class="card-head-copy" role="tooltip" data-i18n="settings.subtitle">缓存、语言包与本地维护</span>
           </div>
           <button type="button" class="settings-close" id="settings-close" aria-label="关闭设置" data-i18n-aria-label="settings.close"><i class="ri-close-line"></i></button>
         </div>
         <div class="settings-layout">
-          <aside class="settings-nav" aria-label="设置分类">
-            <button type="button" class="active" data-settings-target="settings-cache-section"><i class="ri-database-2-line"></i><span data-i18n="settings.cache_section">缓存设置</span></button>
+          <aside class="settings-nav" aria-label="设置分类" data-i18n-aria-label="settings.category_nav">
+            <button type="button" class="active" data-settings-target="settings-system-section"><i class="ri-settings-4-line"></i><span data-i18n="settings.system_section">系统设置</span></button>
+            <button type="button" data-settings-target="settings-cache-section"><i class="ri-database-2-line"></i><span data-i18n="settings.cache_section">缓存设置</span></button>
             <button type="button" data-settings-target="settings-presets-section"><i class="ri-save-3-line"></i><span data-i18n="settings.presets_section">配置预设</span></button>
             <button type="button" data-settings-target="settings-memory-section"><i class="ri-brain-line"></i><span data-i18n="settings.memory_section">翻译记忆</span></button>
-            <button type="button" data-settings-target="settings-history-section"><i class="ri-time-line"></i><span>历史与清理</span></button>
+            <button type="button" data-settings-target="settings-history-section"><i class="ri-time-line"></i><span data-i18n="settings.history_section">历史与清理</span></button>
             <button type="button" data-settings-target="settings-locale-section"><i class="ri-translate-2"></i><span data-i18n="settings.language_section">界面语言</span></button>
             <button type="button" data-settings-target="settings-glossary-section"><i class="ri-book-2-line"></i><span data-i18n="settings.glossary_section">术语表管理</span></button>
           </aside>
           <div class="settings-content">
-          <section class="settings-section" id="settings-cache-section" aria-labelledby="settings-cache-title">
+          <section class="settings-section" id="settings-system-section" aria-labelledby="settings-system-title">
+            <div class="settings-section-title" id="settings-system-title"><i class="ri-settings-4-line"></i><span data-i18n="settings.system_section">系统设置</span></div>
+            <div class="settings-current">
+              <span data-i18n="settings.data_dir">数据目录</span>
+              <strong id="settings-data-dir" data-i18n="settings.data_dir_loading">正在读取数据目录...</strong>
+            </div>
+            <div class="settings-current">
+              <span data-i18n="settings.default_cache_dir">默认缓存目录</span>
+              <strong id="settings-default-cache-dir" data-i18n="settings.data_dir_loading">正在读取数据目录...</strong>
+            </div>
+            <div class="settings-current">
+              <span data-i18n="settings.default_ui_locale_dir">默认语言拓展包目录</span>
+              <strong id="settings-default-ui-locale-dir" data-i18n="settings.data_dir_loading">正在读取数据目录...</strong>
+            </div>
+            <div class="settings-current">
+              <span data-i18n="settings.brand_logo">品牌图标</span>
+              <strong id="settings-branding-summary" data-i18n="settings.brand_cat">猫猫头像</strong>
+            </div>
+            <div class="branding-options" id="settings-branding-options" role="radiogroup" aria-label="品牌图标" data-i18n-aria-label="settings.brand_logo">
+              <button type="button" class="branding-option active" data-brand-logo="cat" role="radio" aria-checked="true">
+                <span class="branding-preview"><img src="/assets/logo/cat.png" alt=""></span>
+                <span class="branding-copy"><strong data-i18n="settings.brand_cat">猫猫头像</strong><span class="branding-menu-name">猫 PNG</span></span>
+              </button>
+              <button type="button" class="branding-option" data-brand-logo="grass" role="radio" aria-checked="false">
+                <span class="branding-preview"><img src="/assets/logo/grass.png" alt=""></span>
+                <span class="branding-copy"><strong data-i18n="settings.brand_grass">草方块</strong><span class="branding-menu-name">草方块</span></span>
+              </button>
+              <button type="button" class="branding-option" data-brand-logo="sign" role="radio" aria-checked="false">
+                <span class="branding-preview"><img src="/assets/logo/sign.png" alt=""></span>
+                <span class="branding-copy"><strong data-i18n="settings.brand_sign">签名标识</strong><span class="branding-menu-name">签名 PNG</span></span>
+              </button>
+            </div>
+            <div class="settings-current">
+              <span data-i18n="settings.brand_effect">同步范围</span>
+              <strong data-i18n="settings.brand_effect_desc">网页标签、侧边栏、导出资源包图标，以及下次打包的 exe 图标。</strong>
+            </div>
+          </section>
+          <section class="settings-section" id="settings-cache-section" aria-labelledby="settings-cache-title" hidden>
             <div class="settings-section-title" id="settings-cache-title"><i class="ri-database-2-line"></i><span data-i18n="settings.cache_section">缓存设置</span></div>
             <label class="settings-field"><span data-i18n="settings.cache_dir">缓存目录</span>
-              <input class="ghost-input" id="settings-cache-dir" placeholder="默认：服务工作目录/.shared-cache" data-i18n-placeholder="settings.cache_placeholder" autocomplete="off" spellcheck="false">
+              <input class="ghost-input" id="settings-cache-dir" placeholder="默认：数据目录/cache" data-i18n-placeholder="settings.cache_placeholder" autocomplete="off" spellcheck="false">
             </label>
             <div class="settings-current">
               <span data-i18n="settings.current">当前</span>
-              <strong id="settings-cache-effective">默认：服务工作目录/.shared-cache</strong>
+              <strong id="settings-cache-effective" data-i18n="settings.cache_placeholder">默认：数据目录/cache</strong>
             </div>
             <div class="settings-section-actions">
               <button type="button" class="secondary" id="settings-cache-default" data-i18n="settings.default">恢复默认</button>
@@ -5898,7 +6288,7 @@ INDEX_HTML = r"""<!doctype html>
             </label>
             <label class="settings-field"><span data-i18n="settings.saved_presets">已保存预设</span>
               <span class="ghost-select settings-preset-select" id="settings-preset-select-shell">
-                <button type="button" class="control" data-select-trigger="settings_preset" aria-haspopup="listbox" aria-expanded="false" aria-controls="settings-preset-menu"><span class="value" id="settings-preset-display">暂无预设</span><i class="ri-arrow-down-s-line chevron"></i></button>
+                <button type="button" class="control" data-select-trigger="settings_preset" aria-haspopup="listbox" aria-expanded="false" aria-controls="settings-preset-menu"><span class="value" id="settings-preset-display" data-i18n="settings.preset_empty">暂无预设</span><i class="ri-arrow-down-s-line chevron"></i></button>
                 <div class="ghost-menu" id="settings-preset-menu" role="listbox" hidden></div>
                 <select class="hidden-select" id="settings-preset-select" aria-hidden="true" tabindex="-1"></select>
               </span>
@@ -5928,39 +6318,39 @@ INDEX_HTML = r"""<!doctype html>
               <button type="button" class="secondary" id="settings-memory-clear-scope"><i class="ri-filter-off-line"></i><span data-i18n="settings.memory_clear_scope">清理当前配置</span></button>
               <button type="button" class="danger" id="settings-memory-clear"><i class="ri-delete-bin-6-line"></i><span data-i18n="settings.memory_clear">清理记忆</span></button>
             </div>
-            <div class="doc-jump-row"><button type="button" class="secondary" id="memory-doc-link" data-doc-target="translation-memory"><i class="ri-book-open-line"></i><span>查看翻译记忆说明</span></button></div>
+            <div class="doc-jump-row"><button type="button" class="secondary" id="memory-doc-link" data-doc-target="translation-memory"><i class="ri-book-open-line"></i><span data-i18n="docs.open_memory">查看翻译记忆说明</span></button></div>
           </section>
           <section class="settings-section" id="settings-history-section" aria-labelledby="settings-history-title" hidden>
-            <div class="settings-section-title" id="settings-history-title"><i class="ri-time-line"></i><span>历史与清理</span></div>
-            <label class="settings-field"><span>最多保留任务数</span>
-              <input class="ghost-input" id="settings-history-limit" type="number" min="1" max="5000" placeholder="默认 100" autocomplete="off" spellcheck="false">
+            <div class="settings-section-title" id="settings-history-title"><i class="ri-time-line"></i><span data-i18n="settings.history_section">历史与清理</span></div>
+            <label class="settings-field"><span data-i18n="settings.history_limit">最多保留任务数</span>
+              <input class="ghost-input" id="settings-history-limit" type="number" min="1" max="5000" placeholder="默认 100" data-i18n-placeholder="settings.history_limit_placeholder" autocomplete="off" spellcheck="false">
             </label>
             <div class="settings-current">
-              <span>当前历史</span>
-              <strong id="settings-history-summary">正在读取任务历史...</strong>
+              <span data-i18n="settings.history_current">当前历史</span>
+              <strong id="settings-history-summary" data-i18n="settings.history_loading">正在读取任务历史...</strong>
             </div>
-            <label class="settings-field"><span>删除指定任务</span>
-              <input class="ghost-input" id="settings-history-delete-job-ids" placeholder="输入一个或多个任务 ID，用逗号、空格或换行分隔" autocomplete="off" spellcheck="false">
+            <label class="settings-field"><span data-i18n="settings.history_delete_ids">删除指定任务</span>
+              <input class="ghost-input" id="settings-history-delete-job-ids" placeholder="输入一个或多个任务 ID，用逗号、空格或换行分隔" data-i18n-placeholder="settings.history_delete_ids_placeholder" autocomplete="off" spellcheck="false">
             </label>
             <div class="settings-section-actions">
-              <button type="button" class="secondary" id="settings-history-refresh"><i class="ri-refresh-line"></i><span>刷新历史状态</span></button>
-              <button type="button" class="secondary" id="settings-history-trim"><i class="ri-scissors-cut-line"></i><span>按上限立即裁剪</span></button>
-              <button type="button" class="danger" id="settings-history-delete"><i class="ri-delete-bin-line"></i><span>删除指定任务</span></button>
-              <button type="button" class="danger" id="settings-history-clear"><i class="ri-delete-bin-6-line"></i><span>清空任务历史</span></button>
+              <button type="button" class="secondary" id="settings-history-refresh"><i class="ri-refresh-line"></i><span data-i18n="settings.history_refresh">刷新历史状态</span></button>
+              <button type="button" class="secondary" id="settings-history-trim"><i class="ri-scissors-cut-line"></i><span data-i18n="settings.history_trim">按上限立即裁剪</span></button>
+              <button type="button" class="danger" id="settings-history-delete"><i class="ri-delete-bin-line"></i><span data-i18n="settings.history_delete">删除指定任务</span></button>
+              <button type="button" class="danger" id="settings-history-clear"><i class="ri-delete-bin-6-line"></i><span data-i18n="settings.history_clear">清空任务历史</span></button>
             </div>
             <div class="settings-current">
-              <span>说明</span>
-              <strong>这里只清理历史记录索引，不会自动删除各任务目录下已经生成的报告和产物文件。</strong>
+              <span data-i18n="settings.history_note">说明</span>
+              <strong data-i18n="settings.history_note_body">这里只清理历史记录索引，不会自动删除各任务目录下已经生成的报告和产物文件。</strong>
             </div>
           </section>
           <section class="settings-section" id="settings-locale-section" aria-labelledby="settings-locale-title" hidden>
             <div class="settings-section-title" id="settings-locale-title"><i class="ri-translate-2"></i><span data-i18n="settings.language_section">界面语言</span></div>
             <label class="settings-field"><span data-i18n="settings.ui_locale_dir">语言拓展包目录</span>
-              <input class="ghost-input" id="settings-ui-locale-dir" placeholder="默认：服务工作目录/.ui-locales" data-i18n-placeholder="settings.ui_locale_placeholder" autocomplete="off" spellcheck="false">
+              <input class="ghost-input" id="settings-ui-locale-dir" placeholder="默认：数据目录/extensions/ui-locales" data-i18n-placeholder="settings.ui_locale_placeholder" autocomplete="off" spellcheck="false">
             </label>
             <div class="settings-current">
               <span data-i18n="settings.current">当前</span>
-              <strong id="settings-ui-locale-effective">默认：服务工作目录/.ui-locales</strong>
+              <strong id="settings-ui-locale-effective" data-i18n="settings.ui_locale_placeholder">默认：数据目录/extensions/ui-locales</strong>
             </div>
             <div class="settings-current">
               <span data-i18n="settings.language_tools">界面语言包</span>
@@ -6082,6 +6472,9 @@ INDEX_HTML = r"""<!doctype html>
     const historyStatusFilter = document.getElementById('history-status-filter');
     const historyKindFilter = document.getElementById('history-kind-filter');
     const settingsClose = document.getElementById('settings-close');
+    const settingsDataDir = document.getElementById('settings-data-dir');
+    const settingsDefaultCacheDir = document.getElementById('settings-default-cache-dir');
+    const settingsDefaultUiLocaleDir = document.getElementById('settings-default-ui-locale-dir');
     const settingsCacheDir = document.getElementById('settings-cache-dir');
     const settingsCacheEffective = document.getElementById('settings-cache-effective');
     const settingsUiLocaleDir = document.getElementById('settings-ui-locale-dir');
@@ -6089,6 +6482,8 @@ INDEX_HTML = r"""<!doctype html>
     const settingsUiLocaleSummary = document.getElementById('settings-ui-locale-summary');
     const settingsUiLocaleCheckSummary = document.getElementById('settings-ui-locale-check-summary');
     const settingsStatus = document.getElementById('settings-status');
+    const settingsBrandingOptions = document.getElementById('settings-branding-options');
+    const settingsBrandingSummary = document.getElementById('settings-branding-summary');
     const settingsCacheDefault = document.getElementById('settings-cache-default');
     const settingsCacheClear = document.getElementById('settings-cache-clear');
     const settingsPresetName = document.getElementById('settings-preset-name');
@@ -6193,6 +6588,8 @@ INDEX_HTML = r"""<!doctype html>
     let historyRecords = [];
     let activeHistoryJobId = '';
     let docsIndex = [];
+    let docsIndexCacheKey = '';
+    let docsIndexLoadToken = 0;
     let activeDocSlug = '';
     let activeHelpSlug = 'quick-start';
     const docDetailCache = new Map();
@@ -6206,6 +6603,12 @@ INDEX_HTML = r"""<!doctype html>
     let modelOptions = [];
     let lastPreflightPayload = null;
     const PREVIEW_PREFLIGHT_MESSAGE_LIMIT = 8;
+    const brandLogoLabels = {
+      cat: '猫猫头像',
+      grass: '草方块',
+      sign: '签名标识'
+    };
+    let currentBrandLogo = 'cat';
     const themePicker = document.getElementById('theme-picker');
     const themeToggle = document.getElementById('theme-toggle');
     const themeMenu = document.getElementById('theme-menu');
@@ -6335,135 +6738,7 @@ INDEX_HTML = r"""<!doctype html>
     const packFormatMenu = document.getElementById('pack-format-menu');
     const historyStatusFilterMenu = document.getElementById('history-status-filter-menu');
     const historyKindFilterMenu = document.getElementById('history-kind-filter-menu');
-    const minecraftLocales = [
-      ["af_za", "Afrikaans"],
-      ["ar_sa", "العربية"],
-      ["ast_es", "Asturianu"],
-      ["az_az", "Azərbaycanca"],
-      ["ba_ru", "Башҡортса"],
-      ["bar", "Boarisch"],
-      ["be_by", "Беларуская"],
-      ["bg_bg", "Български"],
-      ["br_fr", "Brezhoneg"],
-      ["brb", "Brabants"],
-      ["bs_ba", "Bosanski"],
-      ["ca_es", "Català"],
-      ["cs_cz", "Čeština"],
-      ["cy_gb", "Cymraeg"],
-      ["da_dk", "Dansk"],
-      ["de_at", "Österreichisches Deutsch"],
-      ["de_ch", "Schweizerdeutsch"],
-      ["de_de", "Deutsch"],
-      ["el_gr", "Ελληνικά"],
-      ["en_au", "English (Australia)"],
-      ["en_ca", "English (Canada)"],
-      ["en_gb", "English (UK)"],
-      ["en_nz", "English (New Zealand)"],
-      ["en_pt", "Pirate Speak"],
-      ["en_ud", "ɥsᴉꞁƃuƎ"],
-      ["en_us", "English (US)"],
-      ["enp", "Anglish"],
-      ["enws", "Shakespearean English"],
-      ["eo_uy", "Esperanto"],
-      ["es_ar", "Español (Argentina)"],
-      ["es_cl", "Español (Chile)"],
-      ["es_ec", "Español (Ecuador)"],
-      ["es_es", "Español (España)"],
-      ["es_mx", "Español (México)"],
-      ["es_uy", "Español (Uruguay)"],
-      ["es_ve", "Español (Venezuela)"],
-      ["et_ee", "Eesti"],
-      ["eu_es", "Euskara"],
-      ["fa_ir", "فارسی"],
-      ["fi_fi", "Suomi"],
-      ["fil_ph", "Filipino"],
-      ["fo_fo", "Føroyskt"],
-      ["fr_ca", "Français (Canada)"],
-      ["fr_fr", "Français"],
-      ["fra_de", "Fränggisch"],
-      ["fy_nl", "Frysk"],
-      ["ga_ie", "Gaeilge"],
-      ["gd_gb", "Gàidhlig"],
-      ["gl_es", "Galego"],
-      ["gv_im", "Gaelg"],
-      ["haw_us", "ʻŌlelo Hawaiʻi"],
-      ["he_il", "עברית"],
-      ["hi_in", "हिन्दी"],
-      ["hr_hr", "Hrvatski"],
-      ["hu_hu", "Magyar"],
-      ["hy_am", "Հայերեն"],
-      ["id_id", "Bahasa Indonesia"],
-      ["ig_ng", "Igbo"],
-      ["io_en", "Ido"],
-      ["is_is", "Íslenska"],
-      ["isv", "Medžuslovjansky"],
-      ["it_it", "Italiano"],
-      ["ja_jp", "日本語"],
-      ["jbo_en", "Lojban"],
-      ["ka_ge", "ქართული"],
-      ["kk_kz", "Қазақша"],
-      ["kn_in", "ಕನ್ನಡ"],
-      ["ko_kr", "한국어"],
-      ["ksh", "Kölsch"],
-      ["kw_gb", "Kernewek"],
-      ["la_la", "Latina"],
-      ["lb_lu", "Lëtzebuergesch"],
-      ["li_li", "Limburgs"],
-      ["lol_us", "LOLCAT"],
-      ["lt_lt", "Lietuvių"],
-      ["lv_lv", "Latviešu"],
-      ["lzh", "文言"],
-      ["mi_nz", "Māori"],
-      ["mk_mk", "Македонски"],
-      ["mn_mn", "Монгол"],
-      ["moh_us", "Kanien'kéha"],
-      ["ms_my", "Bahasa Melayu"],
-      ["mt_mt", "Malti"],
-      ["nah", "Nahuatl"],
-      ["nds_de", "Plattdüütsch"],
-      ["nl_be", "Vlaams"],
-      ["nl_nl", "Nederlands"],
-      ["nn_no", "Norsk nynorsk"],
-      ["no_no", "Norsk bokmål"],
-      ["oc_fr", "Occitan"],
-      ["ovd", "Övdalsk"],
-      ["pl_pl", "Polski"],
-      ["pt_br", "Português (Brasil)"],
-      ["pt_pt", "Português (Portugal)"],
-      ["qya_aa", "Quenya"],
-      ["ro_ro", "Română"],
-      ["rpr", "Дореформенный русский"],
-      ["ru_ru", "Русский"],
-      ["ry_ua", "Русиньскый"],
-      ["sah_sah", "Саха тыла"],
-      ["se_no", "Davvisámegiella"],
-      ["sk_sk", "Slovenčina"],
-      ["sl_si", "Slovenščina"],
-      ["so_so", "Af-Soomaali"],
-      ["sq_al", "Shqip"],
-      ["sr_sp", "Српски"],
-      ["sv_se", "Svenska"],
-      ["swg", "Schwäbisch"],
-      ["sxu", "Säggs'sch"],
-      ["szl", "Ślōnskŏ"],
-      ["ta_in", "தமிழ்"],
-      ["th_th", "ไทย"],
-      ["tl_ph", "Tagalog"],
-      ["tlh_aa", "tlhIngan Hol"],
-      ["tok", "Toki Pona"],
-      ["tr_tr", "Türkçe"],
-      ["tt_ru", "Татарча"],
-      ["uk_ua", "Українська"],
-      ["val_es", "Català (Valencià)"],
-      ["vec_it", "Vèneto"],
-      ["vi_vn", "Tiếng Việt"],
-      ["yi_de", "ייִדיש"],
-      ["yo_ng", "Yorùbá"],
-      ["zh_cn", "简体中文"],
-      ["zh_hk", "繁體中文（香港）"],
-      ["zh_tw", "繁體中文"],
-      ["zlm_arab", "بهاس ملايو"]
-    ];
+    const minecraftLocales = __MINECRAFT_LOCALES_JSON__;
     const providerPresets = {
       'argos': {
         label: 'Argos Translate（离线）',
@@ -6749,6 +7024,7 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     bindThemePicker();
+    loadSystemSettings().catch(() => {});
 
     function normalizeCacheDirSetting(value) {
       return String(value || '').trim();
@@ -6764,7 +7040,7 @@ INDEX_HTML = r"""<!doctype html>
 
     function cacheDirDisplayLabel(value) {
       const normalized = normalizeCacheDirSetting(value);
-      return normalized || ui('settings.cache_placeholder', '默认：服务工作目录/.shared-cache');
+      return normalized || ui('settings.cache_placeholder', '默认：数据目录/cache');
     }
 
     function normalizeUiLocaleDirSetting(value) {
@@ -6781,7 +7057,7 @@ INDEX_HTML = r"""<!doctype html>
 
     function uiLocaleDirDisplayLabel(value) {
       const normalized = normalizeUiLocaleDirSetting(value);
-      return normalized || ui('settings.ui_locale_placeholder', '默认：服务工作目录/.ui-locales');
+      return normalized || ui('settings.ui_locale_placeholder', '默认：数据目录/extensions/ui-locales');
     }
 
     function refreshSettingsDirectoryLabels() {
@@ -6791,6 +7067,86 @@ INDEX_HTML = r"""<!doctype html>
       if (settingsUiLocaleEffective) {
         settingsUiLocaleEffective.textContent = uiLocaleDirDisplayLabel(uiLocaleDirField ? uiLocaleDirField.value : storedUiLocaleDirSetting());
       }
+    }
+
+    function normalizeBrandingChoice(value) {
+      const normalized = String(value || '').trim().toLowerCase();
+      return Object.prototype.hasOwnProperty.call(brandLogoLabels, normalized) ? normalized : 'cat';
+    }
+
+    function brandLogoLabel(choice) {
+      const normalized = normalizeBrandingChoice(choice);
+      const keys = {
+        cat: 'settings.brand_cat',
+        grass: 'settings.brand_grass',
+        sign: 'settings.brand_sign'
+      };
+      return ui(keys[normalized], brandLogoLabels[normalized]);
+    }
+
+    function applyBrandingChoice(choice) {
+      currentBrandLogo = normalizeBrandingChoice(choice);
+      if (settingsBrandingSummary) {
+        settingsBrandingSummary.textContent = brandLogoLabel(currentBrandLogo);
+      }
+      document.querySelectorAll('[data-brand-logo]').forEach(button => {
+        const active = button.dataset.brandLogo === currentBrandLogo;
+        button.classList.toggle('active', active);
+        button.setAttribute('aria-checked', active ? 'true' : 'false');
+      });
+      const stamp = `brand=${encodeURIComponent(currentBrandLogo)}&v=${Date.now()}`;
+      document.querySelectorAll('.mark img').forEach(image => {
+        image.src = `/assets/logo/current?${stamp}`;
+      });
+      const favicon = document.querySelector('link[rel="icon"]');
+      if (favicon) {
+        favicon.href = `/assets/logo/current-favicon?${stamp}`;
+      }
+    }
+
+    function applySystemDirectoryInfo(payload) {
+      if (!payload) {
+        return;
+      }
+      if (settingsDataDir) {
+        settingsDataDir.textContent = payload.data_dir || ui('settings.data_dir_unavailable', '数据目录暂不可用');
+        settingsDataDir.title = payload.data_dir || '';
+      }
+      if (settingsDefaultCacheDir) {
+        settingsDefaultCacheDir.textContent = payload.default_cache_dir || ui('settings.cache_placeholder', '默认：数据目录/cache');
+        settingsDefaultCacheDir.title = payload.default_cache_dir || '';
+      }
+      if (settingsDefaultUiLocaleDir) {
+        settingsDefaultUiLocaleDir.textContent = payload.default_ui_locale_dir || ui('settings.ui_locale_placeholder', '默认：数据目录/extensions/ui-locales');
+        settingsDefaultUiLocaleDir.title = payload.default_ui_locale_dir || '';
+      }
+    }
+
+    async function loadSystemSettings() {
+      const response = await fetch('/api/system-settings');
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error || ui('settings.system_load_failed', '系统设置读取失败'));
+      }
+      applyBrandingChoice(payload.brand_logo);
+      applySystemDirectoryInfo(payload);
+      return payload;
+    }
+
+    async function saveSystemSettings(choice = currentBrandLogo) {
+      const normalized = normalizeBrandingChoice(choice);
+      const response = await fetch('/api/system-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ brand_logo: normalized })
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error || ui('settings.system_save_failed', '系统设置保存失败'));
+      }
+      applyBrandingChoice(payload.brand_logo);
+      applySystemDirectoryInfo(payload);
+      return payload;
     }
 
     function applyCacheDirSetting(value, persist = false) {
@@ -6818,6 +7174,8 @@ INDEX_HTML = r"""<!doctype html>
 
     function applyUiLocaleDirSetting(value, persist = false) {
       const normalized = normalizeUiLocaleDirSetting(value);
+      const previous = uiLocaleDirField ? uiLocaleDirField.value : storedUiLocaleDirSetting();
+      const changed = normalizeUiLocaleDirSetting(previous) !== normalized;
       if (uiLocaleDirField) {
         uiLocaleDirField.value = normalized;
       }
@@ -6835,6 +7193,10 @@ INDEX_HTML = r"""<!doctype html>
             localStorage.removeItem(UI_LOCALE_DIR_STORAGE_KEY);
           }
         } catch (error) {}
+      }
+      if (changed) {
+        resetDocsLocaleCache();
+        refreshDocsForCurrentLocale();
       }
       return normalized;
     }
@@ -6881,7 +7243,7 @@ INDEX_HTML = r"""<!doctype html>
         const response = await fetch(`/api/ui-locales${uiLocaleQuery()}`);
         const payload = await response.json();
         if (!response.ok || !payload.ok) {
-          throw new Error(payload.error || '语言包列表读取失败');
+        throw new Error(payload.error || ui('settings.ui_locale_read_failed', '语言包列表读取失败'));
         }
         uiLocaleOptions = payload.locales || uiLocaleOptions;
         const current = normalizeLocaleValue(uiLocale.value || storedUiLocaleSetting());
@@ -6943,7 +7305,9 @@ INDEX_HTML = r"""<!doctype html>
 
     function applyUiLocale(value, persist = false) {
       const normalized = normalizeLocaleValue(value || 'zh_cn') || 'zh_cn';
+      const previousLocale = uiLocale.value || '';
       uiLocale.value = uiLocaleOptions.some(option => option.code === normalized) ? normalized : 'zh_cn';
+      const localeChanged = previousLocale !== uiLocale.value;
       currentUiMessages = builtinUiMessages[uiLocale.value] || uiLocaleFallbackMessages;
       document.documentElement.lang = uiLocale.value.replace('_', '-');
       if (persist) {
@@ -6952,6 +7316,9 @@ INDEX_HTML = r"""<!doctype html>
         } catch (error) {}
       }
       syncUiLocaleDisplay();
+      if (localeChanged) {
+        resetDocsLocaleCache();
+      }
       fetch(`/api/ui-locales/export/${encodeURIComponent(uiLocale.value)}${uiLocaleQuery()}`)
         .then(response => response.ok ? response.json() : null)
         .then(packageData => {
@@ -6959,11 +7326,15 @@ INDEX_HTML = r"""<!doctype html>
             currentUiMessages = { ...currentUiMessages, ...packageData.messages };
             applyUiMessageNodes();
             refreshDynamicUi();
+            refreshDocsForCurrentLocale();
           }
         })
         .catch(() => {});
       applyUiMessageNodes();
       refreshDynamicUi();
+      if (localeChanged) {
+        refreshDocsForCurrentLocale();
+      }
     }
 
     function t(key, params = {}) {
@@ -6996,11 +7367,52 @@ INDEX_HTML = r"""<!doctype html>
       syncTargetLocale();
       syncConcurrencyHint();
       refreshSettingsDirectoryLabels();
+      applyBrandingChoice(currentBrandLogo);
       refreshSelectMenusForCurrentLocale();
       updateGlossaryModeButton();
       renderGlossaryConflicts(glossaryState.conflicts || {});
-      if (resultState.payload) {
+      if (isCurrentResultPayload()) {
         renderResultShell();
+      }
+    }
+
+    function docsLocaleQuery() {
+      const params = new URLSearchParams();
+      params.set('ui_locale', uiLocale.value || 'zh_cn');
+      const dir = uiLocaleDirField ? uiLocaleDirField.value : '';
+      if (dir) {
+        params.set('ui_locale_dir', dir);
+      }
+      return `?${params.toString()}`;
+    }
+
+    function resetDocsLocaleCache() {
+      docsIndex = [];
+      docsIndexCacheKey = '';
+      docsIndexLoadToken += 1;
+      docDetailCache.clear();
+      renderDocsList(docsSearch.value);
+      renderHelpTopics();
+    }
+
+    function refreshDocsForCurrentLocale() {
+      renderHelpTopics();
+      if (docsPanel && !docsPanel.hidden) {
+        const slug = activeDocSlug;
+        loadDocsIndex().then(() => {
+          if (slug) {
+            return loadDocDetail(slug);
+          }
+          return null;
+        }).catch(error => {
+          statusBox.className = 'status error';
+          statusBox.textContent = error.message || ui('docs.load_failed', '文档读取失败');
+        });
+      } else if (helpPanel && !helpPanel.hidden) {
+        loadDocsIndex().catch(error => {
+          statusBox.className = 'status error';
+          statusBox.textContent = error.message || ui('docs.load_failed', '文档读取失败');
+        });
       }
     }
 
@@ -7041,6 +7453,22 @@ INDEX_HTML = r"""<!doctype html>
       }
     }
 
+    function isCurrentResultPayload(payload = resultState.payload) {
+      return Boolean(payload) && (!activeJobId || payload.job_id === activeJobId);
+    }
+
+    function clearCurrentResultForNewJob() {
+      resultState.payload = null;
+      resultState.summaryPopover = '';
+      resultState.activeTab = 'language';
+      resultState.resultView = 'language';
+      resultState.reportSearch = '';
+      resultState.hardcodedSearch = '';
+      resultState.apiLogSearch = '';
+      apiLogLines = [];
+      loadHardcodedMap({});
+    }
+
     function setSettingsStatus(message, isError = false) {
       if (!settingsStatus) {
         return;
@@ -7057,6 +7485,9 @@ INDEX_HTML = r"""<!doctype html>
       applyCacheDirSetting(cacheDirField ? cacheDirField.value : storedCacheDirSetting());
       applyUiLocaleDirSetting(uiLocaleDirField ? uiLocaleDirField.value : storedUiLocaleDirSetting());
       setSettingsStatus('');
+      loadSystemSettings().catch(error => {
+        setSettingsStatus(error.message || ui('settings.system_load_failed', '系统设置读取失败'), true);
+      });
       loadGlossarySettings().catch(error => {
         setSettingsStatus(error.message || ui('settings.glossary_load_failed', '术语表读取失败'), true);
       });
@@ -7584,7 +8015,7 @@ INDEX_HTML = r"""<!doctype html>
       }
       const count = Number(payload?.count || 0);
       const limit = Number(payload?.limit || 100);
-      settingsHistorySummary.textContent = `当前 ${count} 条，最多保留 ${limit} 条`;
+        settingsHistorySummary.textContent = formatUi('settings.history_summary', '当前 {count} 条，最多保留 {limit} 条', { count, limit });
       if (settingsHistoryLimit && document.activeElement !== settingsHistoryLimit) {
         settingsHistoryLimit.value = String(limit);
       }
@@ -7594,11 +8025,11 @@ INDEX_HTML = r"""<!doctype html>
       const response = await fetch('/api/jobs/settings');
       const payload = await response.json();
       if (!response.ok || !payload.ok) {
-        throw new Error(payload.error || '任务历史设置读取失败');
+        throw new Error(payload.error || ui('settings.history_load_failed', '任务历史设置读取失败'));
       }
       renderHistorySettingsSummary(payload);
       if (!silent) {
-        setSettingsStatus('任务历史状态已刷新。');
+        setSettingsStatus(ui('settings.history_refreshed', '任务历史状态已刷新。'));
       }
       return payload;
     }
@@ -7612,7 +8043,7 @@ INDEX_HTML = r"""<!doctype html>
       });
       const payload = await response.json();
       if (!response.ok || !payload.ok) {
-        throw new Error(payload.error || '任务历史设置保存失败');
+        throw new Error(payload.error || ui('settings.history_save_failed', '任务历史设置保存失败'));
       }
       renderHistorySettingsSummary(payload);
       return payload;
@@ -7626,7 +8057,7 @@ INDEX_HTML = r"""<!doctype html>
       });
       const payload = await response.json();
       if (!response.ok || !payload.ok) {
-        throw new Error(payload.error || '任务历史操作失败');
+        throw new Error(payload.error || ui('settings.history_action_failed', '任务历史操作失败'));
       }
       renderHistorySettingsSummary(payload);
       historyRecords = [];
@@ -7756,11 +8187,28 @@ INDEX_HTML = r"""<!doctype html>
           refreshUiLocales(true);
         });
       }
+      if (settingsBrandingOptions) {
+        settingsBrandingOptions.addEventListener('click', async event => {
+          const button = event.target.closest('[data-brand-logo]');
+          if (!button) {
+            return;
+          }
+          const nextLogo = normalizeBrandingChoice(button.dataset.brandLogo);
+          applyBrandingChoice(nextLogo);
+          try {
+            await saveSystemSettings(nextLogo);
+            setSettingsStatus(formatUi('settings.brand_saved', '已切换品牌图标：{name}。', { name: brandLogoLabel(nextLogo) }));
+          } catch (error) {
+            setSettingsStatus(error.message || ui('settings.system_save_failed', '系统设置保存失败'), true);
+          }
+        });
+      }
       if (settingsSave) {
         settingsSave.addEventListener('click', async () => {
           try {
             applyCacheDirSetting(settingsCacheDir ? settingsCacheDir.value : '', true);
             applyUiLocaleDirSetting(settingsUiLocaleDir ? settingsUiLocaleDir.value : '', true);
+            await saveSystemSettings(currentBrandLogo);
             await saveHistorySettings();
             setSettingsStatus(ui('settings.saved', '设置已保存。'));
             refreshUiLocales(true);
@@ -7774,7 +8222,7 @@ INDEX_HTML = r"""<!doctype html>
           try {
             await loadHistorySettings();
           } catch (error) {
-            setSettingsStatus(error.message || '任务历史设置读取失败', true);
+          setSettingsStatus(error.message || ui('settings.history_load_failed', '任务历史设置读取失败'), true);
           }
         });
       }
@@ -7784,9 +8232,9 @@ INDEX_HTML = r"""<!doctype html>
           try {
             const limit = Math.max(1, Math.min(5000, Number(settingsHistoryLimit?.value || 100) || 100));
             const payload = await mutateHistorySettings('trim', { limit });
-            setSettingsStatus(`已按上限裁剪历史，删除 ${Number(payload.removed || 0)} 条。`);
+            setSettingsStatus(formatUi('settings.history_trimmed', '已按上限裁剪历史，删除 {removed} 条。', { removed: Number(payload.removed || 0) }));
           } catch (error) {
-            setSettingsStatus(error.message || '任务历史裁剪失败', true);
+            setSettingsStatus(error.message || ui('settings.history_trim_failed', '任务历史裁剪失败'), true);
           } finally {
             settingsHistoryTrim.disabled = false;
           }
@@ -7796,7 +8244,7 @@ INDEX_HTML = r"""<!doctype html>
         settingsHistoryDelete.addEventListener('click', async () => {
           const jobIds = parseHistoryDeleteJobIds();
           if (!jobIds.length) {
-            setSettingsStatus('请先输入要删除的任务 ID。', true);
+            setSettingsStatus(ui('settings.history_delete_required', '请先输入要删除的任务 ID。'), true);
             return;
           }
           settingsHistoryDelete.disabled = true;
@@ -7805,9 +8253,9 @@ INDEX_HTML = r"""<!doctype html>
             if (settingsHistoryDeleteJobIds) {
               settingsHistoryDeleteJobIds.value = '';
             }
-            setSettingsStatus(`已删除 ${Number(payload.removed || 0)} 条历史记录。`);
+            setSettingsStatus(formatUi('settings.history_deleted', '已删除 {removed} 条历史记录。', { removed: Number(payload.removed || 0) }));
           } catch (error) {
-            setSettingsStatus(error.message || '任务历史删除失败', true);
+            setSettingsStatus(error.message || ui('settings.history_delete_failed', '任务历史删除失败'), true);
           } finally {
             settingsHistoryDelete.disabled = false;
           }
@@ -7821,9 +8269,9 @@ INDEX_HTML = r"""<!doctype html>
             if (settingsHistoryDeleteJobIds) {
               settingsHistoryDeleteJobIds.value = '';
             }
-            setSettingsStatus(`已清空任务历史，删除 ${Number(payload.removed || 0)} 条记录。`);
+            setSettingsStatus(formatUi('settings.history_cleared', '已清空任务历史，删除 {removed} 条记录。', { removed: Number(payload.removed || 0) }));
           } catch (error) {
-            setSettingsStatus(error.message || '任务历史清空失败', true);
+            setSettingsStatus(error.message || ui('settings.history_clear_failed', '任务历史清空失败'), true);
           } finally {
             settingsHistoryClear.disabled = false;
           }
@@ -7886,14 +8334,17 @@ INDEX_HTML = r"""<!doctype html>
               extra: payload.extra_count || 0,
               placeholders: payload.placeholder_mismatch_count || 0
             });
+            const docsText = payload.docs_count ? `，${formatUi('settings.ui_locale_docs_count', '包含 {count} 篇文档', { count: payload.docs_count })}` : '';
             if (settingsUiLocaleCheckSummary) {
-              settingsUiLocaleCheckSummary.textContent = `${payload.locale}: ${checkText}`;
+              settingsUiLocaleCheckSummary.textContent = `${payload.locale}: ${checkText}${docsText}`;
             }
             if (mode === 'check') {
-              setSettingsStatus(checkText, Boolean(payload.placeholder_mismatch_count));
+              setSettingsStatus(`${checkText}${docsText}`, Boolean(payload.placeholder_mismatch_count));
             } else {
-              setSettingsStatus(formatUi('settings.ui_locale_imported_checked', '已导入 {locale}。{check}', { locale: payload.locale, check: checkText }), Boolean(payload.placeholder_mismatch_count));
+              setSettingsStatus(formatUi('settings.ui_locale_imported_checked', '已导入 {locale}。{check}', { locale: payload.locale, check: `${checkText}${docsText}` }), Boolean(payload.placeholder_mismatch_count));
               await refreshUiLocales(true);
+              resetDocsLocaleCache();
+              refreshDocsForCurrentLocale();
             }
           } catch (error) {
             setSettingsStatus(error.message || (mode === 'check' ? ui('settings.ui_locale_check_failed', '语言包检查失败') : ui('settings.ui_locale_import_failed', '语言包导入失败')), true);
@@ -8490,7 +8941,7 @@ INDEX_HTML = r"""<!doctype html>
     function syncModelDisplay() {
       const value = String(model.value || '').trim();
       const option = modelOptions.find(item => item.id === value);
-      modelDisplay.textContent = option ? option.id : (value || '选择模型');
+      modelDisplay.textContent = option ? option.id : (value || ui('advanced.model_select', '选择模型'));
       updateModelMenuActive();
     }
 
@@ -8599,7 +9050,7 @@ INDEX_HTML = r"""<!doctype html>
 
     function syncModelPreset(value) {
       const presetModel = String(value || '').trim();
-      modelOptions = normalizeModelOptions(presetModel ? [{ id: presetModel, label: '默认模型' }] : []);
+      modelOptions = normalizeModelOptions(presetModel ? [{ id: presetModel, label: ui('advanced.default_model', '默认模型') }] : []);
       setModelValue(presetModel);
       updateModelMenu();
       setModelStatus('');
@@ -8642,7 +9093,7 @@ INDEX_HTML = r"""<!doctype html>
         return;
       }
       if (kind === 'error' && helpSlug) {
-        providerTestStatus.innerHTML = `<span>${escapeHtml(message || '')}</span><button type="button" class="secondary" data-provider-test-help data-doc-target="${escapeHtml(helpSlug)}"><i class="ri-book-open-line"></i><span>查看处理说明</span></button>`;
+      providerTestStatus.innerHTML = `<span>${escapeHtml(message || '')}</span><button type="button" class="secondary" data-provider-test-help data-doc-target="${escapeHtml(helpSlug)}"><i class="ri-book-open-line"></i><span>${escapeHtml(ui('docs.open_handling', '查看处理说明'))}</span></button>`;
       } else {
         providerTestStatus.textContent = message || '';
       }
@@ -8719,7 +9170,7 @@ INDEX_HTML = r"""<!doctype html>
       modelRefresh.disabled = true;
       modelRefresh.setAttribute('aria-busy', 'true');
       if (!silent) {
-        setModelStatus('正在获取模型列表...');
+      setModelStatus(ui('advanced.models_loading', '正在获取模型列表...'));
       }
       try {
         const response = await fetch('/api/models', {
@@ -8735,14 +9186,14 @@ INDEX_HTML = r"""<!doctype html>
         });
         const payload = await response.json();
         if (!response.ok || !payload.ok) {
-          throw new Error(payload.error || '获取模型列表失败');
+        throw new Error(payload.error || ui('advanced.models_load_failed', '获取模型列表失败'));
         }
         if (sequence !== modelFetchSequence) {
           return;
         }
         const options = normalizeModelOptions(payload.models);
         if (!options.length) {
-          throw new Error('接口没有返回可用模型');
+          throw new Error(ui('advanced.no_models_returned', '接口没有返回可用模型'));
         }
         modelOptions = options;
         if (!modelOptions.some(option => option.id === model.value)) {
@@ -8768,7 +9219,7 @@ INDEX_HTML = r"""<!doctype html>
       const preset = providerPresets[provider.value];
       const keyLink = document.getElementById('api-key-link');
       const providerTitle = document.querySelector('[data-i18n="advanced.api_title"]');
-      const providerHelpMessage = '当前走 GoogleTranslator -> MyMemoryTranslator 免费回退链；无需 API Key，也不生成项目级 API 调试日志。';
+      const providerHelpMessage = ui('provider.deep-free.debug_help', '当前走 GoogleTranslator -> MyMemoryTranslator 免费回退链；无需 API Key，也不生成项目级 API 调试日志。');
       const providerFieldVisibility = {
         model_field: !['deep-free', 'argos', 'azure-translator', 'libretranslate'].includes(provider.value),
         api_key: provider.value !== 'deep-free' && provider.value !== 'argos' && provider.value !== 'libretranslate',
@@ -8794,13 +9245,13 @@ INDEX_HTML = r"""<!doctype html>
       }
       apiBox.dataset.provider = provider.value || '';
       if (providerTitle) {
-        providerTitle.textContent = provider.value === 'deep-free' ? '免费翻译设置' : (provider.value === 'argos' ? '离线翻译设置' : 'AI 接口配置');
+        providerTitle.textContent = provider.value === 'deep-free' ? ui('advanced.free_title', '免费翻译设置') : (provider.value === 'argos' ? ui('advanced.offline_title', '离线翻译设置') : ui('advanced.api_title', 'AI 接口配置'));
       }
       providerBadge.textContent = ui(`provider.${provider.value}`, preset.label);
       providerHelp.textContent = provider.value === 'deep-free'
         ? providerHelpMessage
         : (provider.value === 'argos'
-          ? '本地离线翻译，需要预先安装 Argos Translate 和对应语言包；无需 API Key。'
+          ? ui('provider.argos.debug_help', '本地离线翻译，需要预先安装 Argos Translate 和对应语言包；无需 API Key。')
           : ui(`provider.${provider.value}.help`, preset.help));
       providerHelp.hidden = false;
       providerBadge.setAttribute('data-provider-help-active', provider.value === 'deep-free' ? 'true' : 'false');
@@ -8938,11 +9389,11 @@ INDEX_HTML = r"""<!doctype html>
         : ui('preflight.blocked', '预检发现阻断项，请修正后再开始生成。');
       if (preflightCallout) {
         const blockingCount = messages.filter(item => item.level === 'blocking').length;
-        const headline = payload.ok ? '步骤 4' : '预检阻断';
+        const headline = payload.ok ? ui('preflight.step4', '步骤 4') : ui('preflight.blocked_title', '预检阻断');
         const body = payload.ok
-          ? `预检已通过，可开始生成。待处理 ${summary.output_files || 0} 个预计输出，消息 ${messages.length} 条。`
-          : `预检发现 ${blockingCount} 条阻断消息，请先修正后再继续。`;
-        preflightCallout.innerHTML = `<strong>${escapeHtml(headline)}</strong><p>${escapeHtml(body)}</p><div class="doc-jump-row"><button type="button" class="secondary" id="preflight-doc-link" data-doc-target="preflight"><i class="ri-book-open-line"></i><span>查看预检说明</span></button></div>`;
+          ? formatUi('preflight.callout_passed', '预检已通过，可开始生成。待处理 {outputs} 个预计输出，消息 {messages} 条。', { outputs: summary.output_files || 0, messages: messages.length })
+          : formatUi('preflight.callout_blocked', '预检发现 {count} 条阻断消息，请先修正后再继续。', { count: blockingCount });
+        preflightCallout.innerHTML = `<strong>${escapeHtml(headline)}</strong><p>${escapeHtml(body)}</p><div class="doc-jump-row"><button type="button" class="secondary" id="preflight-doc-link" data-doc-target="preflight"><i class="ri-book-open-line"></i><span>${escapeHtml(ui('docs.open_preflight', '查看预检说明'))}</span></button></div>`;
         bindDocTriggers();
       }
       syncSubmitStateFromPreflight(payload);
@@ -8959,16 +9410,16 @@ INDEX_HTML = r"""<!doctype html>
       }
       if (payload.ok) {
         submit.disabled = false;
-        submit.innerHTML = `<i class="ri-rocket-2-line"></i><span>开始生成（已通过预检）</span>`;
+        submit.innerHTML = `<i class="ri-rocket-2-line"></i><span>${escapeHtml(ui('action.start_preflight_passed', '开始生成（已通过预检）'))}</span>`;
         return;
       }
       if (ignorePreflightBlockers()) {
         submit.disabled = false;
-        submit.innerHTML = `<i class="ri-alert-line"></i><span>忽略阻断并继续</span>`;
+        submit.innerHTML = `<i class="ri-alert-line"></i><span>${escapeHtml(ui('action.ignore_blockers_continue', '忽略阻断并继续'))}</span>`;
         return;
       }
       submit.disabled = true;
-      submit.innerHTML = `<i class="ri-close-circle-line"></i><span>存在阻断，需先处理</span>`;
+      submit.innerHTML = `<i class="ri-close-circle-line"></i><span>${escapeHtml(ui('action.blocked_need_fix', '存在阻断，需先处理'))}</span>`;
     }
 
     function renderProviderRiskBanner() {
@@ -8979,7 +9430,7 @@ INDEX_HTML = r"""<!doctype html>
         title: '当前翻译器',
         body: '请根据当前任务规模和稳定性要求选择合适的翻译方案。',
       };
-      providerRiskBanner.innerHTML = `<strong>${escapeHtml(meta.title)}</strong><p>${escapeHtml(meta.body)}</p><div class="doc-jump-row"><button type="button" class="secondary" data-doc-target="providers"><i class="ri-book-open-line"></i><span>查看翻译器说明</span></button></div>`;
+      providerRiskBanner.innerHTML = `<strong>${escapeHtml(meta.title)}</strong><p>${escapeHtml(meta.body)}</p><div class="doc-jump-row"><button type="button" class="secondary" data-doc-target="providers"><i class="ri-book-open-line"></i><span>${escapeHtml(ui('docs.open_provider', '查看翻译器说明'))}</span></button></div>`;
       bindDocTriggers();
     }
 
@@ -9040,8 +9491,8 @@ INDEX_HTML = r"""<!doctype html>
       }
       const visible = apiKey.type === 'text';
       apiKeyToggle.setAttribute('aria-pressed', visible ? 'true' : 'false');
-      apiKeyToggle.setAttribute('aria-label', visible ? '隐藏 API Key' : '查看 API Key');
-      apiKeyToggle.title = visible ? '隐藏 API Key' : '查看 API Key';
+      apiKeyToggle.setAttribute('aria-label', visible ? ui('advanced.api_key_hide', '隐藏 API Key') : ui('advanced.api_key_reveal', '查看 API Key'));
+      apiKeyToggle.title = visible ? ui('advanced.api_key_hide', '隐藏 API Key') : ui('advanced.api_key_reveal', '查看 API Key');
       const icon = apiKeyToggle.querySelector('i');
       if (icon) {
         icon.className = visible ? 'ri-eye-off-line' : 'ri-eye-line';
@@ -9267,7 +9718,7 @@ INDEX_HTML = r"""<!doctype html>
         resultShells.forEach(shell => {
           shell.classList.toggle('active', shell.dataset.resultView === resultState.resultView);
         });
-      } else if (resultState.payload) {
+      } else if (isCurrentResultPayload()) {
         renderResultShell();
       }
     }
@@ -9301,19 +9752,25 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     async function loadDocsIndex() {
-      if (docsIndex.length) {
+      const queryKey = docsLocaleQuery();
+      if (docsIndex.length && docsIndexCacheKey === queryKey) {
         renderDocsList(docsSearch.value);
         if (helpPanel && !helpPanel.hidden) {
           renderHelpTopics();
         }
         return;
       }
-      const response = await fetch('/api/docs');
+      const requestToken = ++docsIndexLoadToken;
+      const response = await fetch(`/api/docs${queryKey}`);
       const payload = await response.json();
       if (!response.ok || !payload.ok) {
-        throw new Error(payload.error || '文档读取失败');
+        throw new Error(payload.error || ui('docs.load_failed', '文档读取失败'));
+      }
+      if (requestToken !== docsIndexLoadToken || queryKey !== docsLocaleQuery()) {
+        return;
       }
       docsIndex = Array.isArray(payload.docs) ? payload.docs : [];
+      docsIndexCacheKey = queryKey;
       renderDocsList(docsSearch.value);
       if (docsIndex.length && !activeDocSlug) {
         await loadDocDetail(docsIndex[0].slug);
@@ -9324,14 +9781,22 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function docCategoryLabel(category) {
-      const labels = {
-        start: '快速上手',
-        providers: '翻译器',
-        workflow: '工作流',
-        operations: '结果与运维',
-        support: '常见问题',
+      const key = {
+        start: 'docs.category.start',
+        providers: 'docs.category.providers',
+        workflow: 'docs.category.workflow',
+        operations: 'docs.category.operations',
+        support: 'docs.category.support',
+      }[String(category || '').trim()] || 'docs.category.default';
+      const fallback = {
+        'docs.category.start': '快速上手',
+        'docs.category.providers': '翻译器',
+        'docs.category.workflow': '工作流',
+        'docs.category.operations': '结果与运维',
+        'docs.category.support': '常见问题',
+        'docs.category.default': '帮助文档',
       };
-      return labels[String(category || '').trim()] || '帮助文档';
+      return ui(key, fallback[key]);
     }
 
     function appliesToLabel(value) {
@@ -9340,23 +9805,23 @@ INDEX_HTML = r"""<!doctype html>
         return '';
       }
       const direct = {
-        workspace: '工作区',
-        history: '任务历史',
-        report: '翻译报告',
-        'api-log': 'API 日志',
-        settings: '设置',
-        hardcoded: '硬编码',
-        'feature:preflight': '预检',
-        'feature:output-policy': '输出策略',
-        'feature:translation-memory': '翻译记忆',
-        'feature:hardcoded-scan': '硬编码扫描',
+        workspace: ['docs.applies.workspace', '工作区'],
+        history: ['docs.applies.history', '任务历史'],
+        report: ['docs.applies.report', '翻译报告'],
+        'api-log': ['docs.applies.api_log', 'API 日志'],
+        settings: ['docs.applies.settings', '设置'],
+        hardcoded: ['docs.applies.hardcoded', '硬编码'],
+        'feature:preflight': ['docs.applies.preflight', '预检'],
+        'feature:output-policy': ['docs.applies.output_policy', '输出策略'],
+        'feature:translation-memory': ['docs.applies.translation_memory', '翻译记忆'],
+        'feature:hardcoded-scan': ['docs.applies.hardcoded_scan', '硬编码扫描'],
       };
       if (direct[text]) {
-        return direct[text];
+        return ui(direct[text][0], direct[text][1]);
       }
       if (text.startsWith('provider:')) {
         const providerValue = text.slice('provider:'.length);
-        return `翻译器 · ${ui(`provider.${providerValue}`, providerValue)}`;
+        return formatUi('docs.applies.provider', '翻译器 · {provider}', { provider: ui(`provider.${providerValue}`, providerValue) });
       }
       return text;
     }
@@ -9388,7 +9853,7 @@ INDEX_HTML = r"""<!doctype html>
           <strong>${escapeHtml(item.title || item.slug)}</strong>
           <span>${escapeHtml(item.summary || '')}</span>
         </button>
-      `).join('') || `<div class="empty">暂无匹配文档。</div>`;
+      `).join('') || `<div class="empty">${escapeHtml(ui('docs.empty', '暂无匹配文档。'))}</div>`;
       docsList.querySelectorAll('[data-doc-slug]').forEach(button => {
         button.addEventListener('click', () => loadDocDetail(button.dataset.docSlug));
       });
@@ -9405,7 +9870,7 @@ INDEX_HTML = r"""<!doctype html>
       (Array.isArray(payload?.applies_to) ? payload.applies_to.slice(0, 4) : []).forEach(value => {
         chips.push(`<span class="docs-chip"><i class="ri-focus-3-line"></i><span>${escapeHtml(appliesToLabel(value))}</span></span>`);
       });
-      docsMeta.innerHTML = chips.join('') || `<span class="docs-chip"><i class="ri-book-open-line"></i><span>内置文档</span></span>`;
+      docsMeta.innerHTML = chips.join('') || `<span class="docs-chip"><i class="ri-book-open-line"></i><span>${escapeHtml(ui('docs.builtin', '内置文档'))}</span></span>`;
     }
 
     function renderRelatedDocs(relatedTopics = []) {
@@ -9417,23 +9882,20 @@ INDEX_HTML = r"""<!doctype html>
         .filter(Boolean);
       docsRelated.innerHTML = rows.length
         ? rows.map(item => `<button type="button" class="docs-chip" data-related-doc="${escapeHtml(item.slug)}"><i class="ri-links-line"></i><span>${escapeHtml(item.title)}</span></button>`).join('')
-        : `<span class="docs-chip"><i class="ri-information-line"></i><span>当前文档没有额外关联主题</span></span>`;
+        : `<span class="docs-chip"><i class="ri-information-line"></i><span>${escapeHtml(ui('docs.no_related', '当前文档没有额外关联主题'))}</span></span>`;
       docsRelated.querySelectorAll('[data-related-doc]').forEach(button => {
         button.addEventListener('click', () => loadDocDetail(button.dataset.relatedDoc));
       });
     }
 
     async function loadDocDetail(slug) {
-      const cacheKey = String(slug || '').trim();
+      const cacheKey = `${docsLocaleQuery()}:${String(slug || '').trim()}`;
       let payload = cacheKey ? docDetailCache.get(cacheKey) : null;
       if (!payload) {
-        const response = await fetch(`/api/docs/${encodeURIComponent(slug)}`);
+        const response = await fetch(`/api/docs/${encodeURIComponent(slug)}${docsLocaleQuery()}`);
         payload = await response.json();
         if (!response.ok || !payload.ok) {
-          throw new Error(payload.error || '文档读取失败');
-        }
-        if (payload?.slug) {
-          docDetailCache.set(payload.slug, payload);
+          throw new Error(payload.error || ui('docs.load_failed', '文档读取失败'));
         }
         if (cacheKey) {
           docDetailCache.set(cacheKey, payload);
@@ -9454,7 +9916,7 @@ INDEX_HTML = r"""<!doctype html>
             if (nextSlug) {
               openDocView(nextSlug).catch(error => {
                 statusBox.className = 'status error';
-                statusBox.textContent = error.message || '文档读取失败';
+                statusBox.textContent = error.message || ui('docs.load_failed', '文档读取失败');
               });
             }
           });
@@ -9471,55 +9933,17 @@ INDEX_HTML = r"""<!doctype html>
       activeHelpSlug = slug || 'quick-start';
       const item = findDocBySlug(slug) || docsIndex[0];
       if (!item) {
-        helpDocPreview.innerHTML = `<div class="empty">暂无帮助预览。</div>`;
+        helpDocPreview.innerHTML = `<div class="empty">${escapeHtml(ui('help.preview_empty', '暂无帮助预览。'))}</div>`;
         return;
       }
-      const issueHints = {
-        'quick-start': {
-          summary: '适合第一次跑流程、刚打开工具还不知道从哪里开始时查看。',
-          causes: ['还没区分输入类型和输出目标。', '没有先跑预检，不清楚当前配置是否可处理。', '想先验证流程是否通，但还没选定长期使用的翻译器。'],
-          next: ['先选一个最容易成功的输入样本。', '优先跑一次预检，确认没有阻断项。', '如果只是验证流程，可先用 glossary 或 deep-free 试跑。'],
-        },
-        'providers': {
-          summary: '适合 API 配置太多、不确定该用哪种翻译器、或者连接测试反复失败时查看。',
-          causes: ['不知道本地离线、免费源、自托管和商业 API 的差别。', '把 BaseURL、Region、API Key 或模型接口混用了。', '想要稳定性，但当前选择的 provider 不适合这个场景。'],
-          next: ['先判断你是要本地离线、零配置试跑，还是正式生产使用。', '如果只是先跑通，优先选最少配置的 provider。', '需要更完整说明时再打开完整文档看逐项对比。'],
-        },
-        'output-strategy': {
-          summary: '适合结果看起来不符合预期，但你还不确定是缓存、跳过策略还是硬编码扫描导致时查看。',
-          causes: ['不清楚覆盖、跳过、缓存和翻译记忆的生效顺序。', '把资源包文本和硬编码文本当成同一类输出。', '对“为什么没有变化”只有结果感受，没有定位方向。'],
-          next: ['先确认这次处理的文本到底属于资源包还是硬编码。', '再看是否开启了缓存或翻译记忆复用。', '如果仍然拿不准，再进入完整文档查看输出策略说明。'],
-        },
-        'preflight': {
-          summary: '适合预检阻断、警告太多或不清楚为什么不能继续生成时查看。',
-          causes: ['输入格式不完整，缺少必要文件或目录。', '当前 provider 配置缺少关键参数。', '把警告当成阻断，或把阻断当成可忽略提示。'],
-          next: ['先看预检消息里是否明确标注 blocker。', '优先修阻断项，再决定要不要处理警告。', '如果消息看不懂，再打开完整文档对照预检规则。'],
-        },
-        'translation-memory': {
-          summary: '适合你觉得“结果没变化”“像是用了旧结果”时查看。',
-          causes: ['缓存和翻译记忆命中了之前的结果。', '配置 scope 没变化，系统判断可以复用。', '误以为重新运行就一定会绕过历史结果。'],
-          next: ['先确认这次任务是否复用了同一份缓存目录。', '再检查是否开启了翻译记忆。', '如果要强制看新结果，再进入完整文档按说明调整策略。'],
-        },
-        'history-and-report': {
-          summary: '适合任务跑完了，但你找不到下载、报告或错误定位入口时查看。',
-          causes: ['不知道任务历史、翻译报告和 API 日志的分工。', '历史文件已被移动或清理。', '只看最终结果，没有回到任务记录定位失败点。'],
-          next: ['先去任务历史确认本次任务是否真的成功产出。', '再从报告或 API 日志判断失败集中在哪一层。', '需要更细的处理方法时再打开完整文档。'],
-        },
-        'hardcoded': {
-          summary: '适合你发现游戏里还有英文，但资源包里看不到对应文本时查看。',
-          causes: ['文本根本不在语言文件里，而是写死在代码或脚本中。', '误以为资源包可以覆盖所有游戏内文字。', '还没区分“扫描到”与“已经能自动替换”的差别。'],
-          next: ['先确认这些文本是否属于硬编码扫描范围。', '再决定是否要导出 hardcoded 映射。', '需要补丁路线时再进入完整文档看完整说明。'],
-        },
-        'faq': {
-          summary: '适合问题比较分散，暂时判断不出该看哪篇文档时先做归类。',
-          causes: ['遇到的是高频通用问题，但还没定位到具体模块。', '多个现象叠在一起，不确定先看连接、输出还是历史。', '只知道“哪里不对”，还没有把问题描述压缩成一个场景。'],
-          next: ['先从最接近的高频症状开始归类。', '如果预览里的原因和你情况接近，再进入对应完整文档。', '如果都不匹配，再回到 FAQ 集中排查。'],
-        },
-      };
-      const issue = issueHints[item.slug] || {
-        summary: item.summary || '先在这里快速判断问题归属，再决定是否进入完整文档。',
-        causes: ['当前场景通常和输入类型、provider 配置或输出策略有关。'],
-        next: ['先根据预览信息缩小问题范围，再决定是否阅读完整文档。'],
+      const issueSlug = String(item.slug || '').replace(/-/g, '_');
+      const localizedList = (prefix, fallback) => [1, 2, 3]
+        .map(index => ui(`${prefix}_${index}`, index === 1 ? fallback : ''))
+        .filter(value => value && !value.endsWith('_2') && !value.endsWith('_3'));
+      const issue = {
+        summary: ui(`help.issue.${issueSlug}.summary`, item.summary || ui('help.default_summary', '先在这里快速判断问题归属，再决定是否进入完整文档。')),
+        causes: localizedList(`help.issue.${issueSlug}.cause`, ui('help.default_cause', '当前场景通常和输入类型、provider 配置或输出策略有关。')),
+        next: localizedList(`help.issue.${issueSlug}.next`, ui('help.default_next', '先根据预览信息缩小问题范围，再决定是否阅读完整文档。')),
       };
       const applies = (Array.isArray(item.applies_to) ? item.applies_to.slice(0, 3) : [])
         .map(value => `<span class="docs-chip"><i class="ri-focus-3-line"></i><span>${escapeHtml(appliesToLabel(value))}</span></span>`)
@@ -9537,19 +9961,19 @@ INDEX_HTML = r"""<!doctype html>
           <p class="help-preview-summary">${escapeHtml(issue.summary)}</p>
           <div class="docs-meta">${applies || `<span class="docs-chip"><i class="ri-book-open-line"></i><span>${escapeHtml(docCategoryLabel(item.category))}</span></span>`}</div>
           <div class="help-preview-section">
-            <strong>常见原因</strong>
+            <strong>${escapeHtml(ui('help.common_causes', '常见原因'))}</strong>
             <ul class="help-preview-checklist">${issue.causes.map(text => `<li>${escapeHtml(text)}</li>`).join('')}</ul>
           </div>
           <div class="help-preview-section">
-            <strong>下一步</strong>
+            <strong>${escapeHtml(ui('help.next_steps', '下一步'))}</strong>
             <ul class="help-preview-checklist">${issue.next.map(text => `<li>${escapeHtml(text)}</li>`).join('')}</ul>
           </div>
           <div class="help-preview-actions compact">
-            <button type="button" class="secondary" data-help-open="${escapeHtml(item.slug)}"><i class="ri-book-open-line"></i><span>打开完整文档</span></button>
+            <button type="button" class="secondary" data-help-open="${escapeHtml(item.slug)}"><i class="ri-book-open-line"></i><span>${escapeHtml(ui('help.open_full_doc', '打开完整文档'))}</span></button>
           </div>
           <div class="docs-related-block">
-            <strong>相关主题</strong>
-            <div class="docs-related">${related || `<span class="docs-chip"><i class="ri-information-line"></i><span>暂无更多推荐</span></span>`}</div>
+            <strong>${escapeHtml(ui('docs.related_topics', '相关主题'))}</strong>
+            <div class="docs-related">${related || `<span class="docs-chip"><i class="ri-information-line"></i><span>${escapeHtml(ui('help.no_recommendations', '暂无更多推荐'))}</span></span>`}</div>
           </div>
         </div>
       `;
@@ -9565,25 +9989,38 @@ INDEX_HTML = r"""<!doctype html>
       });
     }
 
+    function preferredHelpTopicItems() {
+      const preferredSlugs = [
+        'quick-start',
+        'providers',
+        'output-strategy',
+        'preflight',
+        'translation-memory',
+        'history-and-report',
+        'hardcoded',
+        'faq'
+      ];
+      const preferred = docsIndex.filter(item => preferredSlugs.includes(item.slug))
+        .sort((left, right) => preferredSlugs.indexOf(left.slug) - preferredSlugs.indexOf(right.slug));
+      const remaining = docsIndex.filter(item => !preferredSlugs.includes(item.slug));
+      return [...preferred, ...remaining];
+    }
+
     function renderHelpTopics() {
       if (!helpTopics) {
         return;
       }
-      const topics = [
-        { title: '第一次使用', summary: '先看快速开始，按最小流程跑通。', slug: 'quick-start' },
-        { title: '我不知道选哪个翻译器', summary: '对比 glossary、deep-free、Argos、Azure 和 AI 接口。', slug: 'providers' },
-        { title: '我看不懂输出策略', summary: '理解缓存、翻译记忆和硬编码扫描等选项。', slug: 'output-strategy' },
-        { title: '预检为什么阻断', summary: '先理解预检、阻断和警告分别代表什么。', slug: 'preflight' },
-        { title: '为什么结果没变化', summary: '先检查缓存、翻译记忆和当前配置 scope。', slug: 'translation-memory' },
-        { title: '历史任务和报告怎么看', summary: '找回下载、报告和 API 日志，判断是否需要重试。', slug: 'history-and-report' },
-        { title: '硬编码英文为什么没进资源包', summary: '确认是否属于资源包外文本，以及后续补丁路线。', slug: 'hardcoded' },
-        { title: '常见问题', summary: '集中查看连接失败、结果缺失和文件不存在的常见原因。', slug: 'faq' },
-      ];
-      helpTopics.innerHTML = topics.map(item => `
+      const items = preferredHelpTopicItems();
+      if (!items.length) {
+        helpTopics.innerHTML = `<div class="empty">${escapeHtml(ui('docs.empty', '暂无匹配文档。'))}</div>`;
+        renderHelpPreview('');
+        return;
+      }
+      helpTopics.innerHTML = items.map(item => `
         <button type="button" class="secondary docs-link help-topic-link ${item.slug === activeHelpSlug ? 'active' : ''}" data-help-doc="${escapeHtml(item.slug)}">
           <span class="help-topic-category">${escapeHtml(docCategoryLabel(findDocBySlug(item.slug)?.category || ''))}</span>
-          <strong>${escapeHtml(item.title)}</strong>
-          <span>${escapeHtml(item.summary)}</span>
+          <strong>${escapeHtml(item.title || item.slug)}</strong>
+          <span>${escapeHtml(item.summary || '')}</span>
         </button>
       `).join('');
       helpTopics.querySelectorAll('[data-help-doc]').forEach(button => {
@@ -9593,7 +10030,7 @@ INDEX_HTML = r"""<!doctype html>
           renderHelpPreview(activeHelpSlug);
         });
       });
-      renderHelpPreview(activeHelpSlug || topics[0]?.slug || 'quick-start');
+      renderHelpPreview(activeHelpSlug || items[0]?.slug || 'quick-start');
     }
     function bindDocTriggers() {
       document.querySelectorAll('[data-doc-target]').forEach(button => {
@@ -9608,7 +10045,7 @@ INDEX_HTML = r"""<!doctype html>
           }
           openDocView(slug).catch(error => {
             statusBox.className = 'status error';
-            statusBox.textContent = error.message || '文档读取失败';
+      statusBox.textContent = error.message || ui('docs.load_failed', '文档读取失败');
           });
         });
       });
@@ -9676,7 +10113,7 @@ INDEX_HTML = r"""<!doctype html>
       if (!rows.length) {
         historyList.innerHTML = `<div class="empty">${escapeHtml(ui('history.empty', '没有匹配的历史任务。'))}</div>`;
         if (historyDetail) {
-          historyDetail.innerHTML = `<div class="empty">没有可查看的任务详情。</div>`;
+          historyDetail.innerHTML = `<div class="empty">${escapeHtml(ui('history.no_detail', '没有可查看的任务详情。'))}</div>`;
         }
         return;
       }
@@ -9719,7 +10156,7 @@ INDEX_HTML = r"""<!doctype html>
           </span>
           <span class="history-task-foot">
             <span class="history-task-meta">${escapeHtml(historyKindLabel(record.input_kind))}</span>
-            <span class="history-task-meta">${escapeHtml(record.provider || 'provider 未记录')}</span>
+            <span class="history-task-meta">${escapeHtml(record.provider || ui('history.provider_missing', 'provider 未记录'))}</span>
           </span>
         </button>
       `;
@@ -9731,7 +10168,7 @@ INDEX_HTML = r"""<!doctype html>
         return;
       }
       if (!record) {
-        historyDetail.innerHTML = `<div class="empty">选择一条历史任务查看详情。</div>`;
+        historyDetail.innerHTML = `<div class="empty">${escapeHtml(ui('history.select_detail', '选择一条历史任务查看详情。'))}</div>`;
         if (headActions) headActions.innerHTML = '';
         return;
       }
@@ -9740,8 +10177,8 @@ INDEX_HTML = r"""<!doctype html>
       const progress = historyProgress(record);
       if (headActions) {
         headActions.innerHTML = `
-          ${firstDownload ? `<a class="primary" href="${escapeHtml(firstDownload.url)}" target="_blank" rel="noopener"><i class="ri-download-cloud-2-line"></i><span>下载主要产物</span></a>` : ''}
-          <button type="button" data-doc-target="history-and-report"><i class="ri-book-open-line"></i><span>查看说明</span></button>
+          ${firstDownload ? `<a class="primary" href="${escapeHtml(firstDownload.url)}" target="_blank" rel="noopener"><i class="ri-download-cloud-2-line"></i><span>${escapeHtml(ui('history.open_primary', '下载主要产物'))}</span></a>` : ''}
+          <button type="button" data-doc-target="history-and-report"><i class="ri-book-open-line"></i><span>${escapeHtml(ui('history.open_help', '查看说明'))}</span></button>
         `;
       }
       historyDetail.innerHTML = `
@@ -9752,12 +10189,14 @@ INDEX_HTML = r"""<!doctype html>
         <div class="history-detail-grid">
           ${renderHistoryMetric('ri-robot-2-line', ui('result.provider', 'Provider'), record.provider || '-')}
           ${renderHistoryMetric('ri-bar-chart-2-line', ui('history.counts', '成功/失败'), `${Number(record.success_count || 0)} / ${Number(record.failure_count || 0)}`)}
-          ${renderHistoryMetric('ri-stack-line', '处理进度', progress.label)}
+          ${renderHistoryMetric('ri-stack-line', ui('history.progress', '处理进度'), progress.label)}
         </div>
-        ${record.error ? `<div class="history-error-note"><strong>错误信息</strong><span>${escapeHtml(record.error)}</span></div>` : ''}
+        ${record.error ? `<div class="history-error-note"><strong>${escapeHtml(ui('history.error_message', '错误信息'))}</strong><span>${escapeHtml(record.error)}</span></div>` : ''}
         <div class="history-artifacts">
-          <div class="history-artifacts-head"><strong>Reports & Artifacts</strong><span>${escapeHtml(formatUi('history.count', '共 {count} 条', { count: downloads.length }))}</span></div>
-          ${downloads.length ? downloads.map(renderHistoryArtifact).join('') : `<div class="empty">${escapeHtml(ui('history.no_downloads', '无可用下载'))}</div>`}
+          <div class="history-artifacts-head"><strong>${escapeHtml(ui('history.artifacts', '报告与产物'))}</strong><span>${escapeHtml(formatUi('history.count', '共 {count} 条', { count: downloads.length }))}</span></div>
+          <div class="history-artifacts-list">
+            ${downloads.length ? downloads.map(renderHistoryArtifact).join('') : `<div class="empty">${escapeHtml(ui('history.no_downloads', '无可用下载'))}</div>`}
+          </div>
         </div>
       `;
       bindDocTriggers();
@@ -9782,7 +10221,7 @@ INDEX_HTML = r"""<!doctype html>
           </span>
           <span class="history-artifact-actions">
             ${item.available
-              ? `<a href="${escapeHtml(item.url)}" target="_blank" rel="noopener"><i class="ri-download-line"></i><span>打开</span></a>`
+              ? `<a href="${escapeHtml(item.url)}" target="_blank" rel="noopener"><i class="ri-download-line"></i><span>${escapeHtml(ui('history.open_artifact', '打开'))}</span></a>`
               : `<span class="history-download-missing" title="${escapeHtml(ui('history.file_missing', '文件已不存在'))}">${escapeHtml(ui('history.file_missing', '文件已不存在'))}</span>`}
           </span>
         </div>
@@ -9880,10 +10319,10 @@ INDEX_HTML = r"""<!doctype html>
       const failed = rows.filter(record => historyEffectiveStatus(record) === 'error').length;
       const generated = rows.reduce((sum, record) => sum + Number(record.generated_files || 0), 0);
       const cards = [
-        ['任务总数', total, ''],
-        ['已完成', done, 'success'],
-        ['失败', failed, 'danger'],
-        ['生成文件', generated, 'warning'],
+        [ui('history.stats.total', '任务总数'), total, ''],
+        [ui('history.stats.done', '已完成'), done, 'success'],
+        [ui('history.stats.failed', '失败'), failed, 'danger'],
+        [ui('history.stats.generated', '生成文件'), generated, 'warning'],
       ];
       return cards.map(([label, value, tone]) => `
         <div class="history-stat" data-tone="${escapeHtml(tone)}">
@@ -10069,6 +10508,38 @@ INDEX_HTML = r"""<!doctype html>
       return Boolean(shell && menu && shell.classList.contains('open') && !menu.hidden && !menu.classList.contains('is-closing'));
     }
 
+    let floatingMenuSyncFrame = 0;
+
+    function floatingMenuShellFor(menu) {
+      if (!menu) {
+        return null;
+      }
+      return menu.closest('.ghost-select.open, .theme-picker.open');
+    }
+
+    function syncFloatingMenus() {
+      floatingMenuSyncFrame = 0;
+      document.querySelectorAll('.ghost-menu.is-floating, .theme-menu.is-floating').forEach(menu => {
+        const shell = floatingMenuShellFor(menu);
+        if (!isMenuOpen(shell, menu)) {
+          return;
+        }
+        positionFloatingMenu(shell, menu, menu._floatingTrigger);
+      });
+    }
+
+    function scheduleFloatingMenuSync() {
+      if (floatingMenuSyncFrame) {
+        return;
+      }
+      floatingMenuSyncFrame = window.requestAnimationFrame(syncFloatingMenus);
+    }
+
+    function desktopZoomScale() {
+      const raw = Number(document.documentElement.dataset.desktopZoom || '1');
+      return Number.isFinite(raw) && raw > 0 ? raw : 1;
+    }
+
     function scheduleMenuHide(shell, menu, trigger) {
       if (!shell || !menu) {
         return;
@@ -10092,6 +10563,7 @@ INDEX_HTML = r"""<!doctype html>
         menu.style.removeProperty('max-width');
         menu.style.removeProperty('max-height');
         menu.style.removeProperty('z-index');
+        menu._floatingTrigger = null;
         menu._hideTimer = 0;
       }, 180);
     }
@@ -10102,21 +10574,27 @@ INDEX_HTML = r"""<!doctype html>
       }
       const anchor = trigger || shell.querySelector('[data-select-trigger]') || shell.querySelector('[data-model-trigger]') || shell;
       const rect = anchor.getBoundingClientRect();
+      const cssZoom = desktopZoomScale();
       const gutter = 12;
-      const viewportWidth = window.innerWidth || document.documentElement.clientWidth || 1024;
-      const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 768;
-      const naturalWidth = Math.ceil(menu.getBoundingClientRect().width || rect.width || 0);
-      const desiredWidth = Math.max(rect.width, Math.min(Math.max(naturalWidth, 360), viewportWidth - gutter * 2));
+      const viewportWidth = (window.innerWidth || document.documentElement.clientWidth || 1024) / cssZoom;
+      const viewportHeight = (window.innerHeight || document.documentElement.clientHeight || 768) / cssZoom;
+      const anchorLeft = rect.left / cssZoom;
+      const anchorTop = rect.top / cssZoom;
+      const anchorBottom = rect.bottom / cssZoom;
+      const anchorWidth = rect.width / cssZoom;
+      const naturalWidth = Math.ceil((menu.getBoundingClientRect().width || rect.width || 0) / cssZoom);
+      const desiredWidth = Math.max(anchorWidth, Math.min(Math.max(naturalWidth, 360), viewportWidth - gutter * 2));
       const width = Math.min(desiredWidth, viewportWidth - gutter * 2);
-      const left = Math.max(gutter, Math.min(rect.left, viewportWidth - width - gutter));
-      const belowTop = rect.bottom + 6;
-      const aboveSpace = Math.max(0, rect.top - gutter - 6);
+      const left = Math.max(gutter, Math.min(anchorLeft, viewportWidth - width - gutter));
+      const belowTop = anchorBottom + 6;
+      const aboveSpace = Math.max(0, anchorTop - gutter - 6);
       const belowSpace = Math.max(0, viewportHeight - belowTop - gutter);
       const openAbove = belowSpace < 180 && aboveSpace > belowSpace;
       const maxHeight = Math.max(96, Math.min(320, openAbove ? aboveSpace : belowSpace));
       const top = openAbove
-        ? Math.max(gutter, rect.top - 6 - maxHeight)
+        ? Math.max(gutter, anchorTop - 6 - maxHeight)
         : Math.max(gutter, Math.min(belowTop, viewportHeight - 64));
+      menu._floatingTrigger = anchor;
       menu.classList.add('is-floating');
       menu.style.position = 'fixed';
       menu.style.left = `${Math.round(left)}px`;
@@ -10142,6 +10620,9 @@ INDEX_HTML = r"""<!doctype html>
         trigger.setAttribute('aria-expanded', 'true');
       }
     }
+
+    window.addEventListener('scroll', scheduleFloatingMenuSync, true);
+    window.addEventListener('resize', scheduleFloatingMenuSync);
 
     function bindSelectMenu(shell, menu, select, onChange) {
       const trigger = shell.querySelector('[data-select-trigger]');
@@ -10287,7 +10768,8 @@ INDEX_HTML = r"""<!doctype html>
       statusBox.className = 'status';
       statusBox.textContent = t('status.uploading');
       submit.disabled = true;
-      submit.innerHTML = `<i class="ri-loader-4-line"></i><span>正在提交任务...</span>`;
+      submit.innerHTML = `<i class="ri-loader-4-line"></i><span>${escapeHtml(ui('status.submitting', '正在提交任务...'))}</span>`;
+      clearCurrentResultForNewJob();
       startLoading();
       job.textContent = '';
       activeJobId = '';
@@ -10558,6 +11040,9 @@ INDEX_HTML = r"""<!doctype html>
     }
 
     function renderResult(payload) {
+      if (activeJobId && payload?.job_id && payload.job_id !== activeJobId) {
+        return;
+      }
       resultState.payload = payload;
       resultState.activeTab = 'language';
       resultState.languageSearch = '';
@@ -10585,7 +11070,7 @@ INDEX_HTML = r"""<!doctype html>
 
     function renderResultShell() {
       const payload = resultState.payload;
-      if (!payload) {
+      if (!isCurrentResultPayload(payload)) {
         return;
       }
       job.textContent = payload.job_id;
@@ -11381,7 +11866,7 @@ INDEX_HTML = r"""<!doctype html>
       try {
         const response = await fetch(packUrl);
         if (!response.ok) {
-          throw new Error('资源包下载失败');
+          throw new Error(ui('pack_dialog.download_failed', '资源包下载失败'));
         }
         const blob = await response.blob();
         const objectUrl = URL.createObjectURL(blob);
@@ -11394,7 +11879,7 @@ INDEX_HTML = r"""<!doctype html>
         URL.revokeObjectURL(objectUrl);
       } catch (error) {
         statusBox.className = 'status error';
-        statusBox.textContent = error.message || '资源包下载失败';
+        statusBox.textContent = error.message || ui('pack_dialog.download_failed', '资源包下载失败');
       } finally {
         button.disabled = false;
       }
@@ -11444,9 +11929,9 @@ INDEX_HTML = r"""<!doctype html>
         const note = document.createElement('div');
         note.className = 'pack-name-note';
         const noteTitle = document.createElement('strong');
-        noteTitle.textContent = '任何翻译结果最好都由人工审核一遍哦';
+        noteTitle.textContent = ui('pack_dialog.review_title', '任何翻译结果最好都由人工审核一遍哦');
         const noteBody = document.createElement('span');
-        noteBody.textContent = '自动翻译适合提速，但发布前最好快速过一遍关键信息、专有名词和占位符。';
+        noteBody.textContent = ui('pack_dialog.review_body', '自动翻译适合提速，但发布前最好快速过一遍关键信息、专有名词和占位符。');
         note.append(noteTitle, noteBody);
 
         const actions = document.createElement('div');
@@ -11635,7 +12120,7 @@ INDEX_HTML = r"""<!doctype html>
         <div class="view-frame">
           <div class="view-head">
             <div><strong>${escapeHtml(ui('result.report', '翻译报告'))}</strong><div class="muted">${escapeHtml(ui('result.report_subtitle', '当前任务内嵌报告视图'))}</div></div>
-            <div class="toolbar"><button type="button" class="secondary" id="report-doc-link" data-doc-target="history-and-report"><i class="ri-book-open-line"></i><span>查看报告说明</span></button></div>
+            <div class="toolbar"><button type="button" class="secondary" id="report-doc-link" data-doc-target="history-and-report"><i class="ri-book-open-line"></i><span>${escapeHtml(ui('docs.open_report', '查看报告说明'))}</span></button></div>
           </div>
           <div class="view-body">
             <div class="toolbar">
@@ -11752,7 +12237,7 @@ INDEX_HTML = r"""<!doctype html>
       if (!apiLogLines.length) {
         const payload = resultState.payload || {};
         const emptyMessage = payload.provider === 'deep-free'
-          ? '当前翻译器通过 deep-translator 调用第三方免费引擎，项目内不会生成标准 API 调试日志。'
+          ? ui('result.api_log_deep_free_empty', '当前翻译器通过 deep-translator 调用第三方免费引擎，项目内不会生成标准 API 调试日志。')
           : (payload.cache_hits && !payload.cache_misses
           ? ui('result.api_log_cached', '本次结果全部来自缓存，未实际发起 API 请求，所以这里没有调试日志。')
           : ui('result.api_log_empty', '没有 API 调试日志。勾选“记录 API 调试日志”后，实际发起 API 请求时会在这里显示。'));
@@ -11763,7 +12248,7 @@ INDEX_HTML = r"""<!doctype html>
           <div class="view-head">
             <div><strong>${escapeHtml(ui('result.api_log', 'API 调试日志'))}</strong><div class="muted">${escapeHtml(ui('result.api_log_subtitle', '请求、响应和重试记录，密钥已脱敏'))}</div></div>
             <div class="toolbar">
-              <button type="button" class="secondary" id="api-log-doc-link" data-doc-target="history-and-report"><i class="ri-book-open-line"></i><span>查看日志说明</span></button>
+              <button type="button" class="secondary" id="api-log-doc-link" data-doc-target="history-and-report"><i class="ri-book-open-line"></i><span>${escapeHtml(ui('docs.open_api_log', '查看日志说明'))}</span></button>
               <button type="button" id="export-api-log"><i class="ri-download-2-line"></i><span>${escapeHtml(ui('result.export_json', '导出 JSON'))}</span></button>
             </div>
           </div>
@@ -12619,6 +13104,10 @@ INDEX_HTML = r"""<!doctype html>
 </body>
 </html>
 """
+INDEX_HTML = INDEX_HTML.replace("__MINECRAFT_LOCALES_JSON__", MINECRAFT_LOCALES_JSON)
+INDEX_HTML = INDEX_HTML.replace("__UI_LOCALE_OPTIONS_HTML__", _ui_locale_options_html("zh_cn"))
+INDEX_HTML = INDEX_HTML.replace("__SOURCE_LOCALE_OPTIONS_HTML__", _locale_options_html("en_us"))
+INDEX_HTML = INDEX_HTML.replace("__TARGET_LOCALE_OPTIONS_HTML__", _locale_options_html("zh_cn"))
 
 
 @dataclass(frozen=True)
@@ -12642,7 +13131,7 @@ def serve(host: str, port: int, workdir: Path) -> None:
         server.server_close()
 
 
-def make_handler(workdir: Path):
+def make_handler(workdir: Path, *, sync_branding_build_config: bool = False):
     jobs: dict[str, dict[str, Any]] = {}
     cancel_events: dict[str, Event] = {}
     jobs_lock = Lock()
@@ -12676,17 +13165,34 @@ def make_handler(workdir: Path):
             if parsed.path == "/":
                 self._send_bytes(INDEX_HTML.encode("utf-8"), "text/html; charset=utf-8")
                 return
-            if parsed.path == "/assets/logo/minecraft.svg":
-                if not SIDEBAR_LOGO_PATH.is_file():
-                    self.send_error(404)
-                    return
-                self._send_bytes(SIDEBAR_LOGO_PATH.read_bytes(), "image/svg+xml; charset=utf-8")
+            if parsed.path == "/api/system-settings":
+                self._send_json({"ok": True, **system_settings_payload(workdir)})
                 return
-            if parsed.path == "/favicon.ico":
-                if not SIDEBAR_LOGO_PATH.is_file():
+            if parsed.path == "/assets/logo/current":
+                self._send_brand_logo_asset("png")
+                return
+            if parsed.path == "/assets/logo/current-favicon":
+                self._send_brand_favicon_asset()
+                return
+            if parsed.path in {"/assets/logo/current.ico", "/favicon.ico"}:
+                self._send_brand_logo_asset("ico")
+                return
+            if parsed.path.startswith("/assets/logo/"):
+                if self._send_named_logo_asset(parsed.path.removeprefix("/assets/logo/")):
+                    return
+            if parsed.path == "/assets/logo/minecraft.svg":
+                logo_path = sidebar_logo_path()
+                if not logo_path.is_file():
                     self.send_error(404)
                     return
-                self._send_bytes(SIDEBAR_LOGO_PATH.read_bytes(), "image/svg+xml; charset=utf-8")
+                self._send_bytes(logo_path.read_bytes(), "image/svg+xml; charset=utf-8")
+                return
+            if parsed.path in {"/assets/co1dsand_logo_cat.ico", "/assets/logo/co1dsand_logo_cat.ico"}:
+                icon_path = cat_ico_path()
+                if not icon_path.is_file():
+                    self.send_error(404)
+                    return
+                self._send_bytes(icon_path.read_bytes(), "image/x-icon")
                 return
             if parsed.path.startswith("/api/progress/"):
                 self._send_progress(parsed.path.removeprefix("/api/progress/"))
@@ -12705,14 +13211,20 @@ def make_handler(workdir: Path):
                 return
             if parsed.path == "/api/docs":
                 try:
-                    self._send_json({"ok": True, "docs": list_help_docs(PROJECT_ROOT)})
+                    values = parse_qs(parsed.query or "")
+                    ui_locale = resolve_ui_locale(values.get("ui_locale", [""])[0])
+                    ui_locale_root = self._ui_locale_root_from_query(parsed.query)
+                    self._send_json({"ok": True, "docs": list_help_docs(bundled_resource_root(), ui_locale, ui_locale_root)})
                 except Exception as exc:
                     self._send_json({"ok": False, "error": str(exc)}, status=500)
                 return
             if parsed.path.startswith("/api/docs/"):
                 try:
                     slug = unquote(parsed.path.removeprefix("/api/docs/"))
-                    self._send_json({"ok": True, **read_help_doc(PROJECT_ROOT, slug)})
+                    values = parse_qs(parsed.query or "")
+                    ui_locale = resolve_ui_locale(values.get("ui_locale", [""])[0])
+                    ui_locale_root = self._ui_locale_root_from_query(parsed.query)
+                    self._send_json({"ok": True, **read_help_doc(bundled_resource_root(), slug, ui_locale, ui_locale_root)})
                 except Exception as exc:
                     self._send_json({"ok": False, "error": str(exc)}, status=404)
                 return
@@ -12792,6 +13304,13 @@ def make_handler(workdir: Path):
 
         def do_POST(self) -> None:
             parsed = urlparse(self.path)
+            if parsed.path == "/api/system-settings":
+                try:
+                    payload = self._handle_system_settings_save()
+                    self._send_json(payload)
+                except Exception as exc:
+                    self._send_json({"ok": False, "error": str(exc)}, status=400)
+                return
             if parsed.path == "/api/models":
                 try:
                     payload = self._handle_models()
@@ -12941,6 +13460,80 @@ def make_handler(workdir: Path):
             )
             return {"ok": True, "models": models}
 
+        def _handle_system_settings_save(self) -> dict[str, Any]:
+            length = int(self.headers.get("Content-Length") or "0")
+            body = self.rfile.read(length)
+            payload = json.loads(body.decode("utf-8") or "{}")
+            settings = write_system_settings(
+                workdir,
+                brand_logo=payload.get("brand_logo"),
+                sync_build_config=sync_branding_build_config,
+            )
+            return {"ok": True, **system_settings_payload(workdir, settings)}
+
+        def _send_brand_logo_asset(self, kind: str) -> None:
+            settings = read_system_settings(workdir)
+            choice = settings.get("brand_logo", DEFAULT_BRAND_LOGO)
+            candidates: list[Path] = []
+            if kind == "ico":
+                candidates.append(brand_logo_asset_path(choice, "ico"))
+                if choice != DEFAULT_BRAND_LOGO:
+                    candidates.append(brand_logo_asset_path(DEFAULT_BRAND_LOGO, "ico"))
+                content_type = "image/x-icon"
+            else:
+                candidates.append(brand_logo_asset_path(choice, "png"))
+                if choice != DEFAULT_BRAND_LOGO:
+                    candidates.append(brand_logo_asset_path(DEFAULT_BRAND_LOGO, "png"))
+                content_type = "image/png"
+            for path in candidates:
+                if path.is_file():
+                    self._send_bytes(path.read_bytes(), content_type)
+                    return
+            self.send_error(404)
+
+        def _send_brand_favicon_asset(self) -> None:
+            settings = read_system_settings(workdir)
+            choice = normalize_brand_logo_choice(settings.get("brand_logo", DEFAULT_BRAND_LOGO))
+            candidates: list[tuple[Path, str]] = []
+            if choice == "grass":
+                candidates.append((brand_logo_asset_path("grass", "svg"), "image/svg+xml; charset=utf-8"))
+            candidates.append((brand_logo_asset_path(choice, "ico"), "image/x-icon"))
+            if choice != DEFAULT_BRAND_LOGO:
+                candidates.append((brand_logo_asset_path(DEFAULT_BRAND_LOGO, "ico"), "image/x-icon"))
+            for path, content_type in candidates:
+                if path.is_file():
+                    self._send_bytes(path.read_bytes(), content_type)
+                    return
+            self.send_error(404)
+
+        def _send_named_logo_asset(self, name: str) -> bool:
+            aliases = {
+                "cat.png": brand_logo_asset_path("cat", "png"),
+                "grass.png": brand_logo_asset_path("grass", "png"),
+                "sign.png": brand_logo_asset_path("sign", "png"),
+                "minecraft.png": brand_logo_asset_path("grass", "png"),
+                "minecraft.svg": brand_logo_asset_path("grass", "svg"),
+                "co1dsand_logo_cat.png": brand_logo_asset_path("cat", "png"),
+                "co1dsand_logo_sign.png": brand_logo_asset_path("sign", "png"),
+                "co1dsand_logo_cat.ico": brand_logo_asset_path("cat", "ico"),
+                "co1dsand_logo_sign.ico": brand_logo_asset_path("sign", "ico"),
+                "minecraft.ico": brand_logo_asset_path("grass", "ico"),
+            }
+            path = aliases.get(name)
+            if path is None:
+                return False
+            if not path.is_file():
+                self.send_error(404)
+                return True
+            suffix = path.suffix.lower()
+            content_type = {
+                ".svg": "image/svg+xml; charset=utf-8",
+                ".ico": "image/x-icon",
+                ".png": "image/png",
+            }.get(suffix, "application/octet-stream")
+            self._send_bytes(path.read_bytes(), content_type)
+            return True
+
         def _handle_preflight(self) -> dict[str, Any]:
             length = int(self.headers.get("Content-Length") or "0")
             body = self.rfile.read(length)
@@ -13084,7 +13677,12 @@ def make_handler(workdir: Path):
         def _send_ui_locale_export(self, locale: str, query: str) -> None:
             root = self._ui_locale_root_from_query(query)
             normalized = resolve_ui_locale(unquote(locale))
-            package = export_ui_locale_package(normalized, root)
+            package = export_ui_locale_package(
+                normalized,
+                root,
+                minecraft_locale_display_names(),
+                help_docs_dir(bundled_resource_root()),
+            )
             data = json.dumps(package, ensure_ascii=False, indent=2).encode("utf-8") + b"\n"
             filename = f"mc-mod-i18n-ui-{package['locale']}.json"
             self.send_response(200)
@@ -13097,7 +13695,12 @@ def make_handler(workdir: Path):
         def _send_ui_locale_missing_template(self, locale: str, query: str) -> None:
             root = self._ui_locale_root_from_query(query)
             normalized = resolve_ui_locale(unquote(locale))
-            package = export_ui_locale_package(normalized, root)
+            package = export_ui_locale_package(
+                normalized,
+                root,
+                minecraft_locale_display_names(),
+                help_docs_dir(bundled_resource_root()),
+            )
             template = build_ui_locale_missing_template(package)
             data = json.dumps(template, ensure_ascii=False, indent=2).encode("utf-8") + b"\n"
             filename = f"mc-mod-i18n-ui-{package['locale']}-missing.json"
@@ -13113,7 +13716,12 @@ def make_handler(workdir: Path):
             values = parse_qs(query or "")
             fill_locale = values.get("fill_locale", [FALLBACK_UI_LOCALE])[0]
             normalized = resolve_ui_locale(unquote(locale))
-            package = export_ui_locale_package(normalized, root)
+            package = export_ui_locale_package(
+                normalized,
+                root,
+                minecraft_locale_display_names(),
+                help_docs_dir(bundled_resource_root()),
+            )
             filled = build_ui_locale_filled_package(package, fill_locale)
             data = json.dumps(filled, ensure_ascii=False, indent=2).encode("utf-8") + b"\n"
             filename = f"mc-mod-i18n-ui-{filled['locale']}-filled-{resolve_ui_locale(fill_locale)}.json"
@@ -13152,7 +13760,8 @@ def make_handler(workdir: Path):
             if check["placeholder_mismatches"]:
                 raise ValueError("语言包占位符不匹配，请先修正后再导入")
             result = write_extension_package(root, package)
-            return {"ok": True, "ui_locale_dir": str(root), **result}
+            docs_result = write_ui_locale_help_docs(root, package)
+            return {"ok": True, "ui_locale_dir": str(root), **result, **docs_result}
 
         def _handle_glossary_save(self) -> dict[str, Any]:
             length = int(self.headers.get("Content-Length") or "0")
@@ -13310,6 +13919,7 @@ def make_handler(workdir: Path):
                 api_batch_size=api_batch_size,
                 api_timeout=api_timeout,
                 model=fields.get("model", "gpt-4o-mini") or "gpt-4o-mini",
+                brand_logo=read_system_settings(workdir).get("brand_logo", DEFAULT_BRAND_LOGO),
                 progress_callback=progress_callback,
             )
             cache_root = resolve_cache_root(workdir, fields.get("cache_dir", ""))
@@ -13876,12 +14486,46 @@ def help_docs_dir(root: Path) -> Path:
     return root / HELP_DOCS_DIRNAME
 
 
-def _help_docs_index_path(root: Path) -> Path:
-    return help_docs_dir(root) / HELP_DOCS_INDEX_FILENAME
+def localized_help_docs_dir(root: Path, locale: str | None) -> Path:
+    return help_docs_dir(root) / resolve_ui_locale(locale)
 
 
-def _read_help_docs_index(root: Path) -> list[dict[str, Any]]:
-    path = _help_docs_index_path(root)
+def _append_locale_help_doc_dirs(candidates: list[Path], base: Path, locale: str | None, *, include_base: bool = True) -> None:
+    if locale:
+        normalized = resolve_ui_locale(locale)
+        candidates.append(base / normalized)
+        language = normalized.split("_", 1)[0]
+        if language and language != normalized:
+            candidates.append(base / language)
+    if include_base:
+        candidates.append(base)
+
+
+def _candidate_help_docs_dirs(root: Path, locale: str | None = None, extension_root: Path | None = None) -> list[Path]:
+    candidates: list[Path] = []
+    if extension_root is not None:
+        _append_locale_help_doc_dirs(candidates, help_docs_dir(extension_root), locale, include_base=False)
+    _append_locale_help_doc_dirs(candidates, help_docs_dir(root), locale)
+    unique: list[Path] = []
+    for path in candidates:
+        if path not in unique:
+            unique.append(path)
+    return unique
+
+
+def _select_help_docs_dir(root: Path, locale: str | None = None, extension_root: Path | None = None) -> Path:
+    for docs_root in _candidate_help_docs_dirs(root, locale, extension_root):
+        if (docs_root / HELP_DOCS_INDEX_FILENAME).is_file():
+            return docs_root
+    return help_docs_dir(root)
+
+
+def _help_docs_index_path(root: Path, locale: str | None = None, extension_root: Path | None = None) -> Path:
+    return _select_help_docs_dir(root, locale, extension_root) / HELP_DOCS_INDEX_FILENAME
+
+
+def _read_help_docs_index_from_dir(docs_root: Path) -> list[dict[str, Any]]:
+    path = docs_root / HELP_DOCS_INDEX_FILENAME
     if not path.is_file():
         return []
     payload = json.loads(path.read_text(encoding="utf-8-sig"))
@@ -13891,9 +14535,13 @@ def _read_help_docs_index(root: Path) -> list[dict[str, Any]]:
     return [item for item in docs if isinstance(item, dict)]
 
 
-def list_help_docs(root: Path) -> list[dict[str, Any]]:
+def _read_help_docs_index(root: Path, locale: str | None = None, extension_root: Path | None = None) -> list[dict[str, Any]]:
+    return _read_help_docs_index_from_dir(_select_help_docs_dir(root, locale, extension_root))
+
+
+def list_help_docs(root: Path, locale: str | None = None, extension_root: Path | None = None) -> list[dict[str, Any]]:
     docs: list[dict[str, Any]] = []
-    for item in _read_help_docs_index(root):
+    for item in _read_help_docs_index(root, locale, extension_root):
         slug = normalize_help_doc_slug(str(item.get("slug", "") or ""))
         docs.append(
             {
@@ -13916,21 +14564,72 @@ def normalize_help_doc_slug(value: str) -> str:
     return slug
 
 
-def read_help_doc(root: Path, slug: str) -> dict[str, Any]:
+def read_help_doc(root: Path, slug: str, locale: str | None = None, extension_root: Path | None = None) -> dict[str, Any]:
     normalized_slug = normalize_help_doc_slug(slug)
-    for item in list_help_docs(root):
-        if item["slug"] != normalized_slug:
-            continue
-        path = help_docs_dir(root) / f"{normalized_slug}.md"
-        if not path.is_file():
-            raise ValueError("文档不存在")
-        content = path.read_text(encoding="utf-8-sig")
-        return {
-            **item,
-            "content": content,
-            "html": render_help_doc_html(content),
-        }
+    for docs_root in _candidate_help_docs_dirs(root, locale, extension_root):
+        for item in _read_help_docs_index_from_dir(docs_root):
+            item_slug = normalize_help_doc_slug(str(item.get("slug", "") or ""))
+            if item_slug != normalized_slug:
+                continue
+            path = docs_root / f"{normalized_slug}.md"
+            if not path.is_file():
+                break
+            normalized_item = {
+                "slug": item_slug,
+                "title": str(item.get("title", item_slug) or item_slug),
+                "summary": str(item.get("summary", "") or ""),
+                "category": str(item.get("category", "") or ""),
+                "keywords": [str(keyword) for keyword in item.get("keywords", []) if str(keyword or "").strip()],
+                "related_topics": [normalize_help_doc_slug(str(topic)) for topic in item.get("related_topics", []) if str(topic or "").strip()],
+                "applies_to": [str(value) for value in item.get("applies_to", []) if str(value or "").strip()],
+            }
+            content = path.read_text(encoding="utf-8-sig")
+            return {
+                **normalized_item,
+                "content": content,
+                "html": render_help_doc_html(content),
+            }
     raise ValueError("文档不存在")
+
+
+def write_ui_locale_help_docs(extension_root: Path, package: dict[str, Any]) -> dict[str, Any]:
+    docs = package.get("docs") or []
+    if not isinstance(docs, list) or not docs:
+        return {"docs_count": 0}
+    locale = resolve_ui_locale(str(package.get("locale") or ""))
+    docs_root = localized_help_docs_dir(extension_root, locale)
+    docs_root.mkdir(parents=True, exist_ok=True)
+    index_docs: list[dict[str, Any]] = []
+    for item in docs:
+        if not isinstance(item, dict):
+            continue
+        slug = normalize_help_doc_slug(str(item.get("slug") or ""))
+        content = str(item.get("content") or item.get("markdown") or "")
+        if not content.strip():
+            continue
+        (docs_root / f"{slug}.md").write_text(content, encoding="utf-8")
+        index_docs.append(
+            {
+                "slug": slug,
+                "title": str(item.get("title") or slug),
+                "summary": str(item.get("summary") or ""),
+                "category": str(item.get("category") or ""),
+                "keywords": [str(keyword) for keyword in item.get("keywords", []) if str(keyword or "").strip()],
+                "related_topics": [
+                    normalize_help_doc_slug(str(topic))
+                    for topic in item.get("related_topics", [])
+                    if str(topic or "").strip()
+                ],
+                "applies_to": [str(target) for target in item.get("applies_to", []) if str(target or "").strip()],
+            }
+        )
+    if not index_docs:
+        return {"docs_count": 0}
+    (docs_root / HELP_DOCS_INDEX_FILENAME).write_text(
+        json.dumps({"docs": index_docs}, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return {"docs_count": len(index_docs), "docs_path": str(docs_root)}
 
 
 def render_help_doc_html(markdown_text: str) -> str:
@@ -14808,7 +15507,7 @@ def glossary_upload_or_saved(parts: list[MultipartPart], upload_dir: Path, workd
 def resolve_cache_root(workdir: Path, raw_cache_dir: str | None) -> Path:
     raw = (raw_cache_dir or "").strip()
     if not raw:
-        return (workdir / ".shared-cache").resolve()
+        return default_cache_root(workdir)
     expanded = Path(os.path.expandvars(os.path.expanduser(raw)))
     if not expanded.is_absolute():
         expanded = workdir / expanded
@@ -14973,13 +15672,6 @@ def json_target_filename(source_name: str, source_locale: str, target_locale: st
     return f"{stem}.json"
 
 
-def minecraft_locale_display_names() -> dict[str, str]:
-    return {
-        match.group(1): match.group(2)
-        for match in re.finditer(r'\["([a-z0-9_]+)", "([^"]+)"\]', INDEX_HTML)
-    }
-
-
 UI_LOCALE_NAME_MAP: dict[str, str] = {**LOCALE_DISPLAY_NAMES, **minecraft_locale_display_names()}
 
 
@@ -15014,6 +15706,38 @@ def parse_json_translation_payload(data: Any, filename: str) -> tuple[str, dict[
     return "flat", dict(data), data
 
 
+def ui_locale_doc_translation_entries(root: dict[str, Any]) -> dict[str, str]:
+    docs = root.get("docs")
+    if not isinstance(docs, list):
+        return {}
+    entries: dict[str, str] = {}
+    for item in docs:
+        if not isinstance(item, dict):
+            continue
+        slug = str(item.get("slug") or "").strip().lower()
+        if not slug:
+            continue
+        for field in ("title", "summary", "content"):
+            value = item.get(field)
+            if isinstance(value, str):
+                entries[f"docs.{slug}.{field}"] = value
+    return entries
+
+
+def set_ui_locale_doc_translation(root: dict[str, Any], key: str, value: str) -> None:
+    match = re.fullmatch(r"docs\.([a-z0-9][a-z0-9._-]*)\.(title|summary|content)", key)
+    if not match:
+        return
+    slug, field = match.groups()
+    docs = root.get("docs")
+    if not isinstance(docs, list):
+        return
+    for item in docs:
+        if isinstance(item, dict) and str(item.get("slug") or "").strip().lower() == slug:
+            item[field] = value
+            return
+
+
 def json_output_metadata_preview(filename: str, data: dict[str, Any]) -> dict[str, str] | None:
     if not isinstance(data.get("messages"), dict):
         return None
@@ -15041,11 +15765,14 @@ def process_json_language_file(
     schema, root, entries = parse_json_translation_payload(data, path.name)
     output_name = json_target_filename(path.name, args.source_locale, args.target_locale, schema)
     same_locale = str(args.source_locale or "").strip().lower() == str(args.target_locale or "").strip().lower()
+    translatable_entries = dict(entries)
+    if schema == "ui_locale":
+        translatable_entries.update(ui_locale_doc_translation_entries(root))
     report: list[ReportEntry] = []
     items: list[TranslationItem] = []
     item_sources: dict[str, tuple[str, str]] = {}
     skipped = 0
-    for key, value in entries.items():
+    for key, value in translatable_entries.items():
         if not isinstance(key, str):
             continue
         if not isinstance(value, str):
@@ -15064,10 +15791,16 @@ def process_json_language_file(
             )
             continue
         if value == "":
-            entries[key] = value
+            if key in entries:
+                entries[key] = value
+            else:
+                set_ui_locale_doc_translation(root, key, value)
             continue
         if same_locale:
-            entries[key] = value
+            if key in entries:
+                entries[key] = value
+            else:
+                set_ui_locale_doc_translation(root, key, value)
             report.append(
                 ReportEntry(
                     jar=path.name,
@@ -15091,7 +15824,10 @@ def process_json_language_file(
     for item_id, (key, source_text) in item_sources.items():
         if item_id in failed_items:
             failed_count += 1
-            entries[key] = source_text
+            if key in entries:
+                entries[key] = source_text
+            else:
+                set_ui_locale_doc_translation(root, key, source_text)
             report.append(
                 ReportEntry(
                     jar=path.name,
@@ -15109,7 +15845,10 @@ def process_json_language_file(
         errors = validate_translation(source_text, translated)
         if errors:
             failed_count += 1
-            entries[key] = source_text
+            if key in entries:
+                entries[key] = source_text
+            else:
+                set_ui_locale_doc_translation(root, key, source_text)
             report.append(
                 ReportEntry(
                     jar=path.name,
@@ -15123,7 +15862,10 @@ def process_json_language_file(
                 )
             )
             continue
-        entries[key] = translated
+        if key in entries:
+            entries[key] = translated
+        else:
+            set_ui_locale_doc_translation(root, key, translated)
         translated_count += 1
         report.append(
             ReportEntry(
@@ -15781,7 +16523,7 @@ def run_translate_job(
                 output_documents,
                 pack_format,
                 "§b汉化工具§r§6By co1dsand",
-                read_co1dsand_pack_icon(),
+                read_co1dsand_pack_icon(brand_logo=getattr(args, "brand_logo", DEFAULT_BRAND_LOGO)),
             )
         write_report(report_path, report_entries)
         if args.scan_hardcoded:
@@ -15966,8 +16708,18 @@ def hardcoded_entry_to_dict(entry: HardcodedEntry) -> dict[str, str]:
     }
 
 
-def read_co1dsand_pack_icon() -> bytes | None:
-    for path in CO1DSAND_PACK_LOGO_PATHS:
+def read_co1dsand_pack_icon(
+    root: Path | None = None,
+    *,
+    workdir: Path | None = None,
+    brand_logo: Any | None = None,
+) -> bytes | None:
+    selected = normalize_brand_logo_choice(
+        brand_logo if brand_logo is not None else (
+            read_system_settings(workdir).get("brand_logo") if workdir is not None else read_branding_build_config(root).get("brand_logo")
+        )
+    )
+    for path in co1dsand_pack_logo_paths(root, brand_logo=selected):
         icon = read_pack_icon(path)
         if icon:
             return icon
@@ -16309,3 +17061,4 @@ def safe_run_path(workdir: Path, relative: str) -> Path:
     if target != workdir and workdir not in target.parents:
         raise ValueError("invalid path")
     return target
+

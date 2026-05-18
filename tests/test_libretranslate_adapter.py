@@ -180,7 +180,7 @@ class LibreTranslateAdapterTest(unittest.TestCase):
         self.assertEqual("LibreTranslateTranslator", translator.__class__.__name__)
 
     def test_web_ui_exposes_libretranslate_provider(self) -> None:
-        self.assertIn('<option value="libretranslate">LibreTranslate（自托管/托管）</option>', INDEX_HTML)
+        self.assertIn('<option value="libretranslate" data-i18n="provider.libretranslate">LibreTranslate（自托管/托管）</option>', INDEX_HTML)
         self.assertIn("'libretranslate': {", INDEX_HTML)
         self.assertIn("可连接自托管或托管实例", INDEX_HTML)
 

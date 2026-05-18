@@ -1,0 +1,76 @@
+{
+  "docs": [
+    {
+      "slug": "quick-start",
+      "title": "Quick Start",
+      "summary": "Run the smallest end-to-end workflow, from selecting input to generating output.",
+      "category": "start",
+      "keywords": ["start", "quick", "preflight", "workspace"],
+      "related_topics": ["providers", "preflight", "faq"],
+      "applies_to": ["workspace"]
+    },
+    {
+      "slug": "providers",
+      "title": "Choosing a Provider",
+      "summary": "How to choose between glossary, deep-free, LibreTranslate, Argos, Azure, and AI providers.",
+      "category": "providers",
+      "keywords": ["provider", "azure", "argos", "libretranslate", "deep-free"],
+      "related_topics": ["quick-start", "preflight", "faq"],
+      "applies_to": ["workspace", "provider:deep-free", "provider:libretranslate", "provider:argos", "provider:azure-translator", "provider:openai-compatible", "provider:anthropic-compatible"]
+    },
+    {
+      "slug": "output-strategy",
+      "title": "Output Strategy",
+      "summary": "Understand overwrite, skip, cache, translation memory, and hardcoded scan options.",
+      "category": "workflow",
+      "keywords": ["output", "cache", "memory", "hardcoded"],
+      "related_topics": ["translation-memory", "hardcoded", "preflight"],
+      "applies_to": ["workspace", "feature:output-policy"]
+    },
+    {
+      "slug": "preflight",
+      "title": "Preflight Checks",
+      "summary": "What preflight checks inspect, and what blocking issues and warnings mean.",
+      "category": "workflow",
+      "keywords": ["preflight", "warning", "blocking"],
+      "related_topics": ["quick-start", "output-strategy", "faq"],
+      "applies_to": ["workspace", "feature:preflight"]
+    },
+    {
+      "slug": "translation-memory",
+      "title": "Translation Memory and Cache",
+      "summary": "Understand checkpoints, normal cache, translation memory, and when to ignore memory hits.",
+      "category": "workflow",
+      "keywords": ["memory", "cache", "checkpoint", "scope"],
+      "related_topics": ["output-strategy", "history-and-report", "faq"],
+      "applies_to": ["workspace", "settings", "feature:translation-memory"]
+    },
+    {
+      "slug": "history-and-report",
+      "title": "Results, Reports, and Task History",
+      "summary": "How to inspect downloads, translation reports, failed items, API logs, and recent tasks.",
+      "category": "operations",
+      "keywords": ["history", "report", "api-log", "download"],
+      "related_topics": ["translation-memory", "faq"],
+      "applies_to": ["history", "report", "api-log"]
+    },
+    {
+      "slug": "hardcoded",
+      "title": "Hardcoded Text Scan and Workbench",
+      "summary": "Understand English text outside resource packs, and the purpose and limits of hardcoded mappings.",
+      "category": "operations",
+      "keywords": ["hardcoded", "ponder", "config", "mapping"],
+      "related_topics": ["output-strategy", "history-and-report", "faq"],
+      "applies_to": ["hardcoded", "feature:hardcoded-scan"]
+    },
+    {
+      "slug": "faq",
+      "title": "FAQ",
+      "summary": "Common answers for connection failures, unchanged results, missing history files, and hardcoded text.",
+      "category": "support",
+      "keywords": ["faq", "error", "missing", "download", "provider"],
+      "related_topics": ["providers", "translation-memory", "history-and-report", "hardcoded"],
+      "applies_to": ["workspace", "history", "report", "api-log", "hardcoded"]
+    }
+  ]
+}

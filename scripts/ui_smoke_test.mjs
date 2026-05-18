@@ -195,12 +195,18 @@ async function launchSystemBrowserSmoke() {
         }
       }
     } finally {
+      try {
+        await browserClient.send('Browser.close');
+      } catch {}
       browserClient.close();
     }
   } finally {
-    chrome.kill();
-    await waitForProcessExit(chrome, 5000);
-    await removeDirWithRetry(userDataDir, 12, 250);
+    await waitForProcessExit(chrome, 7000);
+    if (chrome.exitCode === null) {
+      chrome.kill();
+      await waitForProcessExit(chrome, 5000);
+    }
+    await removeDirWithRetry(userDataDir, 24, 500);
   }
 }
 

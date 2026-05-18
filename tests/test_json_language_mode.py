@@ -63,6 +63,45 @@ class JsonLanguageModeTest(unittest.TestCase):
             self.assertEqual(1, translated_count)
             self.assertEqual(0, failed_count)
 
+    def test_ui_locale_schema_translation_translates_docs_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "mc-mod-i18n-ui-en_us.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "locale": "en_us",
+                        "name": "English",
+                        "messages": {"app.title": "Title"},
+                        "docs": [
+                            {
+                                "slug": "quick-start",
+                                "title": "Quick Start",
+                                "summary": "Run the smallest workflow.",
+                                "category": "start",
+                                "content": "# Quick Start\n\nRun the smallest workflow.",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            args = argparse.Namespace(source_locale="en_us", target_locale="ja_jp")
+
+            _output_name, output, report, translated_count, failed_count, _skipped_count = process_json_language_file(
+                path,
+                args,
+                CopyTranslator(),
+            )
+
+            self.assertEqual("Quick Start", output["docs"][0]["title"])
+            self.assertEqual("Run the smallest workflow.", output["docs"][0]["summary"])
+            self.assertEqual("# Quick Start\n\nRun the smallest workflow.", output["docs"][0]["content"])
+            self.assertGreaterEqual(translated_count, 4)
+            self.assertEqual(0, failed_count)
+            self.assertTrue(any(entry.key == "docs.quick-start.title" for entry in report))
+            self.assertTrue(any(entry.key == "docs.quick-start.content" for entry in report))
+
     def test_ui_locale_schema_uses_target_language_text_for_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "mc-mod-i18n-ui-en_us.json"

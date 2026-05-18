@@ -43,6 +43,7 @@ from .pack import (
 from .report import ReportEntry, write_hardcoded_map_template, write_hardcoded_report, write_report
 from .translator import AI_PROVIDER_PRESETS, is_ai_provider
 from .validator import pre_check_lang_documents
+from .web import read_co1dsand_pack_icon
 
 
 @dataclass
@@ -79,6 +80,7 @@ def main(argv: list[str] | None = None) -> int:
             workdir=Path(args.workdir) if args.workdir else None,
             width=args.width,
             height=args.height,
+            zoom=args.zoom,
         )
 
     parser.print_help()
@@ -114,6 +116,7 @@ def build_parser() -> argparse.ArgumentParser:
     translate.add_argument("--model", default="gpt-4o-mini")
     translate.add_argument("--scan-hardcoded", action="store_true", help="scan class constant pools and write hardcoded reports")
     translate.add_argument("--hardcoded-limit", type=int, default=5000, help="maximum hardcoded candidates to report")
+    translate.add_argument("--brand-logo", choices=["cat", "grass", "sign"], default="", help="resource pack icon brand; defaults to logo/branding.json")
 
     ftbquests = subparsers.add_parser("ftbquests", help="translate FTB Quests lang SNBT files")
     ftbquests.add_argument("input", help="FTB Quests folder, modpack ZIP, or lang/<locale>.snbt")
@@ -148,6 +151,7 @@ def build_parser() -> argparse.ArgumentParser:
     desktop.add_argument("--workdir", default="", help="desktop app data directory; defaults to the user app data folder")
     desktop.add_argument("--width", type=int, default=1280)
     desktop.add_argument("--height", type=int, default=860)
+    desktop.add_argument("--zoom", type=float, default=0, help="desktop page zoom; 0 auto-counteracts Windows DPI scaling")
     return parser
 
 
@@ -316,7 +320,7 @@ def translate_command(args: argparse.Namespace) -> int:
             output_documents,
             pack_format,
             "§b汉化工具§r§6By co1dsand",
-            read_pack_icon(Path.cwd() / "co1dsand_logo.png"),
+            read_co1dsand_pack_icon(brand_logo=args.brand_logo or None),
         )
     write_report(report_path, report_entries)
     if args.scan_hardcoded:

@@ -108,7 +108,7 @@ class ArgosAdapterTest(unittest.TestCase):
         self.assertEqual("ArgosTranslator", translator.__class__.__name__)
 
     def test_web_ui_exposes_argos_provider(self) -> None:
-        self.assertIn('<option value="argos">Argos Translate（离线）</option>', INDEX_HTML)
+        self.assertIn('<option value="argos" data-i18n="provider.argos">Argos Translate（离线）</option>', INDEX_HTML)
         self.assertIn("'argos': {", INDEX_HTML)
         self.assertIn("本地离线翻译", INDEX_HTML)
 

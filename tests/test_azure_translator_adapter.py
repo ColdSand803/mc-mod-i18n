@@ -155,7 +155,7 @@ class AzureTranslatorAdapterTest(unittest.TestCase):
         self.assertEqual("AzureTranslatorTranslator", translator.__class__.__name__)
 
     def test_web_ui_exposes_azure_translator_provider(self) -> None:
-        self.assertIn('<option value="azure-translator">Azure Translator</option>', INDEX_HTML)
+        self.assertIn('<option value="azure-translator" data-i18n="provider.azure-translator">Azure Translator</option>', INDEX_HTML)
         self.assertIn("'azure-translator': {", INDEX_HTML)
         self.assertIn("api_region", INDEX_HTML)
         self.assertIn("Azure 官方翻译服务", INDEX_HTML)

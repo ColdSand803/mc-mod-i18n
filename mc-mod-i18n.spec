@@ -9,7 +9,10 @@ a = Analysis(
     ["scripts/mc_mod_i18n_launcher.py"],
     pathex=[str(root / "src")],
     binaries=[],
-    datas=[],
+    datas=[
+        (str(root / "docs" / "help"), "docs/help"),
+        (str(root / "logo"), "logo"),
+    ],
     hiddenimports=["webview"],
     hookspath=[],
     hooksconfig={},
@@ -38,6 +41,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=str(root / "logo" / "app.ico"),
 )
 
 coll = COLLECT(

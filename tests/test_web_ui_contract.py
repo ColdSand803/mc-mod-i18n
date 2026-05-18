@@ -42,6 +42,7 @@ class WebUiContractTest(unittest.TestCase):
         self.assertIn("findSystemBrowserExecutable", script)
         self.assertIn("--remote-debugging-port=0", script)
         self.assertIn("Browser.getVersion", script)
+        self.assertIn("Browser.close", script)
         self.assertIn("document.querySelectorAll('#settings-page .settings-section')", script)
         self.assertIn("Settings cards overlap", script)
 
@@ -50,13 +51,19 @@ class WebUiContractTest(unittest.TestCase):
         self.assertIn('data-i18n="app.brand.name">翻译工作台</strong>', INDEX_HTML)
         self.assertNotIn('alt="汉化工作台"', INDEX_HTML)
 
+    def test_browser_favicon_and_sidebar_logo_use_current_branding(self) -> None:
+        self.assertIn('<link rel="icon" href="/assets/logo/current-favicon">', INDEX_HTML)
+        self.assertNotIn('<link rel="icon" href="/assets/logo/current.ico" type="image/x-icon">', INDEX_HTML)
+        self.assertIn('<div class="mark"><img src="/assets/logo/current" alt="翻译工作台"', INDEX_HTML)
+        self.assertNotIn('<link rel="icon" href="/assets/co1dsand_logo_cat.ico"', INDEX_HTML)
+
     def test_workspace_uses_progressive_disclosure_for_advanced_settings(self) -> None:
         self.assertIn("高级 API 设置", INDEX_HTML)
         self.assertIn("输出策略", INDEX_HTML)
         self.assertIn("data-advanced-panel", INDEX_HTML)
         self.assertIn("workflow-step", INDEX_HTML)
-        self.assertIn('<div class="workflow-step"><strong>选择输入</strong></div>', INDEX_HTML)
-        self.assertIn('<div class="workflow-step"><strong>运行预检并开始</strong></div>', INDEX_HTML)
+        self.assertIn('<div class="workflow-step"><strong data-i18n="workflow.input_step">选择输入</strong></div>', INDEX_HTML)
+        self.assertIn('<div class="workflow-step"><strong data-i18n="workflow.preflight_step">运行预检并开始</strong></div>', INDEX_HTML)
         self.assertNotIn('<div class="workflow-step"><span>1</span>', INDEX_HTML)
         self.assertNotIn('<div class="workflow-step"><span>4</span>', INDEX_HTML)
         self.assertNotIn('<div class="workflow-step"><span>步骤 1</span>', INDEX_HTML)
@@ -86,6 +93,15 @@ class WebUiContractTest(unittest.TestCase):
         self.assertIn("resultState.resultView = view;", INDEX_HTML)
         self.assertIn('data-view="report"', INDEX_HTML)
         self.assertIn('data-view="hardcoded"', INDEX_HTML)
+
+    def test_new_running_job_cannot_repaint_previous_completed_result(self) -> None:
+        self.assertIn("function clearCurrentResultForNewJob()", INDEX_HTML)
+        self.assertIn("resultState.payload = null;", INDEX_HTML)
+        self.assertIn("clearCurrentResultForNewJob();\n      startLoading();", INDEX_HTML)
+        self.assertIn("function isCurrentResultPayload(payload = resultState.payload)", INDEX_HTML)
+        self.assertIn("return Boolean(payload) && (!activeJobId || payload.job_id === activeJobId);", INDEX_HTML)
+        self.assertIn("if (isCurrentResultPayload()) {\n        renderResultShell();", INDEX_HTML)
+        self.assertIn("} else if (isCurrentResultPayload()) {\n        renderResultShell();", INDEX_HTML)
 
     def test_result_summary_uses_clickable_cards_with_details(self) -> None:
         self.assertIn('class="summary-card"', INDEX_HTML)
@@ -140,8 +156,12 @@ class WebUiContractTest(unittest.TestCase):
 
     def test_language_controls_support_minecraft_locale_input(self) -> None:
         self.assertIn("minecraftLocales", INDEX_HTML)
-        self.assertIn('["zh_tw", "繁體中文"]', INDEX_HTML)
-        self.assertIn('["zh_hk", "繁體中文（香港）"]', INDEX_HTML)
+        source = Path(__file__).resolve().parents[1] / "src" / "mc_mod_i18n" / "web.py"
+        text = source.read_text(encoding="utf-8")
+        self.assertIn("MINECRAFT_LOCALES_JSON", text)
+        self.assertIn('const minecraftLocales = __MINECRAFT_LOCALES_JSON__;', text)
+        self.assertNotIn('["zh_tw", "繁體中文"]', text)
+        self.assertNotIn('["zh_hk", "繁體中文（香港）"]', text)
         self.assertIn("locale-control-input", INDEX_HTML)
         self.assertIn("data-locale-control-search", INDEX_HTML)
         self.assertIn("data-locale-apply", INDEX_HTML)
@@ -149,6 +169,14 @@ class WebUiContractTest(unittest.TestCase):
         self.assertIn("localeMatchesOption", INDEX_HTML)
         self.assertIn("refreshLocaleMenuSearch", INDEX_HTML)
         self.assertIn("没有匹配的内置语言", INDEX_HTML)
+
+    def test_ui_locale_settings_reuses_target_language_catalog(self) -> None:
+        source = Path(__file__).resolve().parents[1] / "src" / "mc_mod_i18n" / "web.py"
+        text = source.read_text(encoding="utf-8")
+        self.assertIn("for option in list_ui_locales(root)", text)
+        self.assertIn("minecraft_locale_display_names()", text)
+        self.assertIn("from .ui_i18n import (", text)
+        self.assertNotIn("def minecraft_locale_display_names()", text)
 
     def test_language_dropdowns_expose_searchable_listbox_state(self) -> None:
         self.assertIn('data-select-trigger="source_locale" role="combobox" tabindex="0" aria-haspopup="listbox" aria-expanded="false" aria-controls="source-locale-menu"', INDEX_HTML)
@@ -159,11 +187,12 @@ class WebUiContractTest(unittest.TestCase):
         self.assertNotIn('class="ghost-menu-input"', INDEX_HTML)
 
     def test_provider_list_is_limited_to_manual_and_compatible_api_options(self) -> None:
-        self.assertIn('<option value="glossary">离线术语表（有限）</option>', INDEX_HTML)
-        self.assertIn('<option value="copy">复制原文</option>', INDEX_HTML)
-        self.assertIn('<option value="deep-free">Deep Translator（免费试用）</option>', INDEX_HTML)
-        self.assertIn('<option value="openai-compatible">兼容 OpenAI</option>', INDEX_HTML)
-        self.assertIn('<option value="anthropic-compatible">兼容 Anthropic</option>', INDEX_HTML)
+        self.assertIn('<option value="glossary" data-i18n="provider.glossary">离线术语表（有限）</option>', INDEX_HTML)
+        self.assertIn('<option value="copy" data-i18n="provider.copy">复制原文</option>', INDEX_HTML)
+        self.assertIn('<option value="deep-free" data-i18n="provider.deep-free">Deep Translator（免费试用）</option>', INDEX_HTML)
+        self.assertIn('<option value="azure-translator" data-i18n="provider.azure-translator">Azure Translator</option>', INDEX_HTML)
+        self.assertIn('<option value="openai-compatible" data-i18n="provider.openai-compatible">兼容 OpenAI</option>', INDEX_HTML)
+        self.assertIn('<option value="anthropic-compatible" data-i18n="provider.anthropic-compatible">兼容 Anthropic</option>', INDEX_HTML)
         self.assertNotIn('<option value="deepseek">', INDEX_HTML)
         self.assertNotIn('<option value="gemini">', INDEX_HTML)
 
@@ -232,15 +261,54 @@ class WebUiContractTest(unittest.TestCase):
         self.assertIn("function switchSettingsSection", INDEX_HTML)
         self.assertIn('id="settings-cache-section"', INDEX_HTML)
         self.assertIn('id="settings-locale-section"', INDEX_HTML)
+        self.assertIn('class="active" data-settings-target="settings-system-section"', INDEX_HTML)
+        self.assertIn('id="settings-cache-section" aria-labelledby="settings-cache-title" hidden', INDEX_HTML)
         self.assertIn('class="settings-footer"', INDEX_HTML)
         self.assertIn(".settings-layout", INDEX_HTML)
         self.assertIn(".settings-section-actions", INDEX_HTML)
+        self.assertIn('id="settings-data-dir"', INDEX_HTML)
+        self.assertIn('id="settings-default-cache-dir"', INDEX_HTML)
+        self.assertIn('id="settings-default-ui-locale-dir"', INDEX_HTML)
+        self.assertIn("data_dir", INDEX_HTML)
+        self.assertIn("default_cache_dir", INDEX_HTML)
+        self.assertIn("default_ui_locale_dir", INDEX_HTML)
         self.assertIn('id="settings-cache-dir"', INDEX_HTML)
         self.assertIn('id="settings-cache-clear"', INDEX_HTML)
         self.assertIn('id="settings-cache-default"', INDEX_HTML)
         self.assertIn('name="cache_dir" id="cache_dir"', INDEX_HTML)
         self.assertIn("CACHE_DIR_STORAGE_KEY", INDEX_HTML)
         self.assertIn("fetch('/api/cache/clear'", INDEX_HTML)
+
+    def test_settings_menu_exposes_system_branding(self) -> None:
+        self.assertIn('data-settings-target="settings-system-section"', INDEX_HTML)
+        self.assertIn('id="settings-system-section"', INDEX_HTML)
+        self.assertIn('data-i18n="settings.system_section">系统设置</span>', INDEX_HTML)
+        self.assertIn('id="settings-branding-options"', INDEX_HTML)
+        self.assertIn('data-brand-logo="cat"', INDEX_HTML)
+        self.assertIn('data-brand-logo="grass"', INDEX_HTML)
+        self.assertIn('data-brand-logo="sign"', INDEX_HTML)
+        self.assertIn("猫猫头像", INDEX_HTML)
+        self.assertIn("草方块", INDEX_HTML)
+        self.assertIn("签名标识", INDEX_HTML)
+        self.assertIn("function loadSystemSettings", INDEX_HTML)
+        self.assertIn("function saveSystemSettings", INDEX_HTML)
+        self.assertIn("function applyBrandingChoice", INDEX_HTML)
+        self.assertIn("fetch('/api/system-settings'", INDEX_HTML)
+        self.assertIn("/assets/logo/current", INDEX_HTML)
+        self.assertIn("/assets/logo/current-favicon", INDEX_HTML)
+
+    def test_branding_cards_use_stable_preview_and_copy_cells(self) -> None:
+        self.assertIn('<span class="branding-preview"><img src="/assets/logo/cat.png" alt=""></span>', INDEX_HTML)
+        self.assertIn('<span class="branding-preview"><img src="/assets/logo/grass.png" alt=""></span>', INDEX_HTML)
+        self.assertIn('<span class="branding-preview"><img src="/assets/logo/sign.png" alt=""></span>', INDEX_HTML)
+        self.assertIn('<span class="branding-copy">', INDEX_HTML)
+        self.assertIn(".branding-preview {", INDEX_HTML)
+        self.assertIn("place-items: center;", INDEX_HTML)
+        self.assertIn(".branding-preview img {", INDEX_HTML)
+        self.assertIn("max-width: 36px;", INDEX_HTML)
+        self.assertIn("max-height: 36px;", INDEX_HTML)
+        self.assertIn(".branding-copy {", INDEX_HTML)
+        self.assertNotIn(".branding-option span {\n      display: block;", INDEX_HTML)
 
     def test_settings_menu_exposes_glossary_management(self) -> None:
         self.assertIn('id="settings-glossary-section"', INDEX_HTML)
@@ -304,6 +372,12 @@ class WebUiContractTest(unittest.TestCase):
         self.assertIn("height: fit-content;", INDEX_HTML)
         self.assertIn("@media (max-width: 1120px)", INDEX_HTML)
 
+    def test_desktop_zoom_uses_compensated_viewport_height(self) -> None:
+        self.assertIn("--app-vh: var(--desktop-vh, 100vh);", INDEX_HTML)
+        self.assertIn("min-height: var(--app-vh);", INDEX_HTML)
+        self.assertIn("height: var(--app-vh);", INDEX_HTML)
+        self.assertIn("max-height: calc(var(--app-vh) - 104px);", INDEX_HTML)
+
     def test_task_history_view_is_exposed(self) -> None:
         self.assertIn('data-view="history"', INDEX_HTML)
         self.assertIn('id="history-panel"', INDEX_HTML)
@@ -335,6 +409,20 @@ class WebUiContractTest(unittest.TestCase):
         self.assertIn("history-download-missing", INDEX_HTML)
         self.assertIn("history.file_missing", INDEX_HTML)
 
+    def test_history_artifacts_list_scrolls_inside_task_detail(self) -> None:
+        self.assertIn(".history-detail-body {\n      min-height: 0;\n      display: flex;", INDEX_HTML)
+        self.assertIn("flex-direction: column;", INDEX_HTML)
+        self.assertIn("overflow-y: auto;", INDEX_HTML)
+        self.assertIn(".history-detail-body > * {\n      flex: 0 0 auto;", INDEX_HTML)
+        self.assertIn(".history-artifacts {\n      display: grid;\n      grid-template-rows: auto auto;", INDEX_HTML)
+        self.assertNotIn(".history-artifacts {\n      display: grid;\n      grid-template-rows: auto auto;\n      overflow: hidden;", INDEX_HTML)
+        self.assertIn(".history-artifacts-list {\n      min-height: 0;", INDEX_HTML)
+        self.assertNotIn("max-height: clamp(220px, 34vh, 420px);", INDEX_HTML)
+        self.assertIn("overflow: visible;", INDEX_HTML)
+        self.assertIn("class=\"history-artifacts-list\"", INDEX_HTML)
+        self.assertIn(".history-page {\n        height: auto;\n        max-height: none;\n        overflow: visible;", INDEX_HTML)
+        self.assertIn(".history-detail-body {\n        overflow: visible;", INDEX_HTML)
+
     def test_docs_and_help_views_are_exposed(self) -> None:
         self.assertIn('data-view="docs"', INDEX_HTML)
         self.assertIn('data-view="help"', INDEX_HTML)
@@ -354,8 +442,52 @@ class WebUiContractTest(unittest.TestCase):
         self.assertIn("renderHelpTopics", INDEX_HTML)
         self.assertIn("renderDocMeta(payload)", INDEX_HTML)
         self.assertIn("renderRelatedDocs(payload.related_topics)", INDEX_HTML)
-        self.assertIn("fetch('/api/docs'", INDEX_HTML)
+        self.assertIn("const queryKey = docsLocaleQuery();", INDEX_HTML)
+        self.assertIn("fetch(`/api/docs${queryKey}`)", INDEX_HTML)
+        self.assertIn("fetch(`/api/docs/${encodeURIComponent(slug)}${docsLocaleQuery()}`)", INDEX_HTML)
         self.assertIn("data-doc-target", INDEX_HTML)
+
+    def test_docs_and_help_shell_text_uses_ui_locale_messages(self) -> None:
+        for snippet in (
+            'data-i18n="docs.subtitle"',
+            'data-i18n="docs.directory"',
+            'data-i18n="docs.filter_hint"',
+            'data-i18n="docs.search"',
+            'data-i18n-placeholder="docs.search_placeholder"',
+            'data-i18n="docs.select_prompt"',
+            'data-i18n="docs.detail"',
+            'data-i18n="docs.related_topics"',
+            'data-i18n="help.subtitle"',
+            'data-i18n="help.quick_check"',
+            'data-i18n="help.quick_check_subtitle"',
+        ):
+            self.assertIn(snippet, INDEX_HTML)
+
+    def test_ui_locale_switch_reloads_docs_and_help_content(self) -> None:
+        self.assertIn("function docsLocaleQuery()", INDEX_HTML)
+        self.assertIn("const params = new URLSearchParams();", INDEX_HTML)
+        self.assertIn("params.set('ui_locale', uiLocale.value || 'zh_cn');", INDEX_HTML)
+        self.assertIn("params.set('ui_locale_dir', dir);", INDEX_HTML)
+        self.assertIn("function resetDocsLocaleCache()", INDEX_HTML)
+        self.assertIn("docsIndex = [];", INDEX_HTML)
+        self.assertIn("docsIndexCacheKey = '';", INDEX_HTML)
+        self.assertIn("docDetailCache.clear();", INDEX_HTML)
+        self.assertIn("renderDocsList(docsSearch.value);", INDEX_HTML)
+        self.assertIn("renderHelpTopics();", INDEX_HTML)
+        self.assertIn("function refreshDocsForCurrentLocale()", INDEX_HTML)
+        self.assertIn("resetDocsLocaleCache();", INDEX_HTML)
+        self.assertIn("refreshDocsForCurrentLocale();", INDEX_HTML)
+        self.assertIn("const cacheKey = `${docsLocaleQuery()}:${String(slug || '').trim()}`;", INDEX_HTML)
+        self.assertIn("renderHelpTopics();", INDEX_HTML)
+
+    def test_docs_index_cache_is_scoped_to_current_locale_query(self) -> None:
+        self.assertIn("let docsIndexCacheKey = '';", INDEX_HTML)
+        self.assertIn("let docsIndexLoadToken = 0;", INDEX_HTML)
+        self.assertIn("const queryKey = docsLocaleQuery();", INDEX_HTML)
+        self.assertIn("if (docsIndex.length && docsIndexCacheKey === queryKey) {", INDEX_HTML)
+        self.assertIn("const requestToken = ++docsIndexLoadToken;", INDEX_HTML)
+        self.assertIn("if (requestToken !== docsIndexLoadToken || queryKey !== docsLocaleQuery()) {", INDEX_HTML)
+        self.assertIn("docsIndexCacheKey = queryKey;", INDEX_HTML)
 
     def test_workspace_context_help_links_point_to_docs(self) -> None:
         self.assertIn('id="provider-doc-link"', INDEX_HTML)
@@ -425,21 +557,28 @@ class WebUiContractTest(unittest.TestCase):
 
     def test_docs_switching_reuses_loaded_index_and_caches_detail_payloads(self) -> None:
         self.assertIn("const docDetailCache = new Map();", INDEX_HTML)
-        self.assertIn("if (docsIndex.length) {\n        renderDocsList(docsSearch.value);", INDEX_HTML)
+        self.assertIn("if (docsIndex.length && docsIndexCacheKey === queryKey) {\n        renderDocsList(docsSearch.value);", INDEX_HTML)
         self.assertIn("let payload = cacheKey ? docDetailCache.get(cacheKey) : null;", INDEX_HTML)
-        self.assertIn("docDetailCache.set(payload.slug, payload);", INDEX_HTML)
+        self.assertIn("docDetailCache.set(cacheKey, payload);", INDEX_HTML)
 
     def test_help_topics_stay_in_help_view_until_explicit_doc_open(self) -> None:
         self.assertIn("button.addEventListener('click', () => {\n          activeHelpSlug = button.dataset.helpDoc || 'quick-start';\n          renderHelpTopics();\n          renderHelpPreview(activeHelpSlug);", INDEX_HTML)
         self.assertNotIn("renderHelpTopics();\n          openDocView(button.dataset.helpDoc)", INDEX_HTML)
         self.assertIn("button.addEventListener('click', () => {\n          activeHelpSlug = button.dataset.helpRelated || activeHelpSlug;\n          renderHelpTopics();\n          renderHelpPreview(activeHelpSlug);", INDEX_HTML)
         self.assertIn("data-help-open", INDEX_HTML)
-        self.assertIn("打开完整文档", INDEX_HTML)
-        self.assertIn("相关主题", INDEX_HTML)
-        self.assertIn("问题场景", INDEX_HTML)
-        self.assertIn("快速判断", INDEX_HTML)
-        self.assertIn("常见原因", INDEX_HTML)
-        self.assertIn("下一步", INDEX_HTML)
+        self.assertIn("help.open_full_doc", INDEX_HTML)
+        self.assertIn("docs.related_topics", INDEX_HTML)
+        self.assertIn("help.topic_scenarios", INDEX_HTML)
+        self.assertIn("help.quick_check", INDEX_HTML)
+        self.assertIn("help.common_causes", INDEX_HTML)
+        self.assertIn("help.next_steps", INDEX_HTML)
+
+    def test_help_topic_directory_uses_localized_docs_index(self) -> None:
+        self.assertIn("function preferredHelpTopicItems()", INDEX_HTML)
+        self.assertIn("docsIndex.filter(item => preferredSlugs.includes(item.slug))", INDEX_HTML)
+        self.assertIn("const items = preferredHelpTopicItems();", INDEX_HTML)
+        self.assertNotIn("{ slug: 'quick-start', key: 'quick_start', title: '第一次使用'", INDEX_HTML)
+        self.assertNotIn("summary: '先看快速开始，按最小流程跑通。'", INDEX_HTML)
 
     def test_progress_polling_ignores_stale_async_responses_after_completion(self) -> None:
         self.assertIn("let progressPollToken = 0;", INDEX_HTML)
@@ -489,7 +628,7 @@ class WebUiContractTest(unittest.TestCase):
         self.assertIn("note.className = 'pack-name-note';", INDEX_HTML)
 
     def test_provider_panel_title_and_fields_change_with_deep_free(self) -> None:
-        self.assertIn("providerTitle.textContent = provider.value === 'deep-free' ? '免费翻译设置' : (provider.value === 'argos' ? '离线翻译设置' : 'AI 接口配置');", INDEX_HTML)
+        self.assertIn("providerTitle.textContent = provider.value === 'deep-free' ? ui('advanced.free_title', '免费翻译设置') : (provider.value === 'argos' ? ui('advanced.offline_title', '离线翻译设置') : ui('advanced.api_title', 'AI 接口配置'));", INDEX_HTML)
         self.assertIn("model_field: !['deep-free', 'argos', 'azure-translator', 'libretranslate'].includes(provider.value)", INDEX_HTML)
         self.assertIn("api_key: provider.value !== 'deep-free' && provider.value !== 'argos' && provider.value !== 'libretranslate'", INDEX_HTML)
         self.assertIn("api_base_url: !['deep-free', 'argos'].includes(provider.value)", INDEX_HTML)
@@ -504,7 +643,7 @@ class WebUiContractTest(unittest.TestCase):
         self.assertIn(".api-box [data-provider-field][hidden] {\n      display: none !important;", INDEX_HTML)
 
     def test_provider_panel_help_popover_does_not_force_horizontal_scroll(self) -> None:
-        self.assertIn(".config-panel,\n    .results-panel {\n      max-height: calc(100vh - 104px);", INDEX_HTML)
+        self.assertIn(".config-panel,\n    .results-panel {\n      max-height: calc(var(--app-vh) - 104px);", INDEX_HTML)
         self.assertIn("overflow-y: auto;", INDEX_HTML)
         self.assertIn("overflow-x: hidden;", INDEX_HTML)
         self.assertIn(".provider-badge-wrap {\n      position: relative;", INDEX_HTML)
@@ -574,6 +713,9 @@ class WebUiContractTest(unittest.TestCase):
         self.assertIn("menu.style.position = 'fixed';", INDEX_HTML)
         self.assertIn("menu.style.left =", INDEX_HTML)
         self.assertIn("menu.style.top =", INDEX_HTML)
+        self.assertIn("desktopZoomScale()", INDEX_HTML)
+        self.assertIn("const cssZoom = desktopZoomScale();", INDEX_HTML)
+        self.assertIn("rect.left / cssZoom", INDEX_HTML)
         self.assertIn("menu.style.maxHeight =", INDEX_HTML)
         self.assertIn("menu.style.removeProperty('position')", INDEX_HTML)
         self.assertIn("menu.style.removeProperty('max-height')", INDEX_HTML)
@@ -581,12 +723,22 @@ class WebUiContractTest(unittest.TestCase):
         self.assertNotIn("menu.style.setProperty('--dropdown-max-height'", INDEX_HTML)
         self.assertIn("const openAbove = belowSpace < 180 && aboveSpace > belowSpace", INDEX_HTML)
 
+    def test_floating_dropdowns_reposition_when_scroll_containers_move(self) -> None:
+        self.assertIn("function syncFloatingMenus()", INDEX_HTML)
+        self.assertIn("function scheduleFloatingMenuSync()", INDEX_HTML)
+        self.assertIn("menu._floatingTrigger = anchor;", INDEX_HTML)
+        self.assertIn("positionFloatingMenu(shell, menu, menu._floatingTrigger);", INDEX_HTML)
+        self.assertIn("window.requestAnimationFrame(syncFloatingMenus)", INDEX_HTML)
+        self.assertIn("window.addEventListener('scroll', scheduleFloatingMenuSync, true);", INDEX_HTML)
+        self.assertIn("window.addEventListener('resize', scheduleFloatingMenuSync);", INDEX_HTML)
+        self.assertIn("menu._floatingTrigger = null;", INDEX_HTML)
+
     def test_history_list_uses_master_detail_scroll_containers(self) -> None:
         self.assertIn(".history-stage {\n      min-height: 0;", INDEX_HTML)
         self.assertIn(".history-master,\n    .history-detail {\n      min-width: 0;", INDEX_HTML)
         self.assertIn(".history-list {\n      min-height: 0;", INDEX_HTML)
         self.assertIn(".history-detail-body {\n      min-height: 0;", INDEX_HTML)
-        self.assertIn("grid-template-rows: minmax(0, 1fr);", INDEX_HTML)
+        self.assertIn("display: flex;\n      flex-direction: column;", INDEX_HTML)
         self.assertIn("grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);", INDEX_HTML)
         self.assertIn("class=\"history-task-card ${isActive ? 'active' : ''}\"", INDEX_HTML)
         self.assertIn("class=\"history-artifacts\"", INDEX_HTML)
@@ -753,6 +905,15 @@ class WebUiContractTest(unittest.TestCase):
             "settings.memory_scope_empty",
             "settings.preset_empty",
             "settings.preset_saved_config",
+            "settings.system_section",
+            "settings.data_dir",
+            "settings.default_cache_dir",
+            "settings.default_ui_locale_dir",
+            "settings.brand_logo",
+            "settings.brand_cat",
+            "settings.brand_grass",
+            "settings.brand_sign",
+            "settings.brand_saved",
         ):
             self.assertIn(key, zh_messages)
             self.assertIn(key, en_messages)
@@ -849,6 +1010,10 @@ class WebUiContractTest(unittest.TestCase):
     def test_ftbquests_snbt_upload_infers_source_locale_in_ui(self) -> None:
         self.assertIn('name="source_locale" id="source_locale"', INDEX_HTML)
         self.assertIn('<option value="en_us" selected>en_us - English (US)</option>', INDEX_HTML)
+        source = Path(__file__).resolve().parents[1] / "src" / "mc_mod_i18n" / "web.py"
+        text = source.read_text(encoding="utf-8")
+        self.assertIn('INDEX_HTML = INDEX_HTML.replace("__SOURCE_LOCALE_OPTIONS_HTML__", _locale_options_html("en_us"))', text)
+        self.assertNotIn('<option value="en_us" selected>en_us - English (US)</option>', text)
         self.assertIn("inferLocaleFromFtbquestsUploadPath", INDEX_HTML)
         self.assertIn("syncFtbquestsSourceLocaleFromInput", INDEX_HTML)
         self.assertIn("ftbquestsInput.addEventListener('change', handleFtbquestsInputChange)", INDEX_HTML)
@@ -946,6 +1111,38 @@ class WebUiContractTest(unittest.TestCase):
     def test_api_debug_log_help_can_escape_open_advanced_panel(self) -> None:
         self.assertIn(".inline-advanced-panel[open] {\n      position: relative;\n      z-index: 2;\n      overflow: visible;", INDEX_HTML)
         self.assertIn(".api-debug-log-line:hover,\n    .api-debug-log-line:focus-within {\n      z-index: 40;", INDEX_HTML)
+
+    def test_settings_card_subtitles_use_hover_popover(self) -> None:
+        self.assertIn(".settings-head:hover .card-head-copy,\n    .settings-head:focus-within .card-head-copy", INDEX_HTML)
+        self.assertIn("transform: translateY(-6px) scale(.98)", INDEX_HTML)
+        self.assertIn('<span class="card-head-copy" role="tooltip" data-i18n="history.subtitle">找回最近任务的下载、报告和日志。</span>', INDEX_HTML)
+        self.assertNotIn('<strong data-i18n="history.title">任务历史</strong>\n            <span data-i18n="history.subtitle">找回最近任务的下载、报告和日志。</span>', INDEX_HTML)
+
+    def test_high_visibility_frontend_text_uses_i18n(self) -> None:
+        for expected in (
+            'data-i18n="workflow.input_step"',
+            'data-i18n="workflow.language_step"',
+            'data-i18n="workflow.optional_step"',
+            'data-i18n="workflow.preflight_step"',
+            'data-i18n="advanced.apply_key"',
+            'data-i18n="advanced.region_help"',
+            'data-i18n="docs.open_provider"',
+            'data-i18n="docs.open_output"',
+            'data-i18n="docs.open_preflight"',
+            'data-i18n="docs.open_history"',
+            'data-i18n="docs.open_memory"',
+            'data-i18n="history.detail"',
+            'data-i18n="history.select_detail"',
+            'data-i18n="settings.history_section"',
+            'data-i18n="settings.history_note_body"',
+            "ui('pack_dialog.review_title'",
+            "ui('pack_dialog.review_body'",
+            "ui('result.api_log_deep_free_empty'",
+        ):
+            with self.subTest(expected=expected):
+                self.assertIn(expected, INDEX_HTML)
+        self.assertNotIn("noteTitle.textContent = '任何翻译结果最好都由人工审核一遍哦'", INDEX_HTML)
+        self.assertNotIn("? '当前翻译器通过 deep-translator 调用第三方免费引擎", INDEX_HTML)
 
     def test_inline_scripts_are_syntax_valid_when_node_is_available(self) -> None:
         node = shutil.which("node")
