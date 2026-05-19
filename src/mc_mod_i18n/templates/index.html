@@ -114,8 +114,13 @@
       --radius-sm: 10px;
       --radius-md: 14px;
       --radius-lg: 18px;
+      --motion-micro: 120ms;
       --motion-fast: 160ms;
       --motion-base: 220ms;
+      --motion-panel: 190ms;
+      --motion-emphasis: 260ms;
+      --ease-standard: cubic-bezier(.2, 0, .2, 1);
+      --ease-emphasis: cubic-bezier(.16, 1, .3, 1);
       --dropdown-motion-offset: 8px;
       --focus-ring: 0 0 0 3px rgba(38, 104, 168, .14);
       --app-vh: var(--desktop-vh, 100vh);
@@ -1994,6 +1999,45 @@
         transform: translateY(0);
       }
     }
+    @keyframes toolViewEnter {
+      from {
+        opacity: 0;
+        transform: translateY(6px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+    @keyframes toolDetailEnter {
+      from {
+        opacity: 0;
+        transform: translateY(5px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+    @keyframes toolStatusEnter {
+      0% {
+        opacity: .72;
+        transform: translateY(3px);
+      }
+      100% {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+    .motion-view-enter {
+      animation: toolViewEnter var(--motion-panel) var(--ease-standard);
+    }
+    .motion-detail-enter {
+      animation: toolDetailEnter var(--motion-panel) var(--ease-standard);
+    }
+    .motion-status-enter {
+      animation: toolStatusEnter var(--motion-emphasis) var(--ease-emphasis);
+    }
     .results {
       min-height: 0;
       padding: 20px;
@@ -2014,7 +2058,7 @@
     .view-shell.active {
       min-height: 0;
       display: grid;
-      animation: fadeInUp var(--motion-base) ease;
+      animation: toolViewEnter var(--motion-panel) var(--ease-standard);
     }
     .view-head {
       display: flex;
@@ -2638,27 +2682,30 @@
     }
     .docs-page-shell {
       display: grid;
+      grid-template-rows: minmax(0, 1fr);
       gap: 18px;
       min-height: 0;
+      height: 100%;
       padding: 18px 22px 22px;
-      overflow: auto;
+      overflow: hidden;
       background: linear-gradient(180deg, var(--panel), color-mix(in srgb, var(--panel) 84%, var(--surface)));
       scrollbar-width: thin;
       scrollbar-color: var(--scroll-thumb) transparent;
     }
     .docs-stage {
       min-height: 0;
+      height: 100%;
       display: grid;
       grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
       gap: 16px;
-      align-items: start;
+      align-items: stretch;
     }
     .docs-sidebar {
       min-height: 0;
       min-width: 0;
       display: grid;
       grid-template-rows: auto minmax(0, 1fr);
-      height: min(680px, calc(var(--app-vh) - 210px));
+      height: 100%;
       gap: 0;
       border: 1px solid var(--card-border);
       border-radius: calc(var(--radius-lg) + 2px);
@@ -2670,8 +2717,10 @@
       min-height: 0;
       min-width: 0;
       display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
       align-content: start;
       gap: 0;
+      height: 100%;
       border: 1px solid var(--card-border);
       border-radius: calc(var(--radius-lg) + 2px);
       background: var(--panel);
@@ -2682,8 +2731,10 @@
       min-height: 0;
       min-width: 0;
       display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
       align-content: start;
       gap: 0;
+      height: 100%;
       border: 1px solid var(--card-border);
       border-radius: calc(var(--radius-lg) + 2px);
       background: var(--panel);
@@ -2724,7 +2775,7 @@
       grid-template-rows: auto minmax(0, 1fr);
       gap: 14px;
       padding: 16px;
-      overflow-y: auto;
+      overflow: hidden;
       overscroll-behavior: contain;
     }
     .docs-search {
@@ -2818,7 +2869,7 @@
       opacity: 1;
     }
     .docs-detail {
-      grid-template-rows: auto minmax(0, 1fr);
+      align-content: stretch;
     }
     .docs-body {
       display: grid;
@@ -2838,6 +2889,7 @@
       display: inline-flex;
       align-items: center;
       gap: 6px;
+      max-width: 100%;
       min-height: 28px;
       padding: 5px 10px;
       border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--line));
@@ -2847,6 +2899,12 @@
       font-size: 12px;
       font-weight: 700;
       line-height: 1.35;
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+    .docs-chip span {
+      min-width: 0;
+      overflow-wrap: anywhere;
     }
     .docs-content {
       display: grid;
@@ -2980,30 +3038,56 @@
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 16px;
       align-items: stretch;
+      min-height: 0;
+      height: 100%;
     }
     .help-topic-column {
       min-width: 0;
       display: grid;
-      align-content: start;
       gap: 16px;
+      min-height: 0;
     }
     .help-topic-column .settings-section {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
       height: 100%;
+      min-height: 0;
     }
     .help-topic-list {
       display: grid;
+      align-content: start;
       gap: 10px;
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
     }
     .help-topic-link {
       position: relative;
+      display: grid;
       gap: 12px;
+      align-content: start;
+      grid-auto-rows: max-content;
       min-width: 0;
       max-width: 100%;
+      height: auto;
       min-height: 64px;
-      padding: 12px 46px 12px 14px;
+      padding: 14px 46px 14px 14px;
       align-items: flex-start;
       white-space: normal;
       line-height: 1.42;
+      overflow: visible;
+    }
+    .help-topic-link strong,
+    .help-topic-link span {
+      display: block;
+      min-width: 0;
+      max-width: 100%;
+      white-space: normal;
+      overflow: visible;
+      overflow-wrap: anywhere;
+      word-break: break-word;
+      line-height: 1.48;
+      text-overflow: clip;
     }
     .help-topic-category {
       display: inline-flex;
@@ -3019,12 +3103,12 @@
       color: var(--muted);
       font-size: 11px;
       font-weight: 700;
-      line-height: 1.3;
+      line-height: 1.45;
       white-space: normal;
       overflow-wrap: break-word;
       word-break: break-word;
       text-overflow: ellipsis;
-      overflow: hidden;
+      overflow: visible;
     }
     .help-topic-link.active .help-topic-category {
       color: color-mix(in srgb, var(--button-text) 84%, transparent);
@@ -3051,12 +3135,15 @@
     .help-preview-card {
       display: grid;
       grid-template-rows: auto minmax(0, 1fr);
+      min-height: 0;
     }
     .help-preview-body {
       display: grid;
       gap: 16px;
       min-height: 0;
       padding: 18px;
+      overflow-y: auto;
+      overscroll-behavior: contain;
     }
     .help-preview-body.compact {
       gap: 14px;
@@ -3129,13 +3216,19 @@
       box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
     }
     .help-preview-actions .secondary {
+      height: auto;
+      min-height: 42px;
       border: 1px solid var(--accent-soft-line);
       background: var(--accent-soft);
       color: var(--accent);
+      white-space: normal;
     }
     .help-preview-actions .secondary span {
       color: inherit;
       opacity: 1;
+      min-width: 0;
+      white-space: normal;
+      overflow-wrap: anywhere;
     }
     .pack-name-head,
     .settings-head {
@@ -3289,23 +3382,27 @@
     }
     .branding-options {
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: 10px;
+      grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+      gap: 12px;
     }
     .branding-option {
+      position: relative;
+      height: auto;
+      min-height: 78px;
       min-width: 0;
       display: grid;
-      grid-template-columns: 44px minmax(0, 1fr);
+      grid-template-columns: 50px minmax(0, 1fr);
       align-items: center;
-      gap: 10px;
-      padding: 10px;
+      gap: 12px;
+      padding: 12px 38px 12px 12px;
       border: 1px solid var(--line);
-      border-radius: var(--radius-sm);
+      border-radius: var(--radius-md);
       background: var(--field-bg);
       color: var(--text);
       text-align: left;
       box-shadow: none;
       cursor: pointer;
+      white-space: normal;
     }
     .branding-option:hover:not(:disabled) {
       border-color: var(--accent-soft-line);
@@ -3318,9 +3415,29 @@
       color: var(--accent);
       box-shadow: var(--focus-ring);
     }
+    .branding-option.active::after {
+      content: "\eb7b";
+      position: absolute;
+      top: 12px;
+      right: 12px;
+      width: 20px;
+      height: 20px;
+      display: grid;
+      place-items: center;
+      border-radius: 999px;
+      background: var(--accent);
+      color: var(--button-text);
+      font-family: "remixicon";
+      font-size: 14px;
+      line-height: 1;
+    }
+    .branding-option[aria-busy="true"] {
+      cursor: wait;
+      opacity: .72;
+    }
     .branding-preview {
-      width: 44px;
-      height: 44px;
+      width: 50px;
+      height: 50px;
       display: grid;
       place-items: center;
       border-radius: 8px;
@@ -3330,8 +3447,8 @@
     .branding-preview img {
       width: auto;
       height: auto;
-      max-width: 36px;
-      max-height: 36px;
+      max-width: 40px;
+      max-height: 40px;
       object-fit: contain;
       border-radius: 6px;
     }
@@ -3343,20 +3460,26 @@
     .branding-option strong {
       display: block;
       min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
       color: inherit;
       font-size: 13px;
-      line-height: 1.3;
+      line-height: 1.38;
+      white-space: normal;
+      overflow-wrap: anywhere;
     }
     .branding-menu-name {
       display: block;
       min-width: 0;
-      overflow: hidden;
-      text-overflow: ellipsis;
       color: var(--muted);
       font-size: 11px;
-      line-height: 1.3;
+      line-height: 1.45;
+      white-space: normal;
+      overflow-wrap: anywhere;
+    }
+    .branding-effect-note {
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius-sm);
+      background: color-mix(in srgb, var(--field-bg-soft) 72%, var(--panel));
     }
     .history-download-missing {
       display: inline-flex;
@@ -5105,6 +5228,11 @@
     .side-nav .nav-item,
     .top-tabs .tab-pill,
     .pill,
+    .docs-link,
+    .help-topic-link,
+    .history-task-card,
+    .settings-nav button,
+    .docs-chip,
     .toolbar button,
     .pager button,
     .tabs button,
@@ -5115,10 +5243,13 @@
     select,
     textarea,
     .status,
+    .settings-status,
+    .model-status,
+    .provider-test-status,
     .metric,
     section,
     .loading-card {
-      transition: transform var(--motion-base) ease, background-color var(--motion-base) ease, border-color var(--motion-base) ease, color var(--motion-base) ease, box-shadow var(--motion-base) ease, opacity var(--motion-base) ease;
+      transition: transform var(--motion-base) var(--ease-standard), background-color var(--motion-base) var(--ease-standard), border-color var(--motion-base) var(--ease-standard), color var(--motion-base) var(--ease-standard), box-shadow var(--motion-base) var(--ease-standard), opacity var(--motion-base) var(--ease-standard);
     }
     .nav-item:hover,
     .tab-pill:hover:not(.active),
@@ -5465,6 +5596,29 @@
         grid-template-columns: 1fr;
       }
       .history-detail-body {
+        overflow: visible;
+      }
+      .docs-page-shell {
+        height: auto;
+        overflow: visible;
+        padding: 16px;
+      }
+      .docs-stage,
+      .help-topic-grid {
+        height: auto;
+        grid-template-columns: 1fr;
+      }
+      .docs-sidebar,
+      .docs-detail,
+      .help-preview-card {
+        height: auto;
+        min-height: 360px;
+      }
+      .docs-sidebar-body,
+      .docs-list,
+      .docs-body,
+      .help-topic-list,
+      .help-preview-body {
         overflow: visible;
       }
       .metric {
@@ -6080,7 +6234,7 @@ __TARGET_LOCALE_OPTIONS_HTML__
                 <span class="branding-copy"><strong data-i18n="settings.brand_sign">签名标识</strong><span class="branding-menu-name" data-i18n="settings.brand_sign_asset">签名 PNG</span></span>
               </button>
             </div>
-            <div class="settings-current">
+            <div class="settings-current branding-effect-note">
               <span data-i18n="settings.brand_effect">同步范围</span>
               <strong data-i18n="settings.brand_effect_desc">网页标签、侧边栏、导出资源包图标，以及下次打包的 exe 图标。</strong>
             </div>
@@ -6953,6 +7107,13 @@ __TARGET_LOCALE_OPTIONS_HTML__
       if (favicon) {
         favicon.href = `/assets/logo/current-favicon?${stamp}`;
       }
+    }
+
+    function setBrandingBusy(isBusy) {
+      document.querySelectorAll('[data-brand-logo]').forEach(button => {
+        button.disabled = Boolean(isBusy);
+        button.setAttribute('aria-busy', isBusy ? 'true' : 'false');
+      });
     }
 
     function applySystemDirectoryInfo(payload) {
@@ -8044,16 +8205,24 @@ __TARGET_LOCALE_OPTIONS_HTML__
       if (settingsBrandingOptions) {
         settingsBrandingOptions.addEventListener('click', async event => {
           const button = event.target.closest('[data-brand-logo]');
-          if (!button) {
+          if (!button || button.disabled) {
             return;
           }
+          const previousLogo = currentBrandLogo;
           const nextLogo = normalizeBrandingChoice(button.dataset.brandLogo);
+          if (nextLogo === currentBrandLogo) {
+            return;
+          }
           applyBrandingChoice(nextLogo);
+          setBrandingBusy(true);
           try {
             await saveSystemSettings(nextLogo);
             setSettingsStatus(formatUi('settings.brand_saved', '已切换品牌图标：{name}。', { name: brandLogoLabel(nextLogo) }));
           } catch (error) {
+            applyBrandingChoice(previousLogo);
             setSettingsStatus(error.message || ui('settings.system_save_failed', '系统设置保存失败'), true);
+          } finally {
+            setBrandingBusy(false);
           }
         });
       }
@@ -9092,6 +9261,7 @@ __TARGET_LOCALE_OPTIONS_HTML__
       providerDisplay.textContent = ui(`provider.${provider.value}`, provider.options[provider.selectedIndex]?.textContent || ui('translator.provider', '翻译器'));
       updateSelectMenuActive(providerMenu, provider.value);
       if (!preset) {
+        renderProviderRiskBanner();
         keyLink.hidden = true;
         setModelStatus('');
         setProviderTestStatus('');
@@ -9530,6 +9700,33 @@ __TARGET_LOCALE_OPTIONS_HTML__
       }
     }
 
+    function replayMotion(element, className = 'motion-detail-enter') {
+      if (!element || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+        return;
+      }
+      element.classList.remove(className);
+      void element.offsetWidth;
+      element.classList.add(className);
+    }
+
+    function observeStatusMotion() {
+      const pending = new WeakSet();
+      [statusBox, settingsStatus, modelStatus, providerTestStatus].filter(Boolean).forEach(element => {
+        const observer = new MutationObserver(() => {
+          if (pending.has(element)) {
+            return;
+          }
+          pending.add(element);
+          requestAnimationFrame(() => {
+            pending.delete(element);
+            replayMotion(element, 'motion-status-enter');
+          });
+        });
+        observer.observe(element, { childList: true, characterData: true, subtree: true });
+      });
+    }
+    observeStatusMotion();
+
     function switchView(view) {
       resultState.mainView = view;
       closeAllSelectMenus();
@@ -9546,22 +9743,28 @@ __TARGET_LOCALE_OPTIONS_HTML__
       document.querySelector('.results-panel')?.toggleAttribute('hidden', isMainUtilityView);
       if (settingsPage) {
         settingsPage.hidden = !isSettingsView;
+        if (isSettingsView) {
+          replayMotion(settingsPage, 'motion-view-enter');
+        }
       }
       if (historyPanel) {
         historyPanel.hidden = !isHistoryView;
         if (isHistoryView) {
+          replayMotion(historyPanel, 'motion-view-enter');
           loadJobHistory();
         }
       }
       if (docsPanel) {
         docsPanel.hidden = !isDocsView;
         if (isDocsView) {
+          replayMotion(docsPanel, 'motion-view-enter');
           loadDocsIndex();
         }
       }
       if (helpPanel) {
         helpPanel.hidden = !isHelpView;
         if (isHelpView) {
+          replayMotion(helpPanel, 'motion-view-enter');
           loadDocsIndex().then(() => renderHelpTopics());
         }
       }
@@ -9595,6 +9798,9 @@ __TARGET_LOCALE_OPTIONS_HTML__
       });
       document.querySelectorAll('#settings-page .settings-section').forEach(section => {
         section.hidden = section.id !== targetId;
+        if (section.id === targetId) {
+          replayMotion(section, 'motion-detail-enter');
+        }
       });
       if (targetId === 'settings-history-section') {
         loadHistorySettings(true).catch(() => {});
@@ -9771,6 +9977,7 @@ __TARGET_LOCALE_OPTIONS_HTML__
       renderDocMeta(payload);
       if (docsContent) {
         docsContent.innerHTML = payload.html || '';
+        replayMotion(docsContent, 'motion-detail-enter');
         docsContent.querySelectorAll('a[href^="#/docs/"]').forEach(link => {
           link.addEventListener('click', event => {
             event.preventDefault();
@@ -9797,6 +10004,7 @@ __TARGET_LOCALE_OPTIONS_HTML__
       const item = findDocBySlug(slug) || docsIndex[0];
       if (!item) {
         helpDocPreview.innerHTML = `<div class="empty">${escapeHtml(ui('help.preview_empty', '暂无帮助预览。'))}</div>`;
+        replayMotion(helpDocPreview, 'motion-detail-enter');
         return;
       }
       const issueSlug = String(item.slug || '').replace(/-/g, '_');
@@ -9840,6 +10048,7 @@ __TARGET_LOCALE_OPTIONS_HTML__
           </div>
         </div>
       `;
+      replayMotion(helpDocPreview, 'motion-detail-enter');
       helpDocPreview.querySelectorAll('[data-help-open]').forEach(button => {
         button.addEventListener('click', () => openDocView(button.dataset.helpOpen));
       });
@@ -10033,6 +10242,7 @@ __TARGET_LOCALE_OPTIONS_HTML__
       if (!record) {
         historyDetail.innerHTML = `<div class="empty">${escapeHtml(ui('history.select_detail', '选择一条历史任务查看详情。'))}</div>`;
         if (headActions) headActions.innerHTML = '';
+        replayMotion(historyDetail, 'motion-detail-enter');
         return;
       }
       const downloads = historyDownloadEntries(record);
@@ -10062,6 +10272,7 @@ __TARGET_LOCALE_OPTIONS_HTML__
           </div>
         </div>
       `;
+      replayMotion(historyDetail, 'motion-detail-enter');
       bindDocTriggers();
     }
 
