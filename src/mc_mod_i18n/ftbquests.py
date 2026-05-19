@@ -9,7 +9,7 @@ import re
 from typing import Any
 from zipfile import ZIP_DEFLATED, ZipFile
 
-from .core import translate_batch_with_failures
+from .core import response_guard_warning, translate_batch_with_failures
 from .pack import CHECKPOINT_DIR, sanitize_pack_name
 from .report import ReportEntry
 from .translator import TranslationItem
@@ -260,7 +260,7 @@ def process_ftbquests_lang_file(
                 source=leaf.text,
                 target=translated,
                 status="translated",
-                message="",
+                message=response_guard_warning(translator, item_id),
             )
         )
 

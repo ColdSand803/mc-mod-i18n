@@ -5,7 +5,7 @@ from pathlib import Path
 import re
 from typing import Any
 
-from .core import translate_batch_with_failures
+from .core import response_guard_warning, translate_batch_with_failures
 from .help_docs import set_ui_locale_doc_translation, ui_locale_doc_translation_entries
 from .report import ReportEntry
 from .translator import LOCALE_DISPLAY_NAMES, TranslationItem
@@ -203,7 +203,7 @@ def process_json_language_file(
                 source=source_text,
                 target=translated,
                 status="translated",
-                message="",
+                message=response_guard_warning(translator, item_id),
             )
         )
 

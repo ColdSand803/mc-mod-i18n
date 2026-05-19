@@ -17,6 +17,7 @@ from .hardcoded import _NESTED_JAR_PREFIXES
 from .lang import collect_lang_documents, extract_plain_text, target_path_for
 from .pack import OutputLangDocument
 from .report import ReportEntry
+from .response_guard import sanitize_provider_response
 from .translator import (
     AnthropicCompatibleTranslator,
     CopyTranslator,
@@ -191,6 +192,7 @@ class TranslationMemoryTranslator:
         if misses:
             missed_translations, failed = translate_batch_with_failures(self.inner, misses)
             translations.update(missed_translations)
+            self.response_guard_warnings = getattr(self.inner, "response_guard_warnings", {})
             by_id = {item.id: item for item in misses}
             self.memory.put_many(
                 {
@@ -286,13 +288,38 @@ def report_has_uncacheable_failures(report_entries: list[ReportEntry]) -> bool:
 
 def translate_batch_with_failures(translator, items: list[TranslationItem]) -> tuple[dict[str, str], dict[str, str]]:
     if not items:
+        setattr(translator, "response_guard_warnings", {})
         return {}, {}
+    response_guard_warnings: dict[str, str] = {}
+    setattr(translator, "response_guard_warnings", response_guard_warnings)
     method = getattr(translator, "translate_batch_with_failures", None)
     if callable(method):
-        return method(items)
-    translations = translator.translate_batch(items)
-    failed_items = getattr(translator, "failed_items", {})
-    return translations, dict(failed_items) if isinstance(failed_items, dict) else {}
+        translations, failed_items = method(items)
+    else:
+        translations = translator.translate_batch(items)
+        failed_items = getattr(translator, "failed_items", {})
+    failures = dict(failed_items) if isinstance(failed_items, dict) else {}
+    for item in items:
+        if item.id in failures or item.id not in translations:
+            continue
+        guard = sanitize_provider_response(translations[item.id])
+        if guard.changed:
+            if guard.text:
+                translations[item.id] = guard.text
+                response_guard_warnings[item.id] = guard.message
+            else:
+                failures[item.id] = guard.message
+                translations.pop(item.id, None)
+    setattr(translator, "response_guard_warnings", response_guard_warnings)
+    return translations, failures
+
+
+def response_guard_warning(translator, item_id: str) -> str:
+    warnings = getattr(translator, "response_guard_warnings", {})
+    if not isinstance(warnings, dict):
+        return ""
+    value = warnings.get(item_id, "")
+    return str(value) if value else ""
 
 
 def process_jar(jar_path: Path, args: argparse.Namespace, translator) -> tuple[list[OutputLangDocument], list[ReportEntry], str]:
@@ -462,7 +489,7 @@ def process_zip(
                     source=source_text,
                     target=translated,
                     status="translated",
-                    message="",
+                    message=response_guard_warning(translator, item_id),
                 )
             )
 
