@@ -1364,6 +1364,16 @@
       overflow-y: auto;
       overflow-x: hidden;
     }
+    .results-panel {
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
+      height: calc(var(--app-vh) - 104px);
+      overflow-y: hidden;
+    }
+    .config-panel[hidden],
+    .results-panel[hidden] {
+      display: none;
+    }
     .panel-head {
       position: relative;
       padding: 16px 20px;
@@ -1985,10 +1995,13 @@
       }
     }
     .results {
+      min-height: 0;
       padding: 20px;
       display: grid;
+      align-content: start;
       gap: 16px;
       overflow-x: auto;
+      overflow-y: auto;
     }
     .system-views {
       display: grid;
@@ -1999,6 +2012,7 @@
       gap: 16px;
     }
     .view-shell.active {
+      min-height: 0;
       display: grid;
       animation: fadeInUp var(--motion-base) ease;
     }
@@ -2056,6 +2070,9 @@
       font-size: 14px;
     }
     .view-frame {
+      min-height: 0;
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr);
       border: 1px solid var(--card-border);
       border-radius: var(--radius-md);
       background: var(--card-surface);
@@ -2064,6 +2081,8 @@
       isolation: isolate;
     }
     .view-body {
+      min-height: 0;
+      overflow-y: auto;
       padding: 16px;
     }
     .actions {
@@ -2186,6 +2205,7 @@
     }
     .history-workbench {
       min-height: 0;
+      height: 100%;
       display: grid;
       grid-template-rows: auto auto minmax(0, 1fr);
       gap: 16px;
@@ -2537,7 +2557,7 @@
     .history-artifacts {
       display: grid;
       grid-template-rows: auto auto;
-      overflow: hidden;
+      overflow: visible;
       border: 1px solid var(--card-border);
       border-radius: var(--radius-md);
       background: var(--panel);
@@ -2976,15 +2996,22 @@
     }
     .help-topic-link {
       position: relative;
-      gap: 10px;
-      padding-right: 42px;
+      gap: 12px;
+      min-width: 0;
+      max-width: 100%;
+      min-height: 64px;
+      padding: 12px 46px 12px 14px;
+      align-items: flex-start;
+      white-space: normal;
+      line-height: 1.42;
     }
     .help-topic-category {
       display: inline-flex;
+      min-width: 0;
       max-width: 100%;
       align-items: center;
       gap: 6px;
-      min-height: 0;
+      min-height: 16px;
       padding: 0;
       border: 0;
       border-radius: 0;
@@ -2993,7 +3020,9 @@
       font-size: 11px;
       font-weight: 700;
       line-height: 1.3;
-      white-space: nowrap;
+      white-space: normal;
+      overflow-wrap: break-word;
+      word-break: break-word;
       text-overflow: ellipsis;
       overflow: hidden;
     }
@@ -3179,12 +3208,12 @@
       background: var(--help-bg);
       transform: rotate(45deg);
     }
-    .settings-head:hover,
-    .settings-head:focus-within {
+    .settings-head > div:first-child:hover,
+    .settings-head > div:first-child:focus-within {
       z-index: 38;
     }
-    .settings-head:hover .card-head-copy,
-    .settings-head:focus-within .card-head-copy {
+    .settings-head > div:first-child:hover .card-head-copy,
+    .settings-head > div:first-child:focus-within .card-head-copy {
       opacity: 1;
       visibility: visible;
       transform: translateY(0) scale(1);
@@ -3254,6 +3283,9 @@
       color: var(--text);
       font-size: 13px;
       overflow-wrap: anywhere;
+    }
+    .settings-current > span {
+      font-size: 12px;
     }
     .branding-options {
       display: grid;
@@ -3399,6 +3431,7 @@
     }
     .settings-content {
       min-width: 0;
+      min-height: 0;
       display: grid;
       gap: 16px;
     }
@@ -3406,6 +3439,7 @@
       min-width: 0;
       min-height: 0;
       height: fit-content;
+      max-height: 100%;
       align-self: start;
       display: grid;
       align-content: start;
@@ -3415,13 +3449,14 @@
       border-radius: var(--radius-md);
       background: var(--card-surface-soft);
       box-shadow: var(--card-shadow-soft);
+      overflow-y: auto;
     }
     .settings-section-title {
       display: flex;
       align-items: center;
       gap: 8px;
       color: var(--text);
-      font-size: 13px;
+      font-size: 14px;
       font-weight: 800;
       line-height: 1.4;
     }
@@ -4240,10 +4275,12 @@
         var(--table-hover);
     }
     .memory-preview {
+      min-height: 0;
       display: grid;
       gap: 8px;
     }
     .memory-preview-card {
+      min-height: 0;
       display: grid;
       gap: 8px;
       padding: 12px;
@@ -4260,8 +4297,14 @@
       justify-content: space-between;
     }
     .memory-preview-list {
+      min-height: 0;
+      max-height: min(420px, calc(var(--app-vh) - 360px));
       display: grid;
       gap: 8px;
+      overflow-y: auto;
+      overscroll-behavior: contain;
+      scrollbar-width: thin;
+      scrollbar-color: var(--scroll-thumb) transparent;
     }
     .memory-preview-item {
       display: grid;
@@ -4640,28 +4683,17 @@
       display: grid;
       gap: 12px;
     }
-    .hardcoded-category-select {
-      display: grid;
-      gap: 6px;
+    .toolbar .ghost-select.hardcoded-category-filter {
       min-width: 190px;
       max-width: 260px;
     }
-    .hardcoded-category-select span {
-      color: var(--muted);
-      font-size: 12px;
-      font-weight: 700;
-      line-height: 1.35;
-    }
-    .hardcoded-category-select select {
+    .toolbar .ghost-select.hardcoded-category-filter .control {
       min-height: 38px;
-      width: 100%;
-      padding: 0 36px 0 12px;
-      border: 1px solid var(--line);
-      border-radius: var(--radius-sm);
-      background: var(--field-bg);
-      color: var(--text);
-      font: inherit;
-      font-weight: 700;
+    }
+    .toolbar .ghost-select.hardcoded-category-filter .value {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
     .hardcoded-row textarea.invalid {
       border-color: var(--status-error-border);
@@ -6037,15 +6069,15 @@ __TARGET_LOCALE_OPTIONS_HTML__
             <div class="branding-options" id="settings-branding-options" role="radiogroup" aria-label="品牌图标" data-i18n-aria-label="settings.brand_logo">
               <button type="button" class="branding-option active" data-brand-logo="cat" role="radio" aria-checked="true">
                 <span class="branding-preview"><img src="/assets/logo/cat.png" alt=""></span>
-                <span class="branding-copy"><strong data-i18n="settings.brand_cat">猫猫头像</strong><span class="branding-menu-name">猫 PNG</span></span>
+                <span class="branding-copy"><strong data-i18n="settings.brand_cat">猫猫头像</strong><span class="branding-menu-name" data-i18n="settings.brand_cat_asset">猫 PNG</span></span>
               </button>
               <button type="button" class="branding-option" data-brand-logo="grass" role="radio" aria-checked="false">
                 <span class="branding-preview"><img src="/assets/logo/grass.png" alt=""></span>
-                <span class="branding-copy"><strong data-i18n="settings.brand_grass">草方块</strong><span class="branding-menu-name">草方块</span></span>
+                <span class="branding-copy"><strong data-i18n="settings.brand_grass">草方块</strong><span class="branding-menu-name" data-i18n="settings.brand_grass_asset">草方块 PNG</span></span>
               </button>
               <button type="button" class="branding-option" data-brand-logo="sign" role="radio" aria-checked="false">
                 <span class="branding-preview"><img src="/assets/logo/sign.png" alt=""></span>
-                <span class="branding-copy"><strong data-i18n="settings.brand_sign">签名标识</strong><span class="branding-menu-name">签名 PNG</span></span>
+                <span class="branding-copy"><strong data-i18n="settings.brand_sign">签名标识</strong><span class="branding-menu-name" data-i18n="settings.brand_sign_asset">签名 PNG</span></span>
               </button>
             </div>
             <div class="settings-current">
@@ -6345,7 +6377,7 @@ __TARGET_LOCALE_OPTIONS_HTML__
       payload: null,
       activeTab: 'language',
       languageSearch: '',
-      languageJarFilter: '全部',
+      languageJarFilter: 'all',
       languageStatusFilter: 'all',
       languageConditionFilter: 'all',
       languageViewMode: 'table',
@@ -6420,6 +6452,22 @@ __TARGET_LOCALE_OPTIONS_HTML__
         "status.cancel_failed": "中断请求失败：{message}",
         "status.json_locale_detected": "已从 JSON 文件识别源语言：{locale}",
         "status.json_locale_conflict": "检测到多个 JSON 源语言，已保持当前源语言选择。",
+        "provider.copy.risk_title": "复制原文",
+        "provider.copy.risk_body": "不调用任何翻译服务，适合验证流程和排查输出链路。",
+        "provider.glossary.risk_title": "离线规则翻译",
+        "provider.glossary.risk_body": "无需联网、结果稳定，但覆盖范围有限，更适合术语替换和基础规则翻译。",
+        "provider.argos.risk_title": "本地离线翻译",
+        "provider.argos.risk_body": "不依赖在线服务，但必须预先安装 Argos Translate 依赖与语言包，覆盖范围和质量受本地模型限制。",
+        "provider.azure-translator.risk_title": "Azure 官方翻译服务",
+        "provider.azure-translator.risk_body": "稳定性较好，需要 Azure Key，部分资源类型还需要正确填写 region。",
+        "provider.deep-free.risk_title": "免费公共翻译源",
+        "provider.deep-free.risk_body": "无需 API Key，适合零配置试用。可能受网络、限流和第三方服务变动影响；失败条目会回退为原文。",
+        "provider.libretranslate.risk_title": "开源翻译服务",
+        "provider.libretranslate.risk_body": "适合连接自托管或固定托管实例，可控性高于公共免费网页源，但实例可用性取决于部署环境。",
+        "provider.ai.risk_title": "AI 接口",
+        "provider.ai.risk_body": "通常质量和稳定性更好，但需要 API Key，且可能产生费用。",
+        "provider.current.risk_title": "当前翻译器",
+        "provider.current.risk_body": "请根据当前任务规模和稳定性要求选择合适的翻译方案。",
         "error.ftbquests_missing_input": "请上传 FTB Quests ZIP/SNBT，或选择 quests/lang/en_us 目录",
         "error.json_missing_input": "请上传语言 JSON 文件"
       },
@@ -6438,6 +6486,22 @@ __TARGET_LOCALE_OPTIONS_HTML__
         "status.cancel_failed": "Cancel request failed: {message}",
         "status.json_locale_detected": "Detected source language from JSON files: {locale}",
         "status.json_locale_conflict": "Multiple JSON source languages detected; kept the current source language.",
+        "provider.copy.risk_title": "Copy Source",
+        "provider.copy.risk_body": "Does not call a translation service. Useful for validating the workflow and checking the output pipeline.",
+        "provider.glossary.risk_title": "Offline Rule Translation",
+        "provider.glossary.risk_body": "No network required and results are stable, but coverage is limited. Best for glossary replacement and basic rules.",
+        "provider.argos.risk_title": "Local Offline Translation",
+        "provider.argos.risk_body": "Does not depend on online services, but Argos Translate and matching language packages must be installed first.",
+        "provider.azure-translator.risk_title": "Azure Official Translation",
+        "provider.azure-translator.risk_body": "Generally stable. Requires an Azure key, and some resource types also need the correct region.",
+        "provider.deep-free.risk_title": "Free Public Sources",
+        "provider.deep-free.risk_body": "No API key required and good for zero-config trials. Network, rate limits, or third-party changes can cause failures.",
+        "provider.libretranslate.risk_title": "Open Translation Service",
+        "provider.libretranslate.risk_body": "Works well with self-hosted or fixed hosted instances; availability depends on the deployment.",
+        "provider.ai.risk_title": "AI API",
+        "provider.ai.risk_body": "Usually better quality and stability, but requires an API key and may incur cost.",
+        "provider.current.risk_title": "Current Translator",
+        "provider.current.risk_body": "Choose a translation option that matches the current task size and reliability needs.",
         "error.ftbquests_missing_input": "Upload an FTB Quests ZIP/SNBT, or choose a quests/lang/en_us directory",
         "error.json_missing_input": "Upload a language JSON file"
       }
@@ -6578,36 +6642,36 @@ __TARGET_LOCALE_OPTIONS_HTML__
     };
     const providerRiskMeta = {
       'copy': {
-        title: '复制原文',
-        body: '不调用任何翻译服务，适合验证流程和排查输出链路。',
+        titleKey: 'provider.copy.risk_title',
+        bodyKey: 'provider.copy.risk_body',
       },
       'glossary': {
-        title: '离线规则翻译',
-        body: '无需联网、结果稳定，但覆盖范围有限，更适合术语替换和基础规则翻译。',
+        titleKey: 'provider.glossary.risk_title',
+        bodyKey: 'provider.glossary.risk_body',
       },
       'argos': {
-        title: '本地离线翻译',
-        body: '不依赖在线服务，但必须预先安装 Argos Translate 依赖与语言包，覆盖范围和质量受本地模型限制。',
+        titleKey: 'provider.argos.risk_title',
+        bodyKey: 'provider.argos.risk_body',
       },
       'azure-translator': {
-        title: 'Azure 官方翻译服务',
-        body: '稳定性较好，需要 Azure Key，部分资源类型还需要正确填写 region。',
+        titleKey: 'provider.azure-translator.risk_title',
+        bodyKey: 'provider.azure-translator.risk_body',
       },
       'deep-free': {
-        title: '免费公共翻译源',
-        body: '无需 API Key，适合零配置试用。可能受网络、限流和第三方服务变动影响；失败条目会回退为原文。',
+        titleKey: 'provider.deep-free.risk_title',
+        bodyKey: 'provider.deep-free.risk_body',
       },
       'libretranslate': {
-        title: '开源翻译服务',
-        body: '适合连接自托管或固定托管实例，可控性高于公共免费网页源，但实例可用性取决于部署环境。',
+        titleKey: 'provider.libretranslate.risk_title',
+        bodyKey: 'provider.libretranslate.risk_body',
       },
       'openai-compatible': {
-        title: 'AI 接口',
-        body: '通常质量和稳定性更好，但需要 API Key，且可能产生费用。',
+        titleKey: 'provider.ai.risk_title',
+        bodyKey: 'provider.ai.risk_body',
       },
       'anthropic-compatible': {
-        title: 'AI 接口',
-        body: '通常质量和稳定性更好，但需要 API Key，且可能产生费用。',
+        titleKey: 'provider.ai.risk_title',
+        bodyKey: 'provider.ai.risk_body',
       },
     };
     const hardcodedState = {
@@ -9222,10 +9286,10 @@ __TARGET_LOCALE_OPTIONS_HTML__
         return;
       }
       const meta = providerRiskMeta[provider.value] || {
-        title: '当前翻译器',
-        body: '请根据当前任务规模和稳定性要求选择合适的翻译方案。',
+        titleKey: 'provider.current.risk_title',
+        bodyKey: 'provider.current.risk_body',
       };
-      providerRiskBanner.innerHTML = `<strong>${escapeHtml(meta.title)}</strong><p>${escapeHtml(meta.body)}</p><div class="doc-jump-row"><button type="button" class="secondary" data-doc-target="providers"><i class="ri-book-open-line"></i><span>${escapeHtml(ui('docs.open_provider', '查看翻译器说明'))}</span></button></div>`;
+      providerRiskBanner.innerHTML = `<strong>${escapeHtml(ui(meta.titleKey, '当前翻译器'))}</strong><p>${escapeHtml(ui(meta.bodyKey, '请根据当前任务规模和稳定性要求选择合适的翻译方案。'))}</p><div class="doc-jump-row"><button type="button" class="secondary" data-doc-target="providers"><i class="ri-book-open-line"></i><span>${escapeHtml(ui('docs.open_provider', '查看翻译器说明'))}</span></button></div>`;
       bindDocTriggers();
     }
 
@@ -10850,7 +10914,7 @@ __TARGET_LOCALE_OPTIONS_HTML__
       resultState.payload = payload;
       resultState.activeTab = 'language';
       resultState.languageSearch = '';
-      resultState.languageJarFilter = '全部';
+      resultState.languageJarFilter = 'all';
       resultState.languageStatusFilter = 'all';
       resultState.languageConditionFilter = 'all';
       resultState.languageViewMode = hasIssueEntries(payload) ? 'diff' : 'table';
@@ -11178,7 +11242,7 @@ __TARGET_LOCALE_OPTIONS_HTML__
     }
 
     function jarFilterDisplayLabel(value) {
-      if (!value || value === '全部') {
+      if (!value || value === 'all') {
         return ui('result.all', '全部');
       }
       return splitJarPath(value).map(jarSegmentLabel).join(' / ');
@@ -11228,10 +11292,10 @@ __TARGET_LOCALE_OPTIONS_HTML__
     }
 
     function renderJarFilterOptions(jarNames, activeValue) {
-      const allActive = activeValue === '全部';
+      const allActive = activeValue === 'all';
       const roots = buildJarFilterTree(jarNames);
       return `
-        <button type="button" class="ghost-option jar-tree-option ${allActive ? 'active' : ''}" data-select-value="全部" data-jar-depth="0" role="option" aria-selected="${allActive ? 'true' : 'false'}" title="${escapeHtml(ui('result.all', '全部'))}">
+        <button type="button" class="ghost-option jar-tree-option ${allActive ? 'active' : ''}" data-select-value="all" data-jar-depth="0" role="option" aria-selected="${allActive ? 'true' : 'false'}" title="${escapeHtml(ui('result.all', '全部'))}">
           <span class="jar-tree-label"><i class="ri-stack-line" aria-hidden="true"></i><strong>${escapeHtml(ui('result.all', '全部'))}</strong></span>
         </button>
         ${renderJarTreeOptions(roots, activeValue)}
@@ -11239,7 +11303,7 @@ __TARGET_LOCALE_OPTIONS_HTML__
     }
 
     function jarFilterMatchesEntry(entryJar, jarFilter) {
-      if (!jarFilter || jarFilter === '全部') {
+      if (!jarFilter || jarFilter === 'all') {
         return true;
       }
       const jar = String(entryJar || '');
@@ -11248,7 +11312,7 @@ __TARGET_LOCALE_OPTIONS_HTML__
 
     function renderLanguageResults(payload) {
       const jarNames = [...new Set((payload.entries || []).map(e => e.jar).filter(Boolean))];
-      const activeLabel = resultState.languageJarFilter || '全部';
+      const activeLabel = resultState.languageJarFilter || 'all';
       const activeDisplay = jarFilterDisplayLabel(activeLabel);
       const jarMenuOptions = renderJarFilterOptions(jarNames, activeLabel);
       const isJsonResult = payload.kind === 'json';
@@ -11453,7 +11517,7 @@ __TARGET_LOCALE_OPTIONS_HTML__
       if (!payload) {
         return [];
       }
-      const jarFilter = resultState.languageJarFilter || '全部';
+      const jarFilter = resultState.languageJarFilter || 'all';
       const statusFilter = resultState.languageStatusFilter || 'all';
       const conditionFilter = resultState.languageConditionFilter || 'all';
       const query = resultState.languageSearch.trim().toLowerCase();
@@ -12009,18 +12073,19 @@ __TARGET_LOCALE_OPTIONS_HTML__
         if (!query) {
           return true;
         }
-        const categoryLabel = entry.category_label || entry.categoryLabel || entry.category;
-        const haystack = `${entry.category} ${categoryLabel} ${entry.risk} ${entry.jar} ${entry.class} ${entry.source} ${entry.suggestion || ''}`.toLowerCase();
+        const categoryLabel = hardcodedCategoryDisplay(entry.category, entry.category_label || entry.categoryLabel || entry.category);
+        const riskLabel = hardcodedRiskDisplay(entry.risk);
+        const haystack = `${entry.category} ${categoryLabel} ${entry.risk} ${riskLabel} ${entry.jar} ${entry.class} ${entry.source} ${entry.suggestion || ''}`.toLowerCase();
         return haystack.includes(query);
       });
       const pageInfo = paginate(entries, resultState.hardcodedPage, 50);
       resultState.hardcodedPage = pageInfo.page;
       const rows = pageInfo.rows.map(entry => {
-        const categoryLabel = entry.category_label || entry.categoryLabel || entry.category;
+        const categoryLabel = hardcodedCategoryDisplay(entry.category, entry.category_label || entry.categoryLabel || entry.category);
         return `
           <tr>
             <td>${escapeHtml(categoryLabel)}</td>
-            <td>${escapeHtml(entry.risk)}</td>
+            <td>${escapeHtml(hardcodedRiskDisplay(entry.risk))}</td>
             <td>${escapeHtml(entry.jar)}</td>
             <td>${escapeHtml(entry.class)}</td>
             <td>${escapeHtml(entry.source)}</td>
@@ -12138,6 +12203,16 @@ __TARGET_LOCALE_OPTIONS_HTML__
         return { error: line.error };
       }
       return {};
+    }
+
+    function hardcodedCategoryDisplay(category, fallback = '') {
+      const normalized = String(category || '').trim();
+      return normalized ? ui(`hardcoded.category.${normalized}`, fallback || normalized) : (fallback || '');
+    }
+
+    function hardcodedRiskDisplay(risk) {
+      const normalized = String(risk || '').trim().toLowerCase();
+      return normalized ? ui(`hardcoded.risk.${normalized}`, risk) : '';
     }
 
     function bindJarFilterMenu(shell) {
@@ -12439,7 +12514,7 @@ __TARGET_LOCALE_OPTIONS_HTML__
         const category = entry.category || 'unknown_literal';
         const current = categories.get(category) || {
           category,
-          label: entry.categoryLabel || category,
+          label: hardcodedCategoryDisplay(category, entry.categoryLabel || category),
           order: Number.isFinite(entry.categoryOrder) ? entry.categoryOrder : 999,
           count: 0
         };
@@ -12458,26 +12533,35 @@ __TARGET_LOCALE_OPTIONS_HTML__
     }
 
     function hardcodedEntryCategoryLabel(entry) {
-      return entry.categoryLabel || entry.category || 'unknown_literal';
+      return hardcodedCategoryDisplay(entry.category || 'unknown_literal', entry.categoryLabel || entry.category || 'unknown_literal');
     }
 
     function hardcodedEntryHaystack(entry) {
       return `${entry.source} ${entry.class} ${entry.jar} ${entry.category} ${hardcodedEntryCategoryLabel(entry)}`.toLowerCase();
     }
 
+    function renderHardcodedCategoryOptions(options, activeValue) {
+      return options.map(option => `
+        <button type="button" class="ghost-option ${option.category === activeValue ? 'active' : ''}" data-hardcoded-category-value="${escapeHtml(option.category)}" role="option" aria-selected="${option.category === activeValue ? 'true' : 'false'}">${escapeHtml(option.label)}</button>
+      `).join('');
+    }
+
     function renderHardcodedWorkbench() {
       if (!hardcodedState.entries.length) {
         return `<div class="empty">${escapeHtml(ui('result.no_editable_hardcoded', '没有检测到可编辑的硬编码候选。'))}</div>`;
       }
-      const filters = hardcodedCategoryFilters().map(option => {
-        return `<option value="${escapeHtml(option.category)}" ${option.category === hardcodedState.filter ? 'selected' : ''}>${escapeHtml(option.label)}</option>`;
-      }).join('');
+      const categoryOptions = hardcodedCategoryFilters();
+      const activeCategory = categoryOptions.find(option => option.category === hardcodedState.filter) || categoryOptions[0];
       return `
         <div class="hardcoded-workbench">
           <div class="toolbar">
-            <label class="hardcoded-category-select"><span>${escapeHtml(ui('result.category', '分类'))}</span>
-              <select id="hardcoded-category-filter">${filters}</select>
-            </label>
+            <div class="toolbar-filter-group">
+              <span class="toolbar-filter-label">${escapeHtml(ui('result.category_filter', '分类筛选'))}:</span>
+              <div class="ghost-select hardcoded-category-filter" id="hardcoded-category-filter-shell">
+                <button type="button" class="control" data-select-trigger="hardcoded-category-filter" aria-haspopup="listbox" aria-expanded="false" aria-controls="hardcoded-category-filter-menu"><span class="value" id="hardcoded-category-filter-display" title="${escapeHtml(activeCategory.label)}">${escapeHtml(activeCategory.label)}</span><i class="ri-arrow-down-s-line chevron"></i></button>
+                <div class="ghost-menu" id="hardcoded-category-filter-menu" role="listbox" hidden>${renderHardcodedCategoryOptions(categoryOptions, hardcodedState.filter)}</div>
+              </div>
+            </div>
             <span id="hardcoded-selected-count" class="muted">${escapeHtml(formatUi('result.selected_count', '已选 {count} 条', { count: hardcodedState.selected.size }))}</span>
             <input id="hardcoded-search" value="${escapeHtml(hardcodedState.search)}" placeholder="${escapeHtml(ui('result.search_hardcoded_workbench', '搜索英文、Class 或 JAR'))}">
           </div>
@@ -12504,7 +12588,7 @@ __TARGET_LOCALE_OPTIONS_HTML__
         return `
           <tr class="hardcoded-row ${selected ? 'selected' : ''}" data-hardcoded-row="${index}">
             <td class="select-cell"><input type="checkbox" data-hardcoded-select="${index}" ${selected ? 'checked' : ''} aria-label="${escapeHtml(ui('result.select_hardcoded_candidate', '选择该硬编码候选'))}"></td>
-            <td>${escapeHtml(hardcodedEntryCategoryLabel(entry))}<br><span class="muted">${escapeHtml(entry.risk)}</span></td>
+            <td>${escapeHtml(hardcodedEntryCategoryLabel(entry))}<br><span class="muted">${escapeHtml(hardcodedRiskDisplay(entry.risk))}</span></td>
             <td>${escapeHtml(entry.source)}<br><span class="muted">${escapeHtml(entry.class)}</span></td>
             <td>
               <textarea data-hardcoded-index="${index}" class="${errors.length ? 'invalid' : ''}" placeholder="${escapeHtml(ui('result.target', '译文'))}">${escapeHtml(entry.translation)}</textarea>
@@ -12527,17 +12611,9 @@ __TARGET_LOCALE_OPTIONS_HTML__
       if (!wrap) {
         return;
       }
-      const categoryFilter = document.getElementById('hardcoded-category-filter');
-      if (categoryFilter) {
-        categoryFilter.addEventListener('change', () => {
-          hardcodedState.filter = categoryFilter.value || 'all';
-          hardcodedState.page = 1;
-          wrap.innerHTML = renderHardcodedRows();
-          bindHardcodedPager();
-          bindHardcodedSelection();
-          bindHardcodedTextareas();
-          updateHardcodedSelectedCount();
-        });
+      const categoryShell = document.getElementById('hardcoded-category-filter-shell');
+      if (categoryShell) {
+        bindHardcodedCategoryFilterMenu(categoryShell);
       }
       const search = document.getElementById('hardcoded-search');
       search.addEventListener('input', () => {
@@ -12562,6 +12638,74 @@ __TARGET_LOCALE_OPTIONS_HTML__
       bindHardcodedSelection();
       bindHardcodedTextareas();
       updateHardcodedSelectedCount();
+    }
+
+    function bindHardcodedCategoryFilterMenu(shell) {
+      const trigger = shell.querySelector('[data-select-trigger]');
+      const menu = shell.querySelector('.ghost-menu');
+      const display = shell.querySelector('#hardcoded-category-filter-display');
+      const wrap = document.getElementById('hardcoded-table-wrap');
+      if (!trigger || !menu || !wrap) {
+        return;
+      }
+      const closeMenu = () => scheduleMenuHide(shell, menu, trigger);
+      trigger.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (isMenuOpen(shell, menu)) {
+          closeMenu();
+          return;
+        }
+        document.querySelectorAll('.ghost-select.open').forEach(item => {
+          if (item === shell) {
+            return;
+          }
+          const otherTrigger = item.querySelector('[data-select-trigger]');
+          const otherMenu = item.querySelector('.ghost-menu');
+          if (otherMenu) {
+            scheduleMenuHide(item, otherMenu, otherTrigger);
+          }
+        });
+        openSelectMenu(shell, menu, trigger);
+      });
+      menu.addEventListener('click', event => {
+        const option = event.target.closest('[data-hardcoded-category-value]');
+        if (!option) {
+          return;
+        }
+        event.preventDefault();
+        event.stopPropagation();
+        const value = option.dataset.hardcodedCategoryValue || 'all';
+        hardcodedState.filter = value;
+        hardcodedState.page = 1;
+        if (display) {
+          display.textContent = option.textContent || value;
+          display.title = option.textContent || value;
+        }
+        menu.querySelectorAll('.ghost-option').forEach(item => {
+          const isActive = item.dataset.hardcodedCategoryValue === value;
+          item.classList.toggle('active', isActive);
+          if (item.hasAttribute('aria-selected')) {
+            item.setAttribute('aria-selected', isActive ? 'true' : 'false');
+          }
+        });
+        closeMenu();
+        wrap.innerHTML = renderHardcodedRows();
+        bindHardcodedPager();
+        bindHardcodedSelection();
+        bindHardcodedTextareas();
+        updateHardcodedSelectedCount();
+      });
+      document.addEventListener('click', event => {
+        if (!shell.contains(event.target) && !menu.contains(event.target)) {
+          closeMenu();
+        }
+      });
+      document.addEventListener('keydown', event => {
+        if (event.key === 'Escape') {
+          closeMenu();
+        }
+      });
     }
 
     function bindHardcodedPager() {

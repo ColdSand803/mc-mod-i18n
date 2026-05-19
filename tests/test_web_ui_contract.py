@@ -1113,10 +1113,51 @@ class WebUiContractTest(unittest.TestCase):
         self.assertIn(".api-debug-log-line:hover,\n    .api-debug-log-line:focus-within {\n      z-index: 40;", INDEX_HTML)
 
     def test_settings_card_subtitles_use_hover_popover(self) -> None:
-        self.assertIn(".settings-head:hover .card-head-copy,\n    .settings-head:focus-within .card-head-copy", INDEX_HTML)
+        self.assertIn(".settings-head > div:first-child:hover .card-head-copy,\n    .settings-head > div:first-child:focus-within .card-head-copy", INDEX_HTML)
+        self.assertNotIn(".settings-head:hover .card-head-copy,\n    .settings-head:focus-within .card-head-copy", INDEX_HTML)
         self.assertIn("transform: translateY(-6px) scale(.98)", INDEX_HTML)
         self.assertIn('<span class="card-head-copy" role="tooltip" data-i18n="history.subtitle">找回最近任务的下载、报告和日志。</span>', INDEX_HTML)
         self.assertNotIn('<strong data-i18n="history.title">任务历史</strong>\n            <span data-i18n="history.subtitle">找回最近任务的下载、报告和日志。</span>', INDEX_HTML)
+
+    def test_help_topic_buttons_allow_full_text(self) -> None:
+        self.assertIn(".help-topic-link {\n      position: relative;\n      gap: 12px;\n      min-width: 0;\n      max-width: 100%;\n      min-height: 64px;", INDEX_HTML)
+        self.assertIn("min-width: 0;\n      max-width: 100%;", INDEX_HTML)
+        self.assertIn("white-space: normal;", INDEX_HTML)
+        self.assertIn("overflow-wrap: break-word;", INDEX_HTML)
+        self.assertIn("word-break: break-word;", INDEX_HTML)
+        self.assertIn("overflow: hidden;", INDEX_HTML)
+        self.assertNotIn("overflow-wrap: anywhere;\n      text-overflow: ellipsis;\n      overflow: visible;\n    }\n    .help-topic-link.active .help-topic-category", INDEX_HTML)
+        self.assertNotIn("overflow: visible;\n    }\n    .help-topic-link.active .help-topic-category", INDEX_HTML)
+        self.assertNotIn(".help-topic-category {\n      display: inline-flex;\n      max-width: 100%;\n      align-items: center;\n      gap: 6px;\n      min-height: 0;", INDEX_HTML)
+
+    def test_results_report_and_history_keep_vertical_scroll_containers(self) -> None:
+        self.assertIn(".results-panel {\n      display: grid;\n      grid-template-rows: auto minmax(0, 1fr);", INDEX_HTML)
+        self.assertIn(".config-panel[hidden],\n    .results-panel[hidden] {\n      display: none;", INDEX_HTML)
+        self.assertIn(".results {\n      min-height: 0;\n      padding: 20px;", INDEX_HTML)
+        self.assertIn("overflow-y: auto;", INDEX_HTML)
+        self.assertIn(".view-shell.active {\n      min-height: 0;", INDEX_HTML)
+        self.assertIn(".view-frame {\n      min-height: 0;\n      display: grid;\n      grid-template-rows: auto minmax(0, 1fr);", INDEX_HTML)
+        self.assertIn(".view-body {\n      min-height: 0;\n      overflow-y: auto;", INDEX_HTML)
+        self.assertIn(".history-workbench {\n      min-height: 0;\n      height: 100%;", INDEX_HTML)
+        self.assertIn(".history-list {\n      min-height: 0;", INDEX_HTML)
+        self.assertIn(".history-detail-body {\n      min-height: 0;", INDEX_HTML)
+
+    def test_settings_memory_and_cache_sections_keep_long_content_scrollable(self) -> None:
+        self.assertIn(".settings-layout {\n      min-height: 0;", INDEX_HTML)
+        self.assertIn("overflow: auto;", INDEX_HTML)
+        self.assertIn(".settings-content {\n      min-width: 0;\n      min-height: 0;", INDEX_HTML)
+        self.assertIn(".settings-section {\n      min-width: 0;\n      min-height: 0;", INDEX_HTML)
+        self.assertIn("max-height: 100%;", INDEX_HTML)
+        self.assertIn("overflow-y: auto;", INDEX_HTML)
+        self.assertIn(".memory-preview {\n      min-height: 0;", INDEX_HTML)
+        self.assertIn(".memory-preview-card {\n      min-height: 0;", INDEX_HTML)
+        self.assertIn(".memory-preview-list {\n      min-height: 0;\n      max-height: min(420px, calc(var(--app-vh) - 360px));", INDEX_HTML)
+        self.assertIn("overscroll-behavior: contain;", INDEX_HTML)
+
+    def test_system_settings_card_headers_use_consistent_type_size(self) -> None:
+        self.assertIn(".settings-section-title {\n      display: flex;\n      align-items: center;\n      gap: 8px;\n      color: var(--text);\n      font-size: 14px;", INDEX_HTML)
+        self.assertIn(".settings-current > span {\n      font-size: 12px;", INDEX_HTML)
+        self.assertIn(".branding-option strong {\n      display: block;\n      min-width: 0;\n      overflow: hidden;\n      text-overflow: ellipsis;\n      color: inherit;\n      font-size: 13px;", INDEX_HTML)
 
     def test_high_visibility_frontend_text_uses_i18n(self) -> None:
         for expected in (
@@ -1143,6 +1184,67 @@ class WebUiContractTest(unittest.TestCase):
                 self.assertIn(expected, INDEX_HTML)
         self.assertNotIn("noteTitle.textContent = '任何翻译结果最好都由人工审核一遍哦'", INDEX_HTML)
         self.assertNotIn("? '当前翻译器通过 deep-translator 调用第三方免费引擎", INDEX_HTML)
+
+    def test_hardcoded_workbench_category_filter_uses_i18n_custom_dropdown(self) -> None:
+        zh_messages = merged_catalog("zh_cn")
+        en_messages = merged_catalog("en_us")
+
+        self.assertIn("result.category_filter", zh_messages)
+        self.assertIn("result.category_filter", en_messages)
+        self.assertIn('id="hardcoded-category-filter-shell"', INDEX_HTML)
+        self.assertIn('id="hardcoded-category-filter-menu" role="listbox"', INDEX_HTML)
+        self.assertIn('data-hardcoded-category-value', INDEX_HTML)
+        self.assertIn("bindHardcodedCategoryFilterMenu", INDEX_HTML)
+        self.assertIn("ui('result.category_filter'", INDEX_HTML)
+        self.assertNotIn('<label class="hardcoded-category-select"><span>${escapeHtml(ui(\'result.category\', \'分类\'))}</span>', INDEX_HTML)
+
+    def test_dynamic_filter_and_provider_risk_text_is_language_switchable(self) -> None:
+        zh_messages = merged_catalog("zh_cn")
+        en_messages = merged_catalog("en_us")
+        for key in (
+            "provider.copy.risk_title",
+            "provider.copy.risk_body",
+            "provider.glossary.risk_title",
+            "provider.glossary.risk_body",
+            "provider.argos.risk_title",
+            "provider.argos.risk_body",
+            "provider.azure-translator.risk_title",
+            "provider.azure-translator.risk_body",
+            "provider.deep-free.risk_title",
+            "provider.deep-free.risk_body",
+            "provider.libretranslate.risk_title",
+            "provider.libretranslate.risk_body",
+            "provider.ai.risk_title",
+            "provider.ai.risk_body",
+            "provider.current.risk_title",
+            "provider.current.risk_body",
+            "settings.brand_cat_asset",
+            "settings.brand_grass_asset",
+            "settings.brand_sign_asset",
+            "hardcoded.category.ponder",
+            "hardcoded.category.ui_literal",
+            "hardcoded.category.config_comment",
+            "hardcoded.category.unknown_literal",
+            "hardcoded.category.advancement_datagen",
+            "hardcoded.category.unit_or_label",
+            "hardcoded.risk.high",
+            "hardcoded.risk.medium",
+            "hardcoded.risk.low",
+        ):
+            with self.subTest(key=key):
+                self.assertIn(key, zh_messages)
+                self.assertIn(key, en_messages)
+
+        self.assertIn("titleKey: 'provider.copy.risk_title'", INDEX_HTML)
+        self.assertIn("ui(meta.titleKey", INDEX_HTML)
+        self.assertNotIn("title: '复制原文'", INDEX_HTML)
+        self.assertNotIn("title: '当前翻译器'", INDEX_HTML)
+        self.assertIn("languageJarFilter: 'all'", INDEX_HTML)
+        self.assertIn("data-select-value=\"all\"", INDEX_HTML)
+        self.assertIn("hardcodedCategoryDisplay(entry.category", INDEX_HTML)
+        self.assertIn("hardcodedRiskDisplay(entry.risk)", INDEX_HTML)
+        self.assertNotIn("languageJarFilter: '全部'", INDEX_HTML)
+        self.assertNotIn("resultState.languageJarFilter = '全部'", INDEX_HTML)
 
     def test_inline_scripts_are_syntax_valid_when_node_is_available(self) -> None:
         node = shutil.which("node")
