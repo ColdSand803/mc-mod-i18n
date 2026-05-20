@@ -144,6 +144,15 @@ class WebUiContractTest(unittest.TestCase):
         self.assertNotIn('data-priority-review="diff"', INDEX_HTML)
         self.assertIn("resultState.languageViewMode = hasIssueEntries(payload) ? 'diff' : 'table';", INDEX_HTML)
 
+    def test_retry_failed_items_reuses_loading_progress_panel(self) -> None:
+        self.assertIn("startLoading({", INDEX_HTML)
+        self.assertIn("mode: 'retry'", INDEX_HTML)
+        self.assertIn("retryActiveJobId", INDEX_HTML)
+        self.assertIn("retry_job_id", INDEX_HTML)
+        self.assertIn("startProgressPolling(retryPayload.retry_job_id", INDEX_HTML)
+        self.assertIn("loading.mode.retry", INDEX_HTML)
+        self.assertIn("loading.retry_item_progress", INDEX_HTML)
+
     def test_result_language_tabs_live_in_card_header(self) -> None:
         self.assertIn('<div class="view-head">\n                <div class="view-head-main">', INDEX_HTML)
         self.assertIn('<div class="tabs">\n                    <button type="button" data-result-tab="language"', INDEX_HTML)

@@ -6510,8 +6510,10 @@ __TARGET_LOCALE_OPTIONS_HTML__
     let progressTimer = null;
     let progressPollToken = 0;
     let activeJobId = '';
+    let retryActiveJobId = '';
     let loadingStartedAt = 0;
     let loadingProgress = {
+      mode: 'generate',
       completed: 0,
       total: 0,
       stage: 'idle',
@@ -6520,6 +6522,7 @@ __TARGET_LOCALE_OPTIONS_HTML__
       cacheHits: 0,
       cacheMisses: 0,
       currentFile: '',
+      currentKey: '',
       retryAttempt: 0,
       retryMax: 0,
       retryDelay: 0,
@@ -10884,17 +10887,21 @@ __TARGET_LOCALE_OPTIONS_HTML__
       }
     });
 
-    function startLoading() {
+    function startLoading(options = {}) {
+      const mode = options.mode || 'generate';
+      const initialProgress = options.initialProgress || {};
       loadingStartedAt = Date.now();
       loadingProgress = {
-        completed: 0,
-        total: 0,
-        stage: 'idle',
-        filesCompleted: 0,
-        filesTotal: 0,
+        mode,
+        completed: initialProgress.completed || 0,
+        total: initialProgress.total || 0,
+        stage: initialProgress.stage || 'idle',
+        filesCompleted: initialProgress.filesCompleted || 0,
+        filesTotal: initialProgress.filesTotal || 0,
         cacheHits: 0,
         cacheMisses: 0,
         currentFile: '',
+        currentKey: '',
         retryAttempt: 0,
         retryMax: 0,
         retryDelay: 0,
@@ -10902,7 +10909,7 @@ __TARGET_LOCALE_OPTIONS_HTML__
         requestTimeout: Number(new FormData(form).get('api_timeout') || '10'),
         batchSize: Number(new FormData(form).get('api_batch_size') || '40')
       };
-      cancelBtn.hidden = false;
+      cancelBtn.hidden = options.showCancel === false ? true : false;
       renderLoading();
       loadingTimer = window.setInterval(renderLoading, 1000);
     }
@@ -10918,6 +10925,7 @@ __TARGET_LOCALE_OPTIONS_HTML__
         progressTimer = null;
       }
       cancelBtn.hidden = true;
+      retryActiveJobId = '';
     }
 
     cancelBtn.addEventListener('click', async () => {
@@ -10937,22 +10945,27 @@ __TARGET_LOCALE_OPTIONS_HTML__
       }
     });
 
-    function startProgressPolling(jobId) {
+    function startProgressPolling(jobId, options = {}) {
       const pollToken = ++progressPollToken;
+      const mode = options.mode || 'generate';
+      const originalJobId = options.originalJobId || '';
+      const isRetryMode = mode === 'retry';
+      const isActivePoll = () => pollToken === progressPollToken && (isRetryMode ? retryActiveJobId === jobId : activeJobId === jobId);
       const poll = async () => {
         try {
-          if (pollToken !== progressPollToken || activeJobId !== jobId) {
+          if (!isActivePoll()) {
             return;
           }
           const response = await fetch(`/api/progress/${jobId}`);
           const payload = await response.json();
-          if (pollToken !== progressPollToken || activeJobId !== jobId) {
+          if (!isActivePoll()) {
             return;
           }
           if (!response.ok || !payload.ok) {
             throw new Error(payload.error || ui('status.progress_read_failed', '进度读取失败'));
           }
           loadingProgress = {
+            mode: payload.mode || mode,
             completed: payload.completed || 0,
             total: payload.total || 0,
             stage: payload.stage || 'running',
@@ -10961,6 +10974,7 @@ __TARGET_LOCALE_OPTIONS_HTML__
             cacheHits: payload.cache_hits || 0,
             cacheMisses: payload.cache_misses || 0,
             currentFile: payload.current_file || '',
+            currentKey: payload.current_key || '',
             retryAttempt: payload.retry_attempt || 0,
             retryMax: payload.retry_max || 0,
             retryDelay: payload.retry_delay || 0,
@@ -10972,6 +10986,23 @@ __TARGET_LOCALE_OPTIONS_HTML__
           if (payload.status === 'done') {
             stopLoading();
             submit.disabled = false;
+            if (isRetryMode) {
+              activeJobId = originalJobId || payload.original_job_id || activeJobId;
+              if (payload.result) {
+                resultState.payload = payload.result;
+                apiLogLines = Array.isArray(payload.result.api_debug_log_lines) ? payload.result.api_debug_log_lines : apiLogLines;
+                renderResultShell();
+              }
+              resetRetryButton();
+              if (payload.remaining) {
+                statusBox.className = 'status error';
+                statusBox.textContent = formatUi('result.retry_remaining', '已重试 {retried} 条，仍有 {remaining} 条异常。耗时 {elapsed}。', { retried: payload.retried || 0, remaining: payload.remaining, elapsed: formatSeconds(payload.elapsed_seconds || 0) });
+              } else {
+                statusBox.className = 'status success';
+                statusBox.textContent = formatUi('result.retry_success', '失败项已重试成功，更新 {retried} 条。耗时 {elapsed}。', { retried: payload.retried || 0, elapsed: formatSeconds(payload.elapsed_seconds || 0) });
+              }
+              return;
+            }
             renderResult(payload.result);
             const providerNote = payload.result.provider === 'glossary' ? formatUi('status.provider_glossary', ' 离线术语表适合快速预览，完整整句汉化请使用 AI 翻译器。', {}) : '';
             const failureNote = payload.result.api_failure_count ? formatUi('status.api_failure_note', ' 汉化翻译存在异常缺失 {count} 条，可在结果区查看并重试。', { count: payload.result.api_failure_count }) : '';
@@ -10988,23 +11019,34 @@ __TARGET_LOCALE_OPTIONS_HTML__
           } else if (payload.status === 'error') {
             stopLoading();
             submit.disabled = false;
-            statusBox.className = 'status error';
-            statusBox.textContent = payload.error || ui('status.process_failed', '处理失败');
+          if (isRetryMode) {
+            resetRetryButton();
+            renderResultShell();
+          }
+          statusBox.className = 'status error';
+          statusBox.textContent = payload.error || ui('status.process_failed', '处理失败');
           } else if (payload.status === 'cancelled') {
             stopLoading();
             submit.disabled = false;
+            if (isRetryMode) {
+              resetRetryButton();
+            }
             statusBox.className = 'status error';
             statusBox.textContent = ui('status.cancelled_short', '已中断。');
             results.innerHTML = `<div class="empty">${escapeHtml(ui('status.cancelled_task', '任务已中断。'))}</div>`;
-          } else if (pollToken === progressPollToken && activeJobId === jobId) {
+          } else if (isActivePoll()) {
             progressTimer = window.setTimeout(poll, 900);
           }
         } catch (error) {
-          if (pollToken !== progressPollToken || activeJobId !== jobId) {
+          if (!isActivePoll()) {
             return;
           }
           stopLoading();
           submit.disabled = false;
+          if (isRetryMode) {
+            resetRetryButton();
+            renderResultShell();
+          }
           statusBox.className = 'status error';
           statusBox.textContent = error.message;
         }
@@ -11016,10 +11058,11 @@ __TARGET_LOCALE_OPTIONS_HTML__
       const elapsed = Math.max(0, Math.floor((Date.now() - loadingStartedAt) / 1000));
       const data = new FormData(form);
       const providerName = ui(`provider.${provider.value}`, provider.options[provider.selectedIndex]?.textContent || ui('translator.provider', '翻译器'));
+      const isRetryLoading = loadingProgress.mode === 'retry';
       const isFtbquests = inputKind.value === 'ftbquests';
       const isJson = inputKind.value === 'json';
       const sourceCount = isFtbquests ? (ftbquestsInput.files.length || ftbquestsDirectoryInput.files.length) : (isJson ? jsonInput.files.length : jarsInput.files.length);
-      const sourceLabel = isFtbquests ? ui('file.ftbquests', 'FTB Quests 输入') : (isJson ? ui('file.json', '语言 JSON') : ui('file.jar', 'JAR'));
+      const sourceLabel = isRetryLoading ? ui('loading.retry_items', '失败项') : (isFtbquests ? ui('file.ftbquests', 'FTB Quests 输入') : (isJson ? ui('file.json', '语言 JSON') : ui('file.jar', 'JAR')));
       const concurrency = Math.max(1, Number(data.get('api_concurrency') || '1'));
       const isAi = provider.value === 'openai-compatible' || provider.value === 'anthropic-compatible';
       const completed = loadingProgress.completed || 0;
@@ -11031,6 +11074,7 @@ __TARGET_LOCALE_OPTIONS_HTML__
       const cacheHits = loadingProgress.cacheHits || 0;
       const cacheMisses = loadingProgress.cacheMisses || 0;
       const currentFile = loadingProgress.currentFile || '';
+      const currentKey = loadingProgress.currentKey || '';
       const stageMap = {
         idle: ui('loading.stage.idle', '准备开始'),
         queued: isFtbquests ? ui('loading.stage.queued_ftbquests', '正在上传并解析 FTB Quests') : ui('loading.stage.queued_jar', '正在上传并解析 JAR'),
@@ -11043,9 +11087,9 @@ __TARGET_LOCALE_OPTIONS_HTML__
         cancelled: ui('loading.stage.cancelled', '任务已中断'),
         error: ui('loading.stage.error', '处理失败')
       };
-      const stage = stageMap[loadingProgress.stage] || (isAi ? ui('loading.stage.processing_ai', '正在处理翻译任务') : ui('loading.stage.processing', '正在处理任务'));
+      const stage = isRetryLoading ? ui('loading.mode.retry', '正在重试失败项') : (stageMap[loadingProgress.stage] || (isAi ? ui('loading.stage.processing_ai', '正在处理翻译任务') : ui('loading.stage.processing', '正在处理任务')));
       const progressText = total ? `${completed}/${total}` : ui('loading.request_counting', '正在统计请求总量');
-      const fileText = filesTotal ? `${filesCompleted}/${filesTotal}` : ui('loading.file_counting', '正在统计文件数量');
+      const fileText = filesTotal ? `${filesCompleted}/${filesTotal}` : (isRetryLoading ? ui('loading.retry_counting', '正在统计失败项') : ui('loading.file_counting', '正在统计文件数量'));
       const retryText = loadingProgress.retryAttempt
         ? formatUi('loading.retrying', '当前重试 {attempt}/{max}，原因：{reason}，等待 {delay}s，连接/读取超时 {timeout}s。', {
           attempt: loadingProgress.retryAttempt,
@@ -11056,6 +11100,9 @@ __TARGET_LOCALE_OPTIONS_HTML__
         })
         : '';
       const statusText = retryText
+        || (isRetryLoading
+          ? formatUi('loading.retry_item_progress', '正在重试 {progress}{current}', { progress: fileText, current: currentKey ? formatUi('loading.current_key', '，当前：{key}', { key: currentKey }) : (currentFile ? formatUi('loading.current_file', '，当前：{file}', { file: currentFile }) : '') })
+          : '')
         || (loadingProgress.stage === 'reusing_cache'
           ? formatUi('loading.cache_reuse', '缓存命中 {hits}/{total}{current}', { hits: cacheHits, total: filesTotal || sourceCount || cacheHits || 0, current: currentFile ? formatUi('loading.current_file', '，当前：{file}', { file: currentFile }) : '' })
           : (loadingProgress.stage === 'processing_file'
@@ -11066,9 +11113,10 @@ __TARGET_LOCALE_OPTIONS_HTML__
       const cacheText = filesTotal || cacheHits || cacheMisses
         ? formatUi('loading.cache_stats', '缓存命中 {hits} 个，实际翻译 {misses} 个。', { hits: cacheHits, misses: Math.max(0, cacheMisses) })
         : '';
+      const detailSourceCount = isRetryLoading ? (filesTotal || sourceCount) : sourceCount;
       const detail = isAi
-        ? formatUi('loading.detail_ai', '翻译器：{provider}，并发上限：{concurrency}，每次请求 {batch} 条，{sourceLabel}：{sourceCount} 个。{cacheText}耗时 {elapsed}s。', { provider: providerName, concurrency, batch: loadingProgress.batchSize || 40, sourceLabel, sourceCount, cacheText, elapsed })
-        : formatUi('loading.detail', '翻译器：{provider}，{sourceLabel}：{sourceCount} 个。{cacheText}耗时 {elapsed}s。', { provider: providerName, sourceLabel, sourceCount, cacheText, elapsed });
+        ? formatUi('loading.detail_ai', '翻译器：{provider}，并发上限：{concurrency}，每次请求 {batch} 条，{sourceLabel}：{sourceCount} 个。{cacheText}耗时 {elapsed}s。', { provider: providerName, concurrency, batch: loadingProgress.batchSize || 40, sourceLabel, sourceCount: detailSourceCount, cacheText, elapsed })
+        : formatUi('loading.detail', '翻译器：{provider}，{sourceLabel}：{sourceCount} 个。{cacheText}耗时 {elapsed}s。', { provider: providerName, sourceLabel, sourceCount: detailSourceCount, cacheText, elapsed });
       const card = document.getElementById('loading-card');
       if (!card) {
         results.innerHTML = `
@@ -11080,7 +11128,7 @@ __TARGET_LOCALE_OPTIONS_HTML__
             <div id="loading-meta" class="loading-meta"></div>
           </div>
           <div class="loading-lanes">
-            <div class="loading-lane"><span>${escapeHtml(ui('loading.file_progress', '文件进度'))}</span><div class="loading-lane-bar"><span id="loading-file-progress-bar"></span></div><b id="loading-file-progress-text"></b></div>
+            <div class="loading-lane"><span id="loading-file-progress-label">${escapeHtml(isRetryLoading ? ui('loading.retry_progress', '失败项进度') : ui('loading.file_progress', '文件进度'))}</span><div class="loading-lane-bar"><span id="loading-file-progress-bar"></span></div><b id="loading-file-progress-text"></b></div>
             <div class="loading-lane"><span>${escapeHtml(ui('loading.request_lane', '翻译请求'))}</span><div class="loading-lane-bar"><span id="loading-progress-bar"></span></div><b id="loading-progress-text"></b></div>
           </div>
         </div>
@@ -11091,6 +11139,7 @@ __TARGET_LOCALE_OPTIONS_HTML__
       const metaNode = document.getElementById('loading-meta');
       const progressNode = document.getElementById('loading-progress-bar');
       const progressTextNode = document.getElementById('loading-progress-text');
+      const fileProgressLabelNode = document.getElementById('loading-file-progress-label');
       const fileProgressNode = document.getElementById('loading-file-progress-bar');
       const fileProgressTextNode = document.getElementById('loading-file-progress-text');
       if (titleNode) {
@@ -11108,6 +11157,9 @@ __TARGET_LOCALE_OPTIONS_HTML__
       }
       if (progressTextNode) {
         progressTextNode.textContent = progressText;
+      }
+      if (fileProgressLabelNode) {
+        fileProgressLabelNode.textContent = isRetryLoading ? ui('loading.retry_progress', '失败项进度') : ui('loading.file_progress', '文件进度');
       }
       if (fileProgressNode) {
         fileProgressNode.style.width = filesTotal ? `${Math.max(6, filePercent)}%` : '';
@@ -12110,11 +12162,28 @@ __TARGET_LOCALE_OPTIONS_HTML__
       }
       statusBox.className = 'status';
       statusBox.textContent = ui('result.retrying_failed', '正在重试失败的翻译项...');
+      const failedCount = payload.api_failure_count || (Array.isArray(payload.api_failed_entries) ? payload.api_failed_entries.length : 0);
+      startLoading({
+        mode: 'retry',
+        showCancel: false,
+        initialProgress: {
+          stage: 'translating',
+          filesCompleted: 0,
+          filesTotal: failedCount,
+          completed: 0,
+          total: 0
+        }
+      });
       try {
         const response = await fetch(`/api/retry/${encodeURIComponent(payload.job_id)}`, { method: 'POST' });
         const retryPayload = await response.json();
         if (!response.ok || !retryPayload.ok) {
           throw new Error(retryPayload.error || ui('result.retry_failed_error', '重试失败'));
+        }
+        if (retryPayload.retry_job_id) {
+          retryActiveJobId = retryPayload.retry_job_id;
+          startProgressPolling(retryPayload.retry_job_id, { mode: 'retry', originalJobId: payload.job_id });
+          return;
         }
         resultState.payload = retryPayload.result;
         apiLogLines = Array.isArray(retryPayload.result.api_debug_log_lines) ? retryPayload.result.api_debug_log_lines : apiLogLines;
@@ -12127,17 +12196,26 @@ __TARGET_LOCALE_OPTIONS_HTML__
           statusBox.textContent = formatUi('result.retry_success', '失败项已重试成功，更新 {retried} 条。耗时 {elapsed}。', { retried: retryPayload.retried, elapsed: formatSeconds(retryPayload.elapsed_seconds) });
         }
       } catch (error) {
+        stopLoading();
         statusBox.className = 'status error';
         statusBox.textContent = error.message;
         renderResultShell();
       } finally {
-        if (button) {
-          button.disabled = false;
-          button.classList.remove('is-loading');
-          button.innerHTML = `<i class="ri-refresh-line"></i><span>${escapeHtml(ui('result.retry_failed', '重试失败项'))}</span>`;
-          button.removeAttribute('aria-busy');
+        if (button && !retryActiveJobId) {
+          resetRetryButton();
         }
       }
+    }
+
+    function resetRetryButton() {
+      const button = document.getElementById('retry-api-failures');
+      if (!button) {
+        return;
+      }
+      button.disabled = false;
+      button.classList.remove('is-loading');
+      button.innerHTML = `<i class="ri-refresh-line"></i><span>${escapeHtml(ui('result.retry_failed', '重试失败项'))}</span>`;
+      button.removeAttribute('aria-busy');
     }
 
     function paginate(items, page, pageSize) {

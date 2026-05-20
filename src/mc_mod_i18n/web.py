@@ -325,8 +325,13 @@ def serve(host: str, port: int, workdir: Path) -> None:
         server.server_close()
 
 
-def make_handler(workdir: Path, *, sync_branding_build_config: bool = False):
-    jobs: dict[str, dict[str, Any]] = {}
+def make_handler(
+    workdir: Path,
+    *,
+    sync_branding_build_config: bool = False,
+    initial_jobs: dict[str, dict[str, Any]] | None = None,
+):
+    jobs: dict[str, dict[str, Any]] = dict(initial_jobs or {})
     cancel_events: dict[str, Event] = {}
     jobs_lock = Lock()
     history_lock = Lock()
@@ -1496,47 +1501,156 @@ def make_handler(workdir: Path, *, sync_branding_build_config: bool = False):
             failed_entries = result.get("api_failed_entries") or [
                 entry for entry in result.get("entries", []) if entry.get("status") == "api_failed"
             ]
+            failed_entries = [dict(entry) for entry in failed_entries if isinstance(entry, dict)]
             if not failed_entries:
                 return {"ok": True, "retried": 0, "result": result}
 
-            args = argparse.Namespace(**job.get("args", {}))
-            translator = create_translator(args)
-            items = [
-                TranslationItem(
-                    id=entry_id(entry),
-                    key=entry.get("key", ""),
-                    text=entry.get("source", ""),
-                    mod_id=entry.get("mod_id", ""),
-                )
-                for entry in failed_entries
-            ]
+            retry_job_id = f"{job_id[:16]}{token_hex(8)}"[:32]
+            args_payload = dict(job.get("args", {}))
+            update_job(
+                retry_job_id,
+                status="running",
+                mode="retry",
+                kind=result.get("kind") or job.get("kind") or "jar",
+                stage="translating",
+                created_at=utc_timestamp(),
+                original_job_id=job_id,
+                input_files=job.get("input_files", []),
+                provider=args_payload.get("provider", result.get("provider", "")),
+                model=args_payload.get("model", result.get("model", "")),
+                api_concurrency=int(args_payload.get("api_concurrency", result.get("api_concurrency", 1)) or 1),
+                batch_size=int(args_payload.get("api_batch_size", result.get("api_batch_size", 40)) or 40),
+                request_timeout=float(args_payload.get("api_timeout", result.get("api_timeout", 10.0)) or 10.0),
+                files_completed=0,
+                files_total=len(failed_entries),
+                completed=0,
+                total=0,
+                retry_success_count=0,
+                retry_failure_count=0,
+                current_file="",
+                current_key="",
+                args=args_payload,
+            )
+            Thread(
+                target=self._run_retry_job,
+                args=(retry_job_id, job_id, job, result, failed_entries),
+                daemon=True,
+            ).start()
+            return {"ok": True, "retry_job_id": retry_job_id, "original_job_id": job_id}
+
+        def _run_retry_job(
+            self,
+            retry_job_id: str,
+            original_job_id: str,
+            job: dict[str, Any],
+            result: dict[str, Any],
+            failed_entries: list[dict[str, Any]],
+        ) -> None:
             started_at = time.perf_counter()
-            translations, failed_map = translate_batch_with_failures(translator, items)
-            elapsed_seconds = time.perf_counter() - started_at
-            updated, still_failed, _ = merge_retry_result(result, failed_entries, translations, failed_map)
-            result["retry_elapsed_seconds"] = round(elapsed_seconds, 2)
-            out_dir = workdir / job_id / "out"
-            successful_entries = successful_retry_result_entries(result, failed_entries)
-            pack_url = str(result.get("pack_url") or "")
-            if updated and pack_url.startswith(f"/download/{job_id}/"):
-                relative = pack_url.removeprefix(f"/download/{job_id}/")
-                pack_path = safe_run_path(workdir / job_id, relative)
-                update_resource_pack_entries(pack_path, successful_retry_updates(failed_entries, translations, failed_map))
-            if updated and result.get("kind") == "json":
-                update_json_retry_outputs(out_dir, successful_entries)
-            if updated and result.get("kind") == "ftbquests":
-                ftbquests_result = ftbquests_result_from_retry_payload(result)
-                if ftbquests_result:
-                    update_ftbquests_retry_outputs(out_dir, ftbquests_result, successful_entries)
-                    result["ftbquests_output_files"] = [
-                        {"path": item.path, "content": item.content}
-                        for item in ftbquests_result.output_files
-                    ]
-            if updated:
-                refresh_retry_report_exports(out_dir, result)
-            result["api_debug_log_lines"] = read_jsonl(Path(job.get("api_debug_log_path", "")), limit=300)
-            update_job(job_id, result=result)
-            return {"ok": True, "retried": updated, "remaining": still_failed, "elapsed_seconds": round(elapsed_seconds, 2), "result": result}
+            try:
+                args = argparse.Namespace(**job.get("args", {}))
+                progress_state = {"completed": 0, "total": 0}
+                entry_total = len(failed_entries)
+                batch_size = max(1, int(getattr(args, "api_batch_size", 40) or 40))
+
+                def progress_callback(*callback_args: Any) -> None:
+                    if callback_args and isinstance(callback_args[0], dict):
+                        event = callback_args[0]
+                        if event.get("type") == "retry_wait":
+                            update_job(
+                                retry_job_id,
+                                stage="retrying",
+                                retry_attempt=event.get("next_attempt", event.get("attempt", 0)),
+                                retry_max=event.get("max_retries", 0),
+                                retry_delay=event.get("delay_seconds", 0),
+                                retry_reason=event.get("reason", ""),
+                            )
+                        return
+                    completed_delta = int(callback_args[0]) if callback_args else 0
+                    total_delta = int(callback_args[1]) if len(callback_args) > 1 else 0
+                    if total_delta:
+                        progress_state["total"] += total_delta
+                    if completed_delta:
+                        progress_state["completed"] += completed_delta
+                    request_total = max(progress_state["total"], progress_state["completed"])
+                    request_completed = progress_state["completed"]
+                    files_completed = min(entry_total, request_completed * batch_size)
+                    current = failed_entries[min(files_completed, entry_total - 1)] if entry_total else {}
+                    update_job(
+                        retry_job_id,
+                        stage="translating",
+                        completed=request_completed,
+                        total=request_total,
+                        files_completed=files_completed,
+                        files_total=entry_total,
+                        current_file=current.get("jar") or current.get("file", ""),
+                        current_key=current.get("key", ""),
+                        retry_attempt=0,
+                        retry_max=getattr(args, "api_retries", 0),
+                        retry_delay=0,
+                        retry_reason="",
+                    )
+
+                args.progress_callback = progress_callback
+                translator = create_translator(args)
+                items = [
+                    TranslationItem(
+                        id=entry_id(entry),
+                        key=entry.get("key", ""),
+                        text=entry.get("source", ""),
+                        mod_id=entry.get("mod_id", ""),
+                    )
+                    for entry in failed_entries
+                ]
+                progress_callback(0, max(1, (len(items) + batch_size - 1) // batch_size))
+                translations, failed_map = translate_batch_with_failures(translator, items)
+                elapsed_seconds = time.perf_counter() - started_at
+                updated, still_failed, _ = merge_retry_result(result, failed_entries, translations, failed_map)
+                result["retry_elapsed_seconds"] = round(elapsed_seconds, 2)
+                out_dir = workdir / original_job_id / "out"
+                successful_entries = successful_retry_result_entries(result, failed_entries)
+                pack_url = str(result.get("pack_url") or "")
+                if updated and pack_url.startswith(f"/download/{original_job_id}/"):
+                    relative = pack_url.removeprefix(f"/download/{original_job_id}/")
+                    pack_path = safe_run_path(workdir / original_job_id, relative)
+                    update_resource_pack_entries(pack_path, successful_retry_updates(failed_entries, translations, failed_map))
+                if updated and result.get("kind") == "json":
+                    update_json_retry_outputs(out_dir, successful_entries)
+                if updated and result.get("kind") == "ftbquests":
+                    ftbquests_result = ftbquests_result_from_retry_payload(result)
+                    if ftbquests_result:
+                        update_ftbquests_retry_outputs(out_dir, ftbquests_result, successful_entries)
+                        result["ftbquests_output_files"] = [
+                            {"path": item.path, "content": item.content}
+                            for item in ftbquests_result.output_files
+                        ]
+                if updated:
+                    refresh_retry_report_exports(out_dir, result)
+                result["api_debug_log_lines"] = read_jsonl(Path(job.get("api_debug_log_path", "")), limit=300)
+                update_job(original_job_id, result=result)
+                update_job(
+                    retry_job_id,
+                    status="done",
+                    stage="done",
+                    completed=progress_state["completed"],
+                    total=max(progress_state["total"], progress_state["completed"]),
+                    files_completed=entry_total,
+                    files_total=entry_total,
+                    retry_success_count=updated,
+                    retry_failure_count=still_failed,
+                    elapsed_seconds=round(elapsed_seconds, 2),
+                    result=result,
+                    retried=updated,
+                    remaining=still_failed,
+                )
+            except Exception as exc:
+                update_job(
+                    retry_job_id,
+                    status="error",
+                    stage="error",
+                    error=str(exc),
+                    elapsed_seconds=round(time.perf_counter() - started_at, 2),
+                )
 
         def _handle_translate_hardcoded(self) -> dict[str, Any]:
             length = int(self.headers.get("Content-Length") or "0")
