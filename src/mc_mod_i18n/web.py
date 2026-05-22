@@ -21,6 +21,7 @@ from zipfile import BadZipFile, ZipFile
 
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from .app_db import app_db_path, connect_app_db
 from .core import compute_translation_config_hash, compute_zip_source_hash, create_translator, process_jar, report_has_uncacheable_failures, translate_batch_with_failures
 from .ftbquests import (
     FTBQuestsResult,
@@ -155,6 +156,9 @@ from .web_state import (
     clear_cache_directory,
     clear_translation_memory,
     compact_translation_memory,
+    import_translation_memory,
+    update_translation_memory_entry,
+    delete_translation_memory_entry,
     default_cache_root,
     default_ui_locale_root,
     delete_config_preset,
@@ -170,6 +174,7 @@ from .web_state import (
     read_translation_memory_rows,
     read_user_glossary,
     resolve_cache_root,
+    saved_glossary_path_if_present,
     shared_cache_key,
     shared_cache_scope_dir,
     translation_memory_path,
@@ -367,6 +372,9 @@ def make_handler(
             if parsed.path == "/api/system-settings":
                 self._send_json({"ok": True, **system_settings_payload(workdir)})
                 return
+            if parsed.path == "/api/health":
+                self._send_health_check()
+                return
             if parsed.path == "/assets/logo/current":
                 self._send_brand_logo_asset("png")
                 return
@@ -555,6 +563,27 @@ def make_handler(
             if parsed.path == "/api/translation-memory":
                 try:
                     payload = self._handle_translation_memory_mutation()
+                    self._send_json(payload)
+                except Exception as exc:
+                    self._send_json({"ok": False, "error": str(exc)}, status=400)
+                return
+            if parsed.path == "/api/translation-memory/import":
+                try:
+                    payload = self._handle_translation_memory_import()
+                    self._send_json(payload)
+                except Exception as exc:
+                    self._send_json({"ok": False, "error": str(exc)}, status=500)
+                return
+            if parsed.path == "/api/translation-memory/update":
+                try:
+                    payload = self._handle_translation_memory_update()
+                    self._send_json(payload)
+                except Exception as exc:
+                    self._send_json({"ok": False, "error": str(exc)}, status=400)
+                return
+            if parsed.path == "/api/translation-memory/delete":
+                try:
+                    payload = self._handle_translation_memory_delete()
                     self._send_json(payload)
                 except Exception as exc:
                     self._send_json({"ok": False, "error": str(exc)}, status=400)
@@ -827,8 +856,10 @@ def make_handler(
 
         def _send_translation_memory_export(self, query: str) -> None:
             cache_root = self._cache_root_from_query(query)
-            path = translation_memory_path(cache_root)
-            data = path.read_bytes() if path.is_file() else b""
+            rows = read_translation_memory_rows(cache_root)
+            data = (
+                "\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + ("\n" if rows else "")
+            ).encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "application/x-ndjson; charset=utf-8")
             self.send_header("Content-Length", str(len(data)))
@@ -851,6 +882,48 @@ def make_handler(
             else:
                 raise ValueError("未知翻译记忆操作")
             return {"ok": True, "removed": removed, **translation_memory_stats(cache_root, scope=scope)}
+
+        def _handle_translation_memory_import(self) -> dict[str, Any]:
+            import tempfile
+            length = int(self.headers.get("Content-Length") or "0")
+            body = self.rfile.read(length)
+            parts = parse_multipart(self.headers.get("Content-Type", ""), body)
+            fields = collect_fields(parts)
+            cache_root = resolve_cache_root(workdir, fields.get("cache_dir", ""))
+            jsonl_part = next((p for p in parts if p.name == "jsonl_file"), None)
+            if not jsonl_part or not jsonl_part.filename:
+                raise ValueError("请上传 JSONL 文件")
+            with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False) as tmp:
+                tmp.write(jsonl_part.body or b"")
+                tmp_path = Path(tmp.name)
+            try:
+                result = import_translation_memory(cache_root, tmp_path)
+            finally:
+                tmp_path.unlink(missing_ok=True)
+            return result
+
+        def _handle_translation_memory_update(self) -> dict[str, Any]:
+            length = int(self.headers.get("Content-Length") or "0")
+            body = self.rfile.read(length)
+            payload = json.loads(body.decode("utf-8") or "{}")
+            cache_root = resolve_cache_root(workdir, str(payload.get("cache_dir", "") or ""))
+            scope = str(payload.get("scope", "") or "")
+            source = str(payload.get("source", "") or "")
+            target = str(payload.get("target", "") or "")
+            if not scope or not source or not target:
+                raise ValueError("缺少必填参数")
+            return update_translation_memory_entry(cache_root, scope, source, target)
+
+        def _handle_translation_memory_delete(self) -> dict[str, Any]:
+            length = int(self.headers.get("Content-Length") or "0")
+            body = self.rfile.read(length)
+            payload = json.loads(body.decode("utf-8") or "{}")
+            cache_root = resolve_cache_root(workdir, str(payload.get("cache_dir", "") or ""))
+            scope = str(payload.get("scope", "") or "")
+            source = str(payload.get("source", "") or "")
+            if not scope or not source:
+                raise ValueError("缺少必填参数")
+            return delete_translation_memory_entry(cache_root, scope, source)
 
         def _ui_locale_root_from_query(self, query: str) -> Path:
             values = parse_qs(query or "")
@@ -1730,6 +1803,45 @@ def make_handler(
             self.end_headers()
             self.wfile.write(data)
 
+        def _send_health_check(self) -> None:
+            checks: dict[str, Any] = {}
+            ok = True
+
+            # Check database connectivity
+            db_path = app_db_path(workdir)
+            try:
+                with connect_app_db(db_path) as connection:
+                    connection.execute("SELECT 1")
+                checks["database"] = "ok"
+            except Exception as exc:
+                checks["database"] = {"error": str(exc)}
+                ok = False
+
+            # Check translation_memory entry count
+            try:
+                with connect_app_db(db_path) as connection:
+                    row = connection.execute("SELECT COUNT(*) FROM translation_memory").fetchone()
+                    checks["translation_memory"] = {"entries": int(row[0]) if row else 0}
+            except Exception as exc:
+                checks["translation_memory"] = {"error": str(exc)}
+                ok = False
+
+            # Check job_history entry count
+            try:
+                with connect_app_db(db_path) as connection:
+                    row = connection.execute("SELECT COUNT(*) FROM job_history").fetchone()
+                    checks["job_history"] = {"count": int(row[0]) if row else 0}
+            except Exception as exc:
+                checks["job_history"] = {"error": str(exc)}
+                ok = False
+
+            payload = {
+                "ok": ok,
+                "status": "healthy" if ok else "degraded",
+                "checks": checks,
+            }
+            self._send_json(payload, status=200 if ok else 503)
+
         def _send_json(self, payload: dict[str, Any], status: int = 200) -> None:
             data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             self.send_response(status)
@@ -1850,6 +1962,9 @@ def run_json_translate_job(
         }
         for entry in report_entries:
             summary[entry.status] = summary.get(entry.status, 0) + 1
+        status_counts: dict[str, int] = {}
+        for entry in report_entries:
+            status_counts[entry.status] = status_counts.get(entry.status, 0) + 1
         elapsed_seconds = time.perf_counter() - started_at
         export_paths = write_report_exports(
             out_dir,
@@ -1884,6 +1999,7 @@ def run_json_translate_job(
             "cache_misses": translated_total,
             "memory_hits": getattr(translator, "memory_hits", 0),
             "summary": summary,
+            "status_counts": status_counts,
             "api_failure_count": summary.get("api_failed", 0),
             "api_failed_entries": [entry.__dict__ for entry in report_entries if entry.status == "api_failed"],
             "entries": [entry.__dict__ for entry in report_entries],
@@ -1965,6 +2081,9 @@ def run_ftbquests_job(
         summary: dict[str, int] = {}
         for entry in result.report_entries:
             summary[entry.status] = summary.get(entry.status, 0) + 1
+        status_counts: dict[str, int] = {}
+        for entry in result.report_entries:
+            status_counts[entry.status] = status_counts.get(entry.status, 0) + 1
         elapsed_seconds = time.perf_counter() - started_at
         export_paths = write_report_exports(
             out_dir,
@@ -2007,6 +2126,7 @@ def run_ftbquests_job(
             "hardcoded_map": {},
             "hardcoded_entries": [],
             "summary": summary,
+            "status_counts": status_counts,
             "provider": args.provider,
             "elapsed_seconds": round(elapsed_seconds, 2),
             "cache_hits": 1 if cache_hit else 0,
@@ -2187,6 +2307,9 @@ def run_translate_job(
         summary: dict[str, int] = {}
         for entry in report_entries:
             summary[entry.status] = summary.get(entry.status, 0) + 1
+        status_counts: dict[str, int] = {}
+        for entry in report_entries:
+            status_counts[entry.status] = status_counts.get(entry.status, 0) + 1
         elapsed_seconds = time.perf_counter() - started_at
         export_paths = write_report_exports(
             out_dir,
@@ -2221,6 +2344,7 @@ def run_translate_job(
             "hardcoded_map": hardcoded_map,
             "hardcoded_entries": [hardcoded_entry_to_dict(entry) for entry in hardcoded_entries],
             "summary": summary,
+            "status_counts": status_counts,
             "provider": args.provider,
             "elapsed_seconds": round(elapsed_seconds, 2),
             "cache_hits": cache_hits,

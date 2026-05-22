@@ -364,6 +364,23 @@ class GlossaryTranslator(Translator):
         "Pink": "粉色",
         "Magenta": "品红色",
         "Purple": "紫色",
+        # Applied Energistics 2
+        "Fluix": "福鲁伊克斯",
+        "Certus Quartz": "赛特斯石英",
+        # Mekanism
+        "Osmium": "锇",
+        "Infused Alloy": "灌注合金",
+        # Thermal Series
+        "Hardened": "硬化",
+        "Redstone Flux": "红石通量",
+        # Create
+        "Andesite": "安山岩",
+        "Basin": "盆",
+        "Crushing Wheel": "粉碎轮",
+        # General
+        "Enchanting": "附魔",
+        "Anvil": "铁砧",
+        "Brewing": "酿造",
     }
 
     def __init__(self, glossary: dict[str, str] | None = None) -> None:
@@ -412,6 +429,26 @@ class GlossaryTranslator(Translator):
             (r"^(.+) output: (%s)$", "{0}输出：{1}"),
             (r"^via 1 vent$", "通过 1 个通风口"),
             (r"^via (%1\$s) vents$", "通过 {0} 个通风口"),
+            # 陈述句
+            (r"^A (.+) is a (.+)$", "一种{0}是{1}"),
+            (r"^(.+) is a type of (.+)$", "{0}是{1}的一种"),
+            (r"^(.+) is used to (.+)$", "{0}用于{1}"),
+            # 被动句
+            (r"^(.+) can be used to (.+)$", "{0}可以用来{1}"),
+            (r"^(.+) can be crafted (.+)$", "{0}可以在{1}合成"),
+            # 条件/时间句
+            (r"^When (.+), (.+)$", "当{0}时，{1}"),
+            (r"^If (.+), then (.+)$", "如果{0}，则{1}"),
+            # 数量/归属句
+            (r"^A pair of (.+)$", "一副{0}"),
+            (r"^(.+) of (.+)$", "{1}的{0}"),
+            # 属性句
+            (r"^(.+) has (.+)$", "{0}拥有{1}"),
+            (r"^(.+) contains (.+)$", "{0}包含{1}"),
+            # 动作句
+            (r"^Use (.+) to (.+)$", "使用{0}来{1}"),
+            (r"^Right-click (.+) to (.+)$", "右键{0}来{1}"),
+            (r"^Sneak and right-click (.+) to (.+)$", "潜行并右键{0}来{1}"),
         ]
         for pattern, replacement in simple_patterns:
             match = re.match(pattern, text, flags=re.IGNORECASE)

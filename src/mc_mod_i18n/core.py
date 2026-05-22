@@ -29,6 +29,7 @@ from .translator import (
     load_glossary,
 )
 from .validator import pre_check_lang_documents, validate_document_completeness, validate_translation
+from .web_utils import utc_timestamp
 
 
 PROMPT_VERSION = "2026-05-11.translate-json-array.v2"
@@ -129,9 +130,29 @@ class TranslationMemory:
         self.path = Path(path)
         self.scope = scope
         self._entries: dict[str, str] | None = None
+        if self.path.suffix.lower() not in {".db", ".sqlite", ".sqlite3"}:
+            import warnings
+            warnings.warn(
+                f"TranslationMemory JSONL mode is deprecated, use .sqlite3 path instead: {path}",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+
+    def _uses_sqlite(self) -> bool:
+        return self.path.suffix.lower() in {".db", ".sqlite", ".sqlite3"}
 
     def _load(self) -> dict[str, str]:
         if self._entries is not None:
+            return self._entries
+        if self._uses_sqlite():
+            from .app_db import connect_app_db
+
+            with connect_app_db(self.path) as connection:
+                rows = connection.execute(
+                    "SELECT source, target FROM translation_memory WHERE scope = ?",
+                    (self.scope,),
+                ).fetchall()
+            self._entries = {row["source"]: row["target"] for row in rows}
             return self._entries
         entries: dict[str, str] = {}
         if self.path.is_file():
@@ -152,6 +173,30 @@ class TranslationMemory:
 
     def put_many(self, values: dict[str, str]) -> None:
         if not values:
+            return
+        # 去重检测：同一批次中多个不同 source 映射到相同 target 时，跳过可疑条目
+        target_to_sources: dict[str, list[str]] = {}
+        for source, target in values.items():
+            target_to_sources.setdefault(target, []).append(source)
+        values = {s: t for s, t in values.items() if len(target_to_sources[t]) == 1}
+        if not values:
+            return
+        if self._uses_sqlite():
+            from .app_db import connect_app_db
+
+            now = utc_timestamp()
+            with connect_app_db(self.path) as connection:
+                connection.executemany(
+                    """
+                    INSERT INTO translation_memory(scope, source, target, updated_at)
+                    VALUES (?, ?, ?, ?)
+                    ON CONFLICT(scope, source) DO UPDATE SET
+                      target = excluded.target,
+                      updated_at = excluded.updated_at
+                    """,
+                    [(self.scope, source, target, now) for source, target in values.items()],
+                )
+            self._load().update(values)
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
         existing = self._load()

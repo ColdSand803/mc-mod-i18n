@@ -9,8 +9,10 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from .app_db import app_db_path, connect_app_db
 from .core import compute_translation_config_hash
 from .translator import GlossaryTranslator
+from .web_utils import utc_timestamp
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -29,6 +31,10 @@ def user_glossary_path(workdir: Path) -> Path:
     return workdir / "glossaries" / "user-glossary.json"
 
 
+def glossary_import_marker(workdir: Path) -> str:
+    return f"import:{user_glossary_path(workdir).resolve()}"
+
+
 def normalize_glossary_terms(value: Any) -> dict[str, str]:
     if not isinstance(value, dict):
         raise ValueError("术语表必须是 JSON 对象")
@@ -42,17 +48,55 @@ def normalize_glossary_terms(value: Any) -> dict[str, str]:
 
 
 def read_user_glossary(workdir: Path) -> dict[str, str]:
-    path = user_glossary_path(workdir)
-    if not path.is_file():
-        return {}
-    return normalize_glossary_terms(json.loads(path.read_text(encoding="utf-8-sig")))
+    ensure_user_glossary_migrated(workdir)
+    with connect_app_db(app_db_path(workdir)) as connection:
+        rows = connection.execute("SELECT source, target FROM glossary_terms ORDER BY lower(source), source").fetchall()
+    return {str(row["source"]): str(row["target"]) for row in rows}
 
 
 def write_user_glossary(workdir: Path, terms: dict[str, str]) -> Path:
+    ensure_user_glossary_migrated(workdir)
+    normalized = normalize_glossary_terms(terms)
+    with connect_app_db(app_db_path(workdir)) as connection:
+        connection.execute("DELETE FROM glossary_terms")
+        connection.executemany(
+            "INSERT INTO glossary_terms(source, target, updated_at) VALUES (?, ?, ?)",
+            [(source, target, utc_timestamp()) for source, target in normalized.items()],
+        )
     path = user_glossary_path(workdir)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(normalize_glossary_terms(terms), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    sync_user_glossary_file(path, normalized)
     return path
+
+
+def sync_user_glossary_file(path: Path, terms: dict[str, str]) -> None:
+    if terms:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(terms, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    elif path.exists():
+        path.unlink()
+
+
+def ensure_user_glossary_migrated(workdir: Path) -> None:
+    marker = glossary_import_marker(workdir)
+    path = user_glossary_path(workdir)
+    with connect_app_db(app_db_path(workdir)) as connection:
+        imported = connection.execute("SELECT 1 FROM schema_migrations WHERE key = ?", (marker,)).fetchone()
+        if imported:
+            return
+        if path.is_file():
+            try:
+                terms = normalize_glossary_terms(json.loads(path.read_text(encoding="utf-8-sig")))
+            except (OSError, ValueError, json.JSONDecodeError):
+                terms = {}
+            if terms:
+                connection.executemany(
+                    "INSERT OR REPLACE INTO glossary_terms(source, target, updated_at) VALUES (?, ?, ?)",
+                    [(source, target, utc_timestamp()) for source, target in terms.items()],
+                )
+        connection.execute(
+            "INSERT OR REPLACE INTO schema_migrations(key, applied_at) VALUES (?, ?)",
+            (marker, utc_timestamp()),
+        )
 
 
 def glossary_conflicts(terms: dict[str, str]) -> dict[str, dict[str, str]]:
@@ -67,7 +111,12 @@ def glossary_conflicts(terms: dict[str, str]) -> dict[str, dict[str, str]]:
 
 def saved_glossary_path_if_present(workdir: Path) -> Path | None:
     path = user_glossary_path(workdir)
-    return path if path.is_file() and read_user_glossary(workdir) else None
+    terms = read_user_glossary(workdir)
+    if not terms:
+        sync_user_glossary_file(path, terms)
+        return None
+    sync_user_glossary_file(path, terms)
+    return path
 
 
 PRESET_SCHEMA_VERSION = 1
@@ -134,54 +183,87 @@ def preset_path(workdir: Path, name: str) -> Path:
 
 
 def read_config_preset(workdir: Path, name: str) -> dict[str, Any]:
-    path = preset_path(workdir, name)
-    if not path.is_file():
+    ensure_config_presets_migrated(workdir)
+    slug = preset_slug(name)
+    with connect_app_db(app_db_path(workdir)) as connection:
+        row = connection.execute(
+            "SELECT name, config_json FROM config_presets WHERE slug = ?", (slug,)
+        ).fetchone()
+    if not row:
         raise ValueError("预设不存在")
-    payload = json.loads(path.read_text(encoding="utf-8-sig"))
     return {
-        "schema": int(payload.get("schema", PRESET_SCHEMA_VERSION) or PRESET_SCHEMA_VERSION),
-        "name": normalize_preset_name(str(payload.get("name", name))),
-        "config": normalize_preset_config(payload.get("config", {})),
+        "schema": PRESET_SCHEMA_VERSION,
+        "name": row["name"],
+        "config": json.loads(row["config_json"]),
     }
 
 
 def list_config_presets(workdir: Path) -> list[dict[str, Any]]:
-    root = presets_dir(workdir)
-    if not root.is_dir():
-        return []
-    presets: list[dict[str, Any]] = []
-    for path in sorted(root.glob("*.json")):
-        try:
-            preset = json.loads(path.read_text(encoding="utf-8-sig"))
-            presets.append(
-                {
-                    "name": normalize_preset_name(str(preset.get("name", path.stem))),
-                    "config": normalize_preset_config(preset.get("config", {})),
-                }
-            )
-        except (OSError, ValueError, json.JSONDecodeError):
-            continue
-    return sorted(presets, key=lambda item: item["name"].lower())
+    ensure_config_presets_migrated(workdir)
+    with connect_app_db(app_db_path(workdir)) as connection:
+        rows = connection.execute(
+            "SELECT name, config_json FROM config_presets ORDER BY name COLLATE NOCASE"
+        ).fetchall()
+    return [
+        {"name": row["name"], "config": json.loads(row["config_json"])}
+        for row in rows
+    ]
 
 
 def write_config_preset(workdir: Path, name: str, config: Any) -> dict[str, Any]:
+    ensure_config_presets_migrated(workdir)
     normalized_name = normalize_preset_name(name)
-    preset = {
-        "schema": PRESET_SCHEMA_VERSION,
-        "name": normalized_name,
-        "config": normalize_preset_config(config),
-    }
-    root = presets_dir(workdir)
-    root.mkdir(parents=True, exist_ok=True)
-    preset_path(workdir, normalized_name).write_text(json.dumps(preset, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    return preset
+    slug = preset_slug(normalized_name)
+    normalized_config = normalize_preset_config(config)
+    config_json = json.dumps(normalized_config, ensure_ascii=False)
+    now = utc_timestamp()
+    with connect_app_db(app_db_path(workdir)) as connection:
+        connection.execute(
+            "INSERT INTO config_presets(slug, name, config_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(slug) DO UPDATE SET name = excluded.name, config_json = excluded.config_json, updated_at = excluded.updated_at",
+            (slug, normalized_name, config_json, now, now),
+        )
+    return {"schema": PRESET_SCHEMA_VERSION, "name": normalized_name, "config": normalized_config}
 
 
 def delete_config_preset(workdir: Path, name: str) -> None:
-    path = preset_path(workdir, name)
-    if not path.is_file():
-        raise ValueError("预设不存在")
-    path.unlink()
+    ensure_config_presets_migrated(workdir)
+    slug = preset_slug(name)
+    with connect_app_db(app_db_path(workdir)) as connection:
+        exists = connection.execute("SELECT 1 FROM config_presets WHERE slug = ?", (slug,)).fetchone()
+        if not exists:
+            raise ValueError("预设不存在")
+        connection.execute("DELETE FROM config_presets WHERE slug = ?", (slug,))
+
+
+def _preset_import_marker(workdir: Path) -> str:
+    return f"import:{(workdir / 'presets').resolve()}"
+
+
+def ensure_config_presets_migrated(workdir: Path) -> None:
+    marker = _preset_import_marker(workdir)
+    root = presets_dir(workdir)
+    with connect_app_db(app_db_path(workdir)) as connection:
+        if connection.execute("SELECT 1 FROM schema_migrations WHERE key = ?", (marker,)).fetchone():
+            return
+        if root.is_dir():
+            now = utc_timestamp()
+            for path in root.glob("*.json"):
+                try:
+                    payload = json.loads(path.read_text(encoding="utf-8-sig"))
+                    slug = path.stem
+                    name = normalize_preset_name(str(payload.get("name", slug)))
+                    config = normalize_preset_config(payload.get("config", {}))
+                    connection.execute(
+                        "INSERT OR IGNORE INTO config_presets(slug, name, config_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                        (slug, name, json.dumps(config, ensure_ascii=False), now, now),
+                    )
+                except (OSError, ValueError, json.JSONDecodeError):
+                    continue
+        connection.execute(
+            "INSERT INTO schema_migrations(key, applied_at) VALUES (?, ?)",
+            (marker, utc_timestamp()),
+        )
+
 
 def resolve_cache_root(workdir: Path, raw_cache_dir: str | None) -> Path:
     raw = (raw_cache_dir or "").strip()
@@ -230,11 +312,62 @@ def clear_cache_directory(cache_root: Path, workdir: Path) -> int:
 
 
 def translation_memory_path(cache_root: Path) -> Path:
+    return app_db_path(cache_root)
+
+
+def legacy_translation_memory_jsonl_path(cache_root: Path) -> Path:
     return cache_root / "translation-memory.jsonl"
 
 
+def translation_memory_import_marker(cache_root: Path) -> str:
+    return f"import:{legacy_translation_memory_jsonl_path(cache_root).resolve()}"
+
+
+def ensure_translation_memory_migrated(cache_root: Path) -> None:
+    db_path = translation_memory_path(cache_root)
+    legacy_path = legacy_translation_memory_jsonl_path(cache_root)
+    with connect_app_db(db_path) as connection:
+        marker = translation_memory_import_marker(cache_root)
+        exists = connection.execute(
+            "SELECT 1 FROM schema_migrations WHERE key = ?",
+            (marker,),
+        ).fetchone()
+        if exists:
+            return
+        rows = read_legacy_translation_memory_rows(legacy_path)
+        if rows:
+            now = utc_timestamp()
+            connection.executemany(
+                """
+                INSERT INTO translation_memory(scope, source, target, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(scope, source) DO UPDATE SET
+                  target = excluded.target,
+                  updated_at = excluded.updated_at
+                """,
+                [(row["scope"], row["source"], row["target"], now) for row in rows],
+            )
+        connection.execute(
+            "INSERT OR REPLACE INTO schema_migrations(key, applied_at) VALUES (?, ?)",
+            (marker, utc_timestamp()),
+        )
+
+
 def read_translation_memory_rows(cache_root: Path) -> list[dict[str, str]]:
+    ensure_translation_memory_migrated(cache_root)
     path = translation_memory_path(cache_root)
+    with connect_app_db(path) as connection:
+        rows = connection.execute(
+            """
+            SELECT scope, source, target
+            FROM translation_memory
+            ORDER BY updated_at, rowid
+            """
+        ).fetchall()
+    return [{"scope": row["scope"], "source": row["source"], "target": row["target"]} for row in rows]
+
+
+def read_legacy_translation_memory_rows(path: Path) -> list[dict[str, str]]:
     if not path.is_file():
         return []
     rows: list[dict[str, str]] = []
@@ -269,57 +402,122 @@ def translation_memory_scope_from_config(value: Any) -> str:
 
 
 def translation_memory_stats(cache_root: Path, scope: str = "", limit: int = 5) -> dict[str, Any]:
+    ensure_translation_memory_migrated(cache_root)
     path = translation_memory_path(cache_root)
-    rows = read_translation_memory_rows(cache_root)
-    scopes = {row["scope"] for row in rows}
-    recent_rows = list(reversed(rows[-max(0, limit):])) if limit > 0 else []
-    scope_rows_all = [row for row in rows if row["scope"] == scope] if scope else []
-    scope_rows = list(reversed(scope_rows_all[-max(0, limit):])) if limit > 0 else list(reversed(scope_rows_all))
+    with connect_app_db(path) as connection:
+        entries = int(connection.execute("SELECT COUNT(*) FROM translation_memory").fetchone()[0])
+        scopes = int(connection.execute("SELECT COUNT(DISTINCT scope) FROM translation_memory").fetchone()[0])
+        recent_rows = [
+            {"scope": row["scope"], "source": row["source"], "target": row["target"]}
+            for row in connection.execute(
+                """
+                SELECT scope, source, target
+                FROM translation_memory
+                ORDER BY updated_at DESC, rowid DESC
+                LIMIT ?
+                """,
+                (max(0, limit),),
+            ).fetchall()
+        ] if limit > 0 else []
+        scope_entries = 0
+        scope_rows: list[dict[str, str]] = []
+        if scope:
+            scope_entries = int(
+                connection.execute("SELECT COUNT(*) FROM translation_memory WHERE scope = ?", (scope,)).fetchone()[0]
+            )
+            query_limit = max(0, limit)
+            scope_rows = [
+                {"scope": row["scope"], "source": row["source"], "target": row["target"]}
+                for row in connection.execute(
+                    """
+                    SELECT scope, source, target
+                    FROM translation_memory
+                    WHERE scope = ?
+                    ORDER BY updated_at DESC, rowid DESC
+                    LIMIT ?
+                    """,
+                    (scope, query_limit),
+                ).fetchall()
+            ] if limit > 0 else [
+                {"scope": row["scope"], "source": row["source"], "target": row["target"]}
+                for row in connection.execute(
+                    """
+                    SELECT scope, source, target
+                    FROM translation_memory
+                    WHERE scope = ?
+                    ORDER BY updated_at DESC, rowid DESC
+                    """,
+                    (scope,),
+                ).fetchall()
+            ]
     return {
         "cache_dir": str(cache_root),
         "path": str(path),
         "exists": path.is_file(),
-        "entries": len(rows),
-        "scopes": len(scopes),
+        "entries": entries,
+        "scopes": scopes,
         "size_bytes": path.stat().st_size if path.is_file() else 0,
         "scope": scope,
-        "scope_entries": len(scope_rows_all),
+        "scope_entries": scope_entries,
         "scope_rows": scope_rows,
         "recent_rows": recent_rows,
     }
 
 
 def clear_translation_memory(cache_root: Path, scope: str = "") -> int:
+    ensure_translation_memory_migrated(cache_root)
     path = translation_memory_path(cache_root)
-    rows = read_translation_memory_rows(cache_root)
-    if not scope:
-        if path.is_file():
-            path.unlink()
-        return len(rows)
-    kept = [row for row in rows if row["scope"] != scope]
-    removed = len(rows) - len(kept)
-    if kept:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("\n".join(json.dumps(row, ensure_ascii=False) for row in kept) + "\n", encoding="utf-8")
-    elif path.is_file():
-        path.unlink()
-    return max(0, removed)
+    with connect_app_db(path) as connection:
+        if scope:
+            removed = int(connection.execute("SELECT COUNT(*) FROM translation_memory WHERE scope = ?", (scope,)).fetchone()[0])
+            connection.execute("DELETE FROM translation_memory WHERE scope = ?", (scope,))
+        else:
+            removed = int(connection.execute("SELECT COUNT(*) FROM translation_memory").fetchone()[0])
+            connection.execute("DELETE FROM translation_memory")
+    return removed
+
+
+def import_translation_memory(cache_root: Path, jsonl_path: Path) -> dict[str, Any]:
+    """从 JSONL 文件导入翻译记忆，返回导入结果。"""
+    ensure_translation_memory_migrated(cache_root)
+    from .app_db import app_db_path, import_translation_memory_from_jsonl
+    db = app_db_path(cache_root)
+    count = import_translation_memory_from_jsonl(db, jsonl_path)
+    return {"ok": True, "imported": count}
 
 
 def compact_translation_memory(cache_root: Path) -> int:
-    path = translation_memory_path(cache_root)
-    rows = read_translation_memory_rows(cache_root)
-    latest: dict[tuple[str, str], dict[str, str]] = {}
-    for row in rows:
-        latest[(row["scope"], row["source"])] = row
-    compacted = list(latest.values())
-    removed = max(0, len(rows) - len(compacted))
-    if compacted:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("\n".join(json.dumps(row, ensure_ascii=False) for row in compacted) + "\n", encoding="utf-8")
-    elif path.is_file():
-        path.unlink()
-    return removed
+    # SQLite 模式下 upsert 天然去重，无需 compact
+    ensure_translation_memory_migrated(cache_root)
+    return 0
+
+
+def update_translation_memory_entry(cache_root: Path, scope: str, source: str, target: str) -> dict[str, Any]:
+    ensure_translation_memory_migrated(cache_root)
+    with connect_app_db(app_db_path(cache_root)) as connection:
+        existing = connection.execute(
+            "SELECT 1 FROM translation_memory WHERE scope = ? AND source = ?",
+            (scope, source),
+        ).fetchone()
+        if not existing:
+            raise ValueError("翻译记忆条目不存在")
+        connection.execute(
+            "UPDATE translation_memory SET target = ?, updated_at = ? WHERE scope = ? AND source = ?",
+            (target, utc_timestamp(), scope, source),
+        )
+    return {"ok": True}
+
+
+def delete_translation_memory_entry(cache_root: Path, scope: str, source: str) -> dict[str, Any]:
+    ensure_translation_memory_migrated(cache_root)
+    with connect_app_db(app_db_path(cache_root)) as connection:
+        result = connection.execute(
+            "DELETE FROM translation_memory WHERE scope = ? AND source = ?",
+            (scope, source),
+        )
+        if result.rowcount == 0:
+            raise ValueError("翻译记忆条目不存在")
+    return {"ok": True}
 
 
 def shared_cache_scope_dir(cache_root: Path, args: argparse.Namespace) -> Path:

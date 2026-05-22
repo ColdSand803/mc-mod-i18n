@@ -106,6 +106,24 @@ class JobHistoryTest(unittest.TestCase):
         self.assertTrue(record["download_status"]["report_json"]["exists"])
         self.assertFalse(record["download_status"]["report_csv"]["exists"])
 
+    def test_read_history_imports_legacy_jsonl_once(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            index_path = root / "jobs" / "index.jsonl"
+            index_path.parent.mkdir(parents=True)
+            index_path.write_text(
+                json.dumps({"job_id": "abc123", "status": "done", "created_at": "2026-05-13T10:00:00+08:00", "success_count": 1}, ensure_ascii=False)
+                + "\n"
+                + "{bad\n",
+                encoding="utf-8",
+            )
+
+            first = read_job_history(root, limit=10)
+            second = read_job_history(root, limit=10)
+
+        self.assertEqual(["abc123"], [record["job_id"] for record in first])
+        self.assertEqual(["abc123"], [record["job_id"] for record in second])
+
 
 if __name__ == "__main__":
     unittest.main()

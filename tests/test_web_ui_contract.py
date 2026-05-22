@@ -153,6 +153,21 @@ class WebUiContractTest(unittest.TestCase):
         self.assertIn("loading.mode.retry", INDEX_HTML)
         self.assertIn("loading.retry_item_progress", INDEX_HTML)
 
+    def test_retry_failed_items_keeps_results_under_loading_overlay(self) -> None:
+        self.assertIn('id="loading-overlay"', INDEX_HTML)
+        self.assertIn("renderLoading({ overlay: mode === 'retry' });", INDEX_HTML)
+        self.assertIn("renderLoading({ overlay: isRetryMode });", INDEX_HTML)
+        self.assertIn("const target = options.overlay ? loadingOverlay : results;", INDEX_HTML)
+        self.assertIn("showRetryLoadingOverlayFromCard", INDEX_HTML)
+        self.assertIn("if (key === 'quality' && showRetryLoadingOverlayFromCard())", INDEX_HTML)
+        self.assertNotIn("results.innerHTML = `\n        <div id=\"loading-card\"", INDEX_HTML)
+
+    def test_history_progress_never_rounds_partial_failure_to_100_percent(self) -> None:
+        self.assertIn("function formatHistoryProgressPercent", INDEX_HTML)
+        self.assertIn("if (failure > 0 && boundedPercent > 99 && boundedPercent < 100)", INDEX_HTML)
+        self.assertIn("return '99%';", INDEX_HTML)
+        self.assertIn("const percentText = formatHistoryProgressPercent(boundedPercent, success, failure, total, record.status);", INDEX_HTML)
+
     def test_result_language_tabs_live_in_card_header(self) -> None:
         self.assertIn('<div class="view-head">\n                <div class="view-head-main">', INDEX_HTML)
         self.assertIn('<div class="tabs">\n                    <button type="button" data-result-tab="language"', INDEX_HTML)

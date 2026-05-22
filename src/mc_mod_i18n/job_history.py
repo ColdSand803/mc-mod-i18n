@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlparse
 
+from .app_db import app_db_path, connect_app_db
 from .provider_checks import redact_secret
 from .web_utils import safe_run_path, sanitize_job_id, utc_timestamp
 
@@ -134,21 +135,195 @@ def sanitize_history_value(value: Any) -> Any:
     return value
 
 
-def append_job_history(workdir: Path, record: dict[str, Any], limit: int = 100) -> None:
-    jobs_dir = workdir / "jobs"
-    jobs_dir.mkdir(parents=True, exist_ok=True)
-    index_path = jobs_dir / "index.jsonl"
-    existing = list(reversed(read_job_history(workdir, limit=max(limit * 2, limit + 1))))
-    existing = [item for item in existing if item.get("job_id") != record.get("job_id")]
-    existing.append(record)
-    for item in existing:
-        item.pop("download_status", None)
-    if limit > 0:
-        existing = existing[-limit:]
-    index_path.write_text(
-        "".join(json.dumps(item, ensure_ascii=False, sort_keys=True) + "\n" for item in existing),
-        encoding="utf-8",
+def job_history_db_path(workdir: Path) -> Path:
+    return app_db_path(workdir)
+
+
+def legacy_job_history_index_path(workdir: Path) -> Path:
+    return workdir / "jobs" / "index.jsonl"
+
+
+def job_history_import_marker(workdir: Path) -> str:
+    return f"import:{legacy_job_history_index_path(workdir).resolve()}"
+
+
+def ensure_job_history_migrated(workdir: Path) -> None:
+    marker = job_history_import_marker(workdir)
+    with connect_app_db(job_history_db_path(workdir)) as connection:
+        imported = connection.execute("SELECT 1 FROM schema_migrations WHERE key = ?", (marker,)).fetchone()
+        if imported:
+            return
+        for record in read_legacy_job_history_records(workdir):
+            upsert_job_history_record(connection, record)
+        settings_path = job_history_settings_path(workdir)
+        if settings_path.is_file():
+            try:
+                payload = json.loads(settings_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                payload = {}
+            if isinstance(payload, dict):
+                limit = normalize_job_history_limit(payload.get("limit"))
+                connection.execute(
+                    """
+                    INSERT INTO app_settings(key, value_json, updated_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(key) DO UPDATE SET
+                      value_json = excluded.value_json,
+                      updated_at = excluded.updated_at
+                    """,
+                    ("job_history.limit", json.dumps({"limit": limit}, ensure_ascii=False, sort_keys=True), utc_timestamp()),
+                )
+        connection.execute(
+            "INSERT OR REPLACE INTO schema_migrations(key, applied_at) VALUES (?, ?)",
+            (marker, utc_timestamp()),
+        )
+
+
+def read_legacy_job_history_records(workdir: Path) -> list[dict[str, Any]]:
+    index_path = legacy_job_history_index_path(workdir)
+    if not index_path.is_file():
+        return []
+    records: list[dict[str, Any]] = []
+    for line in index_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        if not line.strip():
+            continue
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            records.append(normalize_job_history_record(value))
+    return records
+
+
+def normalize_job_history_record(record: dict[str, Any]) -> dict[str, Any]:
+    value = dict(record)
+    value["job_id"] = sanitize_job_id(str(value.get("job_id") or ""))
+    value["created_at"] = str(value.get("created_at") or utc_timestamp())
+    value["updated_at"] = str(value.get("updated_at") or value.get("created_at") or utc_timestamp())
+    value["status"] = str(value.get("status") or "unknown")
+    value["input_kind"] = str(value.get("input_kind") or "jar")
+    input_files = normalize_history_input_files(value.get("input_files", value.get("primary_input")))
+    value["input_files"] = input_files
+    if not value.get("primary_input"):
+        inferred = infer_history_primary_input(value)
+        value["primary_input"] = inferred or (input_files[0] if input_files else "")
+    value["primary_input"] = str(value.get("primary_input") or "")
+    value["target_locale"] = str(value.get("target_locale") or "")
+    value["provider"] = str(value.get("provider") or "")
+    value["model"] = str(value.get("model") or "")
+    value["processed_sources"] = int(value.get("processed_sources") or 0)
+    value["generated_files"] = int(value.get("generated_files") or 0)
+    value["success_count"] = int(value.get("success_count") or 0)
+    value["failure_count"] = int(value.get("failure_count") or 0)
+    value["summary"] = sanitize_history_value(value.get("summary") if isinstance(value.get("summary"), dict) else {})
+    value["downloads"] = sanitize_history_value(value.get("downloads") if isinstance(value.get("downloads"), dict) else {})
+    value["download_files"] = sanitize_history_value(value.get("download_files") if isinstance(value.get("download_files"), dict) else {})
+    value["error"] = str(value.get("error") or "")
+    value.pop("download_status", None)
+    return value
+
+
+def write_job_history_record(workdir: Path, record: dict[str, Any]) -> None:
+    with connect_app_db(job_history_db_path(workdir)) as connection:
+        upsert_job_history_record(connection, normalize_job_history_record(record))
+
+
+def upsert_job_history_record(connection, record: dict[str, Any]) -> None:
+    job_id = str(record.get("job_id") or "")
+    if not job_id:
+        return
+    connection.execute(
+        """
+        INSERT INTO job_history(
+          job_id, created_at, updated_at, status, input_kind, primary_input,
+          target_locale, provider, model, processed_sources, generated_files,
+          success_count, failure_count, summary_json, downloads_json,
+          download_files_json, error
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(job_id) DO UPDATE SET
+          created_at = excluded.created_at,
+          updated_at = excluded.updated_at,
+          status = excluded.status,
+          input_kind = excluded.input_kind,
+          primary_input = excluded.primary_input,
+          target_locale = excluded.target_locale,
+          provider = excluded.provider,
+          model = excluded.model,
+          processed_sources = excluded.processed_sources,
+          generated_files = excluded.generated_files,
+          success_count = excluded.success_count,
+          failure_count = excluded.failure_count,
+          summary_json = excluded.summary_json,
+          downloads_json = excluded.downloads_json,
+          download_files_json = excluded.download_files_json,
+          error = excluded.error
+        """,
+        (
+            job_id,
+            record["created_at"],
+            record["updated_at"],
+            record["status"],
+            record["input_kind"],
+            record["primary_input"],
+            record["target_locale"],
+            record["provider"],
+            record["model"],
+            record["processed_sources"],
+            record["generated_files"],
+            record["success_count"],
+            record["failure_count"],
+            json.dumps(record["summary"], ensure_ascii=False, sort_keys=True),
+            json.dumps(record["downloads"], ensure_ascii=False, sort_keys=True),
+            json.dumps(record["download_files"], ensure_ascii=False, sort_keys=True),
+            record["error"],
+        ),
     )
+    connection.execute("DELETE FROM job_input_files WHERE job_id = ?", (job_id,))
+    connection.executemany(
+        "INSERT INTO job_input_files(job_id, position, path) VALUES (?, ?, ?)",
+        [(job_id, index, path) for index, path in enumerate(normalize_history_input_files(record.get("input_files")), start=1)],
+    )
+
+
+def job_history_record_from_row(workdir: Path, row: Any, input_files: list[str]) -> dict[str, Any]:
+    def decode_json(text: Any) -> dict[str, Any]:
+        try:
+            value = json.loads(str(text or "{}"))
+        except json.JSONDecodeError:
+            return {}
+        return value if isinstance(value, dict) else {}
+
+    record = {
+        "job_id": str(row["job_id"]),
+        "created_at": str(row["created_at"]),
+        "updated_at": str(row["updated_at"]),
+        "status": str(row["status"]),
+        "input_kind": str(row["input_kind"]),
+        "input_files": input_files,
+        "primary_input": str(row["primary_input"]),
+        "target_locale": str(row["target_locale"]),
+        "provider": str(row["provider"]),
+        "model": str(row["model"]),
+        "processed_sources": int(row["processed_sources"] or 0),
+        "generated_files": int(row["generated_files"] or 0),
+        "success_count": int(row["success_count"] or 0),
+        "failure_count": int(row["failure_count"] or 0),
+        "summary": decode_json(row["summary_json"]),
+        "downloads": decode_json(row["downloads_json"]),
+        "download_files": decode_json(row["download_files_json"]),
+        "error": str(row["error"] or ""),
+    }
+    record["download_status"] = history_download_status(workdir, record)
+    return record
+
+
+def append_job_history(workdir: Path, record: dict[str, Any], limit: int = 100) -> None:
+    ensure_job_history_migrated(workdir)
+    write_job_history_record(workdir, record)
+    if limit > 0:
+        trim_job_history(workdir, limit=limit)
 
 
 def job_history_settings_path(workdir: Path) -> Path:
@@ -166,6 +341,15 @@ def normalize_job_history_limit(value: Any, default: int = DEFAULT_JOB_HISTORY_L
 
 
 def read_job_history_settings(workdir: Path) -> dict[str, int]:
+    ensure_job_history_migrated(workdir)
+    with connect_app_db(job_history_db_path(workdir)) as connection:
+        row = connection.execute("SELECT value_json FROM app_settings WHERE key = ?", ("job_history.limit",)).fetchone()
+    if row is not None:
+        try:
+            payload = json.loads(str(row["value_json"] or "{}"))
+        except json.JSONDecodeError:
+            payload = {}
+        return {"limit": normalize_job_history_limit(payload.get("limit"))}
     path = job_history_settings_path(workdir)
     if not path.is_file():
         return {"limit": DEFAULT_JOB_HISTORY_LIMIT}
@@ -179,95 +363,102 @@ def read_job_history_settings(workdir: Path) -> dict[str, int]:
 
 
 def write_job_history_settings(workdir: Path, *, limit: int) -> dict[str, int]:
+    ensure_job_history_migrated(workdir)
     normalized_limit = normalize_job_history_limit(limit)
     payload = {"limit": normalized_limit}
-    job_history_settings_path(workdir).write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    with connect_app_db(job_history_db_path(workdir)) as connection:
+        connection.execute(
+            """
+            INSERT INTO app_settings(key, value_json, updated_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(key) DO UPDATE SET
+              value_json = excluded.value_json,
+              updated_at = excluded.updated_at
+            """,
+            ("job_history.limit", json.dumps(payload, ensure_ascii=False, sort_keys=True), utc_timestamp()),
+        )
     return payload
 
 
 def trim_job_history(workdir: Path, *, limit: int | None = None) -> dict[str, Any]:
     settings = read_job_history_settings(workdir)
     normalized_limit = normalize_job_history_limit(limit if limit is not None else settings.get("limit", DEFAULT_JOB_HISTORY_LIMIT))
-    jobs_dir = workdir / "jobs"
-    jobs_dir.mkdir(parents=True, exist_ok=True)
-    index_path = jobs_dir / "index.jsonl"
-    records = list(reversed(read_job_history(workdir, limit=0)))
-    before = len(records)
-    for item in records:
-        if isinstance(item, dict):
-            item.pop("download_status", None)
-    kept = records[-normalized_limit:] if normalized_limit > 0 else records
-    index_path.write_text(
-        "".join(json.dumps(item, ensure_ascii=False, sort_keys=True) + "\n" for item in kept),
-        encoding="utf-8",
-    )
-    return {"ok": True, "before": before, "after": len(kept), "removed": max(0, before - len(kept)), "limit": normalized_limit}
+    with connect_app_db(job_history_db_path(workdir)) as connection:
+        before = int(connection.execute("SELECT COUNT(*) FROM job_history").fetchone()[0])
+        rows = connection.execute(
+            """
+            SELECT job_id FROM job_history
+            ORDER BY created_at DESC, updated_at DESC, job_id DESC
+            LIMIT -1 OFFSET ?
+            """,
+            (normalized_limit,),
+        ).fetchall()
+        remove_ids = [str(row["job_id"]) for row in rows]
+        if remove_ids:
+            connection.executemany("DELETE FROM job_history WHERE job_id = ?", [(job_id,) for job_id in remove_ids])
+        after = before - len(remove_ids)
+    return {"ok": True, "before": before, "after": after, "removed": len(remove_ids), "limit": normalized_limit}
 
 
 def delete_job_history_records(workdir: Path, job_ids: list[str]) -> dict[str, Any]:
+    ensure_job_history_migrated(workdir)
     normalized_ids = {sanitize_job_id(job_id) for job_id in job_ids if sanitize_job_id(job_id)}
-    jobs_dir = workdir / "jobs"
-    jobs_dir.mkdir(parents=True, exist_ok=True)
-    index_path = jobs_dir / "index.jsonl"
-    records = list(reversed(read_job_history(workdir, limit=0)))
-    before = len(records)
-    kept: list[dict[str, Any]] = []
-    removed_ids: list[str] = []
-    for item in records:
-        job_id = sanitize_job_id(str(item.get("job_id") or "")) if isinstance(item, dict) else ""
-        if job_id and job_id in normalized_ids:
-            removed_ids.append(job_id)
-            continue
-        if isinstance(item, dict):
-            item.pop("download_status", None)
-            kept.append(item)
-    index_path.write_text(
-        "".join(json.dumps(item, ensure_ascii=False, sort_keys=True) + "\n" for item in kept),
-        encoding="utf-8",
-    )
+    with connect_app_db(job_history_db_path(workdir)) as connection:
+        before = int(connection.execute("SELECT COUNT(*) FROM job_history").fetchone()[0])
+        placeholders = ",".join("?" for _ in normalized_ids)
+        query = "SELECT job_id FROM job_history WHERE job_id IN ({})".format(placeholders)
+        existing = {
+            str(row["job_id"])
+            for row in connection.execute(query, tuple(normalized_ids)).fetchall()
+        } if normalized_ids else set()
+        if existing:
+            connection.executemany("DELETE FROM job_history WHERE job_id = ?", [(job_id,) for job_id in existing])
+        after = int(connection.execute("SELECT COUNT(*) FROM job_history").fetchone()[0])
     return {
         "ok": True,
         "before": before,
-        "after": len(kept),
-        "removed": max(0, before - len(kept)),
-        "removed_job_ids": removed_ids,
+        "after": after,
+        "removed": max(0, before - after),
+        "removed_job_ids": sorted(existing),
     }
 
 
 def clear_job_history(workdir: Path) -> dict[str, Any]:
-    jobs_dir = workdir / "jobs"
-    jobs_dir.mkdir(parents=True, exist_ok=True)
-    index_path = jobs_dir / "index.jsonl"
-    before = len(read_job_history(workdir, limit=0))
-    index_path.write_text("", encoding="utf-8")
+    ensure_job_history_migrated(workdir)
+    with connect_app_db(job_history_db_path(workdir)) as connection:
+        before = int(connection.execute("SELECT COUNT(*) FROM job_history").fetchone()[0])
+        connection.execute("DELETE FROM job_history")
     return {"ok": True, "before": before, "after": 0, "removed": before}
 
 
 def read_job_history(workdir: Path, limit: int = 100) -> list[dict[str, Any]]:
-    index_path = workdir / "jobs" / "index.jsonl"
-    if not index_path.is_file():
-        return []
-    records: list[dict[str, Any]] = []
-    for line in index_path.read_text(encoding="utf-8", errors="replace").splitlines():
-        if not line.strip():
-            continue
-        try:
-            value = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(value, dict):
-            input_files = normalize_history_input_files(value.get("input_files", value.get("primary_input")))
-            value["input_files"] = input_files
-            if not value.get("primary_input"):
-                inferred = infer_history_primary_input(value)
-                if inferred:
-                    value["primary_input"] = inferred
-            value["download_status"] = history_download_status(workdir, value)
-            records.append(value)
-    return list(reversed(records[-limit:])) if limit > 0 else list(reversed(records))
+    ensure_job_history_migrated(workdir)
+    with connect_app_db(job_history_db_path(workdir)) as connection:
+        query = """
+            SELECT *
+            FROM job_history
+            ORDER BY created_at DESC, updated_at DESC, job_id DESC
+        """
+        params: tuple[Any, ...] = ()
+        if limit > 0:
+            query += " LIMIT ?"
+            params = (limit,)
+        rows = connection.execute(query, params).fetchall()
+        job_ids = [str(row["job_id"]) for row in rows]
+        input_files_by_job: dict[str, list[str]] = {job_id: [] for job_id in job_ids}
+        if job_ids:
+            placeholders = ",".join("?" for _ in job_ids)
+            for file_row in connection.execute(
+                f"""
+                SELECT job_id, path
+                FROM job_input_files
+                WHERE job_id IN ({placeholders})
+                ORDER BY job_id, position
+                """,
+                tuple(job_ids),
+            ).fetchall():
+                input_files_by_job.setdefault(str(file_row["job_id"]), []).append(str(file_row["path"]))
+    return [job_history_record_from_row(workdir, row, input_files_by_job.get(str(row["job_id"]), [])) for row in rows]
 
 
 def infer_history_primary_input(record: dict[str, Any]) -> str:

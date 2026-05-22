@@ -68,6 +68,20 @@ class TranslationMemoryTest(unittest.TestCase):
             self.assertEqual("开始", TranslationMemory(memory_path, zh_scope).get("Start"))
             self.assertIsNone(TranslationMemory(memory_path, ja_scope).get("Start"))
 
+    def test_memory_supports_sqlite_path_with_unique_updates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            memory_path = Path(tmp) / "memory.sqlite3"
+            scope = compute_translation_config_hash(args())
+
+            memory = TranslationMemory(memory_path, scope)
+            memory.put_many({"Start": "开始"})
+            memory.put_many({"Start": "启动", "Menu": "菜单"})
+
+            reloaded = TranslationMemory(memory_path, scope)
+
+            self.assertEqual("启动", reloaded.get("Start"))
+            self.assertEqual("菜单", reloaded.get("Menu"))
+
     def test_memory_scope_changes_when_ignore_translation_memory_changes(self) -> None:
         self.assertNotEqual(
             compute_translation_config_hash(args(ignore_translation_memory=False)),

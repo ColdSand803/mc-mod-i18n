@@ -1370,6 +1370,7 @@
       overflow-x: hidden;
     }
     .results-panel {
+      position: relative;
       display: grid;
       grid-template-rows: auto minmax(0, 1fr);
       height: calc(var(--app-vh) - 104px);
@@ -1947,6 +1948,22 @@
       position: relative;
       overflow: hidden;
     }
+    .loading-overlay {
+      position: absolute;
+      inset: 0;
+      z-index: 80;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background: var(--overlay);
+      backdrop-filter: blur(4px);
+    }
+    .loading-overlay[hidden] {
+      display: none;
+    }
+    .loading-overlay .loading-card {
+      width: min(640px, 100%);
+    }
     .spinner {
       width: 46px;
       height: 46px;
@@ -2263,6 +2280,15 @@
       align-items: end;
       overflow: visible;
     }
+    .history-toolbar .ghost-select {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .history-toolbar .ghost-select .control {
+      flex: 1;
+      min-width: 0;
+    }
     .history-search-control {
       position: relative;
       display: block;
@@ -2430,6 +2456,7 @@
       font-size: 15px;
       font-weight: 800;
       line-height: 1.35;
+      min-height: 2.7em;
       overflow: hidden;
       text-overflow: ellipsis;
       -webkit-box-orient: vertical;
@@ -4402,6 +4429,76 @@
       display: grid;
       gap: 8px;
     }
+    .app-toasts {
+      position: fixed;
+      top: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 10000;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      pointer-events: none;
+      max-width: min(90vw, 540px);
+    }
+    .app-toast {
+      pointer-events: auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 18px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: var(--card-surface-soft, var(--panel));
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 600;
+      line-height: 1.4;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.18), 0 2px 8px rgba(0,0,0,0.08);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      opacity: 0;
+      transform: translateY(-12px);
+      transition: opacity 200ms ease, transform 200ms ease;
+      max-width: 100%;
+    }
+    .app-toast.is-visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    .app-toast .app-toast-icon {
+      flex: 0 0 auto;
+      width: 18px;
+      height: 18px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      line-height: 1;
+    }
+    .app-toast .app-toast-text {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow-wrap: anywhere;
+    }
+    .app-toast[data-level="success"] {
+      border-color: color-mix(in srgb, var(--accent, #4f7cff) 36%, var(--line));
+      color: var(--accent, var(--text));
+    }
+    .app-toast[data-level="success"] .app-toast-icon { color: var(--accent, var(--text)); }
+    .app-toast[data-level="error"] {
+      border-color: var(--danger-line, var(--line));
+      background: var(--danger-bg, var(--card-surface-soft, var(--panel)));
+      color: var(--danger, var(--text));
+    }
+    .app-toast[data-level="error"] .app-toast-icon { color: var(--danger, var(--text)); }
+    @media (prefers-reduced-motion: reduce) {
+      .app-toast {
+        transition: opacity 80ms linear;
+        transform: none;
+      }
+    }
     .memory-preview-card {
       min-height: 0;
       display: grid;
@@ -4425,29 +4522,196 @@
       display: grid;
       gap: 8px;
       overflow-y: auto;
-      overscroll-behavior: contain;
+      overscroll-behavior-y: auto;
+      touch-action: pan-y;
       scrollbar-width: thin;
       scrollbar-color: var(--scroll-thumb) transparent;
     }
     .memory-preview-item {
       display: grid;
-      gap: 4px;
+      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-areas:
+        "source scope"
+        "body actions";
+      align-items: center;
+      gap: 6px 12px;
       padding: 10px 12px;
       border: 1px solid var(--line);
-      border-radius: 10px;
+      border-radius: 12px;
       background: var(--panel);
+      transition: border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease;
+    }
+    .memory-preview-item:hover {
+      border-color: var(--accent-soft-line, var(--line));
+      background: var(--card-surface-soft, var(--panel));
+      box-shadow: var(--card-shadow-soft, 0 2px 6px rgba(0,0,0,0.04));
     }
     .memory-preview-source {
+      grid-area: source;
       font-weight: 700;
       color: var(--text);
+      font-size: 13px;
       overflow-wrap: anywhere;
+      line-height: 1.4;
     }
-    .memory-preview-target,
     .memory-preview-meta {
+      grid-area: scope;
+      justify-self: end;
+      max-width: 220px;
+      padding: 2px 8px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      background: var(--field-bg, var(--panel));
       color: var(--muted);
-      font-size: 12px;
-      font-weight: 700;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.01em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .memory-preview-body {
+      grid-area: body;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      min-width: 0;
+    }
+    .memory-preview-body::before {
+      content: "";
+      flex: 0 0 14px;
+      height: 14px;
+      background-color: var(--muted);
+      mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M4 11v2h12l-5 5 1.5 1.5L20 12l-7.5-7.5L11 6l5 5H4z'/></svg>");
+      -webkit-mask-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><path d='M4 11v2h12l-5 5 1.5 1.5L20 12l-7.5-7.5L11 6l5 5H4z'/></svg>");
+      mask-repeat: no-repeat;
+      -webkit-mask-repeat: no-repeat;
+      mask-size: contain;
+      -webkit-mask-size: contain;
+      opacity: 0.7;
+    }
+    .memory-preview-target {
+      flex: 1 1 auto;
+      min-width: 0;
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 500;
       overflow-wrap: anywhere;
+      line-height: 1.4;
+    }
+    .memory-preview-edit {
+      flex: 1 1 auto;
+      min-width: 0;
+      display: none;
+      align-items: center;
+    }
+    .memory-preview-item.is-editing .memory-preview-target {
+      display: none;
+    }
+    .memory-preview-item.is-editing .memory-preview-edit {
+      display: flex;
+    }
+    .memory-preview-item [data-role="actions-view"],
+    .memory-preview-item [data-role="actions-edit"] {
+      gap: 4px;
+    }
+    .memory-preview-item [data-role="actions-view"] {
+      display: inline-flex;
+    }
+    .memory-preview-item [data-role="actions-edit"] {
+      display: none;
+    }
+    .memory-preview-item.is-editing [data-role="actions-edit"] {
+      display: inline-flex;
+    }
+    .memory-preview-item.is-editing [data-role="actions-view"] {
+      display: none;
+    }
+    .memory-preview-input {
+      width: 100%;
+      min-width: 0;
+      padding: 6px 10px;
+      border: 1px solid var(--accent-soft-line, var(--line));
+      border-radius: 8px;
+      background: var(--panel);
+      color: var(--text);
+      font-size: 13px;
+      font-family: inherit;
+      transition: border-color 140ms ease, box-shadow 140ms ease;
+    }
+    .memory-preview-input:focus {
+      outline: none;
+      border-color: var(--accent, #4f7cff);
+      box-shadow: 0 0 0 3px var(--accent-soft, rgba(79,124,255,0.15));
+    }
+    .memory-preview-actions {
+      grid-area: actions;
+      display: inline-flex;
+      gap: 4px;
+      align-items: center;
+    }
+    .memory-preview-actions button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 30px;
+      height: 30px;
+      padding: 0;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      background: transparent;
+      color: var(--muted);
+      font-size: 15px;
+      line-height: 1;
+      cursor: pointer;
+      transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease;
+    }
+    .memory-preview-actions button i {
+      font-size: 16px;
+      line-height: 1;
+    }
+    .memory-preview-actions button:hover:not(:disabled) {
+      background: var(--accent-soft-hover, var(--field-bg));
+      color: var(--accent, var(--text));
+      border-color: var(--accent-soft-line, var(--line));
+    }
+    .memory-preview-actions button[data-action="delete"]:hover:not(:disabled) {
+      background: var(--danger-soft, rgba(220, 53, 69, 0.1));
+      color: var(--danger, #dc3545);
+      border-color: var(--danger-soft, rgba(220, 53, 69, 0.3));
+    }
+    .memory-preview-actions button[data-action="save"] {
+      background: var(--accent-soft, rgba(79,124,255,0.12));
+      color: var(--accent, var(--text));
+    }
+    .memory-preview-actions button[data-action="save"]:hover:not(:disabled) {
+      background: var(--accent, #4f7cff);
+      color: #fff;
+      border-color: var(--accent, #4f7cff);
+    }
+    .memory-preview-item.is-busy {
+      opacity: 0.5;
+      pointer-events: none;
+    }
+    .memory-preview-item.is-editing {
+      border-color: var(--accent-soft-line, var(--accent, var(--line)));
+      background: var(--card-surface-soft, var(--panel));
+    }
+    @media (max-width: 540px) {
+      .memory-preview-item {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-areas:
+          "source"
+          "scope"
+          "body"
+          "actions";
+      }
+      .memory-preview-meta {
+        justify-self: start;
+      }
+      .memory-preview-actions {
+        justify-self: end;
+      }
     }
     .language-view-mode {
       display: inline-flex;
@@ -5721,6 +5985,7 @@
   </style>
 </head>
 <body>
+  <div id="app-toasts" class="app-toasts" aria-live="polite" aria-atomic="true"></div>
   <div class="app-shell">
     <aside class="side-nav">
       <div class="side-brand">
@@ -6052,6 +6317,7 @@ __TARGET_LOCALE_OPTIONS_HTML__
       <div id="results" class="results">
         <div class="empty" data-i18n="results.empty">还没有生成结果。</div>
       </div>
+      <div id="loading-overlay" class="loading-overlay" hidden></div>
     </section>
     <section class="history-page" id="history-panel" data-main-view="history" hidden>
       <div class="settings-card history-card">
@@ -6283,9 +6549,11 @@ __TARGET_LOCALE_OPTIONS_HTML__
               <strong id="settings-memory-summary" data-i18n="settings.memory_empty">未发现翻译记忆</strong>
             </div>
             <div class="memory-preview" id="settings-memory-preview"></div>
+            <input type="file" id="settings-memory-import-file" accept=".jsonl,application/jsonl" hidden>
             <div class="settings-section-actions">
               <button type="button" class="secondary" id="settings-memory-refresh"><i class="ri-refresh-line"></i><span data-i18n="settings.memory_refresh">刷新记忆</span></button>
               <button type="button" class="secondary" id="settings-memory-export"><i class="ri-download-2-line"></i><span data-i18n="settings.memory_export">导出 JSONL</span></button>
+              <button type="button" class="secondary" id="settings-memory-import"><i class="ri-upload-2-line"></i><span data-i18n="settings.memory_import">导入 JSONL</span></button>
               <button type="button" class="secondary" id="settings-memory-compact"><i class="ri-contract-left-right-line"></i><span data-i18n="settings.memory_compact">压缩去重</span></button>
               <button type="button" class="secondary" id="settings-memory-clear-scope"><i class="ri-filter-off-line"></i><span data-i18n="settings.memory_clear_scope">清理当前配置</span></button>
               <button type="button" class="danger" id="settings-memory-clear"><i class="ri-delete-bin-6-line"></i><span data-i18n="settings.memory_clear">清理记忆</span></button>
@@ -6381,12 +6649,6 @@ __TARGET_LOCALE_OPTIONS_HTML__
         </div>
         <input id="ui-locale-import-file" type="file" accept=".json,application/json" hidden>
         <input id="glossary-import-file" type="file" accept=".json,application/json" hidden>
-        <div class="settings-footer">
-          <div class="settings-status" id="settings-status"></div>
-          <div class="settings-actions">
-            <button type="button" id="settings-save" data-i18n="settings.save">保存</button>
-          </div>
-        </div>
       </div>
     </section>
   </main>
@@ -6398,6 +6660,7 @@ __TARGET_LOCALE_OPTIONS_HTML__
     const cancelBtn = document.getElementById('cancel-btn');
     const statusBox = document.getElementById('status');
     const results = document.getElementById('results');
+    const loadingOverlay = document.getElementById('loading-overlay');
     const job = document.getElementById('job');
     const headerJob = document.getElementById('header-job');
     const sourceLocale = document.getElementById('source_locale');
@@ -6469,8 +6732,14 @@ __TARGET_LOCALE_OPTIONS_HTML__
     const settingsPresetDelete = document.getElementById('settings-preset-delete');
     const settingsMemorySummary = document.getElementById('settings-memory-summary');
     const settingsMemoryPreview = document.getElementById('settings-memory-preview');
+    if (settingsMemoryPreview) {
+      settingsMemoryPreview.addEventListener('click', handleMemoryPreviewClick);
+      settingsMemoryPreview.addEventListener('keydown', handleMemoryPreviewKeydown);
+    }
     const settingsMemoryRefresh = document.getElementById('settings-memory-refresh');
     const settingsMemoryExport = document.getElementById('settings-memory-export');
+    const settingsMemoryImport = document.getElementById('settings-memory-import');
+    const settingsMemoryImportFile = document.getElementById('settings-memory-import-file');
     const settingsMemoryCompact = document.getElementById('settings-memory-compact');
     const settingsMemoryClearScope = document.getElementById('settings-memory-clear-scope');
     const settingsMemoryClear = document.getElementById('settings-memory-clear');
@@ -6549,6 +6818,7 @@ __TARGET_LOCALE_OPTIONS_HTML__
       apiLogSearch: '',
       summaryPopover: '',
       summaryOutsideCloseBound: false,
+      retryLoadingRequested: false,
       reportPage: 1,
       hardcodedPage: 1,
       apiLogPage: 1
@@ -7488,11 +7758,50 @@ __TARGET_LOCALE_OPTIONS_HTML__
     }
 
     function setSettingsStatus(message, isError = false) {
-      if (!settingsStatus) {
-        return;
+      if (settingsStatus) {
+        settingsStatus.textContent = message || '';
+        settingsStatus.classList.toggle('error', Boolean(isError));
       }
-      settingsStatus.textContent = message || '';
-      settingsStatus.classList.toggle('error', Boolean(isError));
+      if (message) {
+        showToast(message, isError ? 'error' : 'success');
+      }
+    }
+
+    const TOAST_CONTAINER_ID = 'app-toasts';
+    function showToast(message, level = 'info', duration = 3200) {
+      if (!message) return;
+      const container = document.getElementById(TOAST_CONTAINER_ID);
+      if (!container) return;
+      const toast = document.createElement('div');
+      toast.className = 'app-toast';
+      toast.setAttribute('role', level === 'error' ? 'alert' : 'status');
+      toast.setAttribute('data-level', level);
+      const iconClass = level === 'error'
+        ? 'ri-error-warning-line'
+        : level === 'success' ? 'ri-checkbox-circle-line' : 'ri-information-line';
+      const iconSpan = document.createElement('span');
+      iconSpan.className = 'app-toast-icon';
+      iconSpan.innerHTML = `<i class="${iconClass}" aria-hidden="true"></i>`;
+      const textSpan = document.createElement('span');
+      textSpan.className = 'app-toast-text';
+      textSpan.textContent = String(message);
+      toast.appendChild(iconSpan);
+      toast.appendChild(textSpan);
+      container.appendChild(toast);
+      requestAnimationFrame(() => toast.classList.add('is-visible'));
+      const dismiss = () => {
+        toast.classList.remove('is-visible');
+        setTimeout(() => toast.remove(), 220);
+      };
+      const timer = setTimeout(dismiss, Math.max(1500, duration));
+      toast.addEventListener('click', () => {
+        clearTimeout(timer);
+        dismiss();
+      });
+    }
+
+    function confirmDestructive(message) {
+      return window.confirm(message);
     }
 
     function openSettingsDialog() {
@@ -7968,13 +8277,37 @@ __TARGET_LOCALE_OPTIONS_HTML__
       const scopeRows = Array.isArray(payload.scope_rows) ? payload.scope_rows : [];
       const recentRows = Array.isArray(payload.recent_rows) ? payload.recent_rows : [];
       const rows = scopeRows.length ? scopeRows : recentRows;
-      const items = rows.map(row => `
-        <div class="memory-preview-item">
-          <div class="memory-preview-source">${escapeHtml(row.source || '')}</div>
-          <div class="memory-preview-target">${escapeHtml(row.target || '')}</div>
-          <div class="memory-preview-meta">${escapeHtml(row.scope || '')}</div>
+      const editLabel = escapeHtml(ui('settings.memory_edit', '编辑'));
+      const deleteLabel = escapeHtml(ui('settings.memory_delete', '删除'));
+      const saveLabel = escapeHtml(ui('settings.memory_save', '保存'));
+      const cancelLabel = escapeHtml(ui('settings.memory_cancel', '取消'));
+      const items = rows.map(row => {
+        const source = String(row.source || '');
+        const target = String(row.target || '');
+        const scope = String(row.scope || '');
+        return `
+        <div class="memory-preview-item" data-scope="${escapeHtml(scope)}" data-source="${escapeHtml(source)}" data-target="${escapeHtml(target)}">
+          <div class="memory-preview-source">${escapeHtml(source)}</div>
+          <div class="memory-preview-meta" title="${escapeHtml(scope)}">${escapeHtml(scope)}</div>
+          <div class="memory-preview-body">
+            <span class="memory-preview-target" data-role="target-view">${escapeHtml(target)}</span>
+            <span class="memory-preview-edit" data-role="target-edit">
+              <input type="text" class="memory-preview-input" data-role="target-input" value="${escapeHtml(target)}" aria-label="${escapeHtml(ui('settings.memory_edit', '编辑'))}" />
+            </span>
+          </div>
+          <div class="memory-preview-actions">
+            <span data-role="actions-view">
+              <button type="button" data-action="edit" title="${editLabel}" aria-label="${editLabel}"><i class="ri-edit-line" aria-hidden="true"></i></button>
+              <button type="button" data-action="delete" title="${deleteLabel}" aria-label="${deleteLabel}"><i class="ri-delete-bin-6-line" aria-hidden="true"></i></button>
+            </span>
+            <span data-role="actions-edit">
+              <button type="button" data-action="save" title="${saveLabel}" aria-label="${saveLabel}"><i class="ri-check-line" aria-hidden="true"></i></button>
+              <button type="button" data-action="cancel" title="${cancelLabel}" aria-label="${cancelLabel}"><i class="ri-close-line" aria-hidden="true"></i></button>
+            </span>
+          </div>
         </div>
-      `).join('');
+        `;
+      }).join('');
       settingsMemoryPreview.innerHTML = `
         <div class="memory-preview-card">
           <div class="memory-preview-head">
@@ -8025,6 +8358,124 @@ __TARGET_LOCALE_OPTIONS_HTML__
       }
       renderTranslationMemorySummary(payload);
       return payload;
+    }
+
+    async function updateTranslationMemoryEntry(scope, source, target) {
+      const cacheDir = applyCacheDirSetting(settingsCacheDir ? settingsCacheDir.value : '', true);
+      const response = await fetch('/api/translation-memory/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cache_dir: cacheDir, scope, source, target }),
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error || ui('settings.memory_edit_failed', '翻译记忆更新失败'));
+      }
+      return payload;
+    }
+
+    async function deleteTranslationMemoryEntry(scope, source) {
+      const cacheDir = applyCacheDirSetting(settingsCacheDir ? settingsCacheDir.value : '', true);
+      const response = await fetch('/api/translation-memory/delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cache_dir: cacheDir, scope, source }),
+      });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error || ui('settings.memory_delete_failed', '翻译记忆删除失败'));
+      }
+      return payload;
+    }
+
+    function setMemoryItemEditing(item, editing) {
+      item.classList.toggle('is-editing', Boolean(editing));
+      if (editing) {
+        const input = item.querySelector('[data-role="target-input"]');
+        if (input) {
+          input.value = item.getAttribute('data-target') || '';
+          input.focus();
+          input.select();
+        }
+      }
+    }
+
+    function handleMemoryPreviewClick(event) {
+      const button = event.target.closest('button[data-action]');
+      if (!button) {
+        return;
+      }
+      const item = button.closest('.memory-preview-item');
+      if (!item) {
+        return;
+      }
+      const action = button.getAttribute('data-action');
+      saveOrDeleteMemoryItem(item, action);
+    }
+
+    function handleMemoryPreviewKeydown(event) {
+      if (event.target?.dataset?.role !== 'target-input') {
+        return;
+      }
+      const item = event.target.closest('.memory-preview-item');
+      if (!item) {
+        return;
+      }
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        saveOrDeleteMemoryItem(item, 'save');
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        saveOrDeleteMemoryItem(item, 'cancel');
+      }
+    }
+
+    function saveOrDeleteMemoryItem(item, action) {
+      const scope = item.getAttribute('data-scope') || '';
+      const source = item.getAttribute('data-source') || '';
+      if (action === 'edit') {
+        setMemoryItemEditing(item, true);
+        return;
+      }
+      if (action === 'cancel') {
+        setMemoryItemEditing(item, false);
+        return;
+      }
+      if (action === 'save') {
+        const input = item.querySelector('[data-role="target-input"]');
+        const next = (input?.value || '').trim();
+        if (!next) {
+          setSettingsStatus(ui('settings.memory_edit_empty', '翻译内容不能为空。'), true);
+          return;
+        }
+        if (next === (item.getAttribute('data-target') || '')) {
+          setMemoryItemEditing(item, false);
+          return;
+        }
+        item.classList.add('is-busy');
+        updateTranslationMemoryEntry(scope, source, next).then(async () => {
+          setSettingsStatus(ui('settings.memory_edit_success', '翻译记忆已更新。'));
+          await loadTranslationMemorySettings();
+        }).catch(error => {
+          setSettingsStatus(error.message || ui('settings.memory_edit_failed', '翻译记忆更新失败'), true);
+          item.classList.remove('is-busy');
+        });
+        return;
+      }
+      if (action === 'delete') {
+        const confirmed = window.confirm(ui('settings.memory_delete_confirm', '确定要删除这条翻译记忆吗？'));
+        if (!confirmed) {
+          return;
+        }
+        item.classList.add('is-busy');
+        deleteTranslationMemoryEntry(scope, source).then(async () => {
+          setSettingsStatus(ui('settings.memory_delete_success', '翻译记忆条目已删除。'));
+          await loadTranslationMemorySettings();
+        }).catch(error => {
+          setSettingsStatus(error.message || ui('settings.memory_delete_failed', '翻译记忆删除失败'), true);
+          item.classList.remove('is-busy');
+        });
+      }
     }
 
     function renderHistorySettingsSummary(payload) {
@@ -8182,6 +8633,9 @@ __TARGET_LOCALE_OPTIONS_HTML__
             setSettingsStatus(ui('settings.preset_select_required', '请先选择一个预设'), true);
             return;
           }
+          if (!confirmDestructive(formatUi('settings.preset_delete_confirm', '确定要删除预设 {name} 吗？', { name }))) {
+            return;
+          }
           settingsPresetDelete.disabled = true;
           try {
             const response = await fetch(`/api/presets/${encodeURIComponent(name)}`, { method: 'DELETE' });
@@ -8243,6 +8697,29 @@ __TARGET_LOCALE_OPTIONS_HTML__
           }
         });
       }
+      if (settingsCacheDir) {
+        settingsCacheDir.addEventListener('change', () => {
+          applyCacheDirSetting(settingsCacheDir.value, true);
+          setSettingsStatus(ui('settings.saved', '设置已保存。'));
+        });
+      }
+      if (settingsUiLocaleDir) {
+        settingsUiLocaleDir.addEventListener('change', () => {
+          applyUiLocaleDirSetting(settingsUiLocaleDir.value, true);
+          refreshUiLocales(true);
+          setSettingsStatus(ui('settings.saved', '设置已保存。'));
+        });
+      }
+      if (settingsHistoryLimit) {
+        settingsHistoryLimit.addEventListener('change', async () => {
+          try {
+            await saveHistorySettings();
+            setSettingsStatus(ui('settings.saved', '设置已保存。'));
+          } catch (error) {
+            setSettingsStatus(error.message || ui('settings.save_failed', '设置保存失败'), true);
+          }
+        });
+      }
       if (settingsHistoryRefresh) {
         settingsHistoryRefresh.addEventListener('click', async () => {
           try {
@@ -8254,6 +8731,9 @@ __TARGET_LOCALE_OPTIONS_HTML__
       }
       if (settingsHistoryTrim) {
         settingsHistoryTrim.addEventListener('click', async () => {
+          if (!confirmDestructive(ui('settings.history_trim_confirm', '按上限裁剪会删除超出部分，确定继续吗？'))) {
+            return;
+          }
           settingsHistoryTrim.disabled = true;
           try {
             const limit = Math.max(1, Math.min(5000, Number(settingsHistoryLimit?.value || 100) || 100));
@@ -8273,6 +8753,9 @@ __TARGET_LOCALE_OPTIONS_HTML__
             setSettingsStatus(ui('settings.history_delete_required', '请先输入要删除的任务 ID。'), true);
             return;
           }
+          if (!confirmDestructive(formatUi('settings.history_delete_confirm', '确定要删除 {count} 个任务历史吗？', { count: jobIds.length }))) {
+            return;
+          }
           settingsHistoryDelete.disabled = true;
           try {
             const payload = await mutateHistorySettings('delete', { job_ids: jobIds });
@@ -8289,6 +8772,9 @@ __TARGET_LOCALE_OPTIONS_HTML__
       }
       if (settingsHistoryClear) {
         settingsHistoryClear.addEventListener('click', async () => {
+          if (!confirmDestructive(ui('settings.history_clear_confirm', '确定要清空全部任务历史吗？此操作不可撤销。'))) {
+            return;
+          }
           settingsHistoryClear.disabled = true;
           try {
             const payload = await mutateHistorySettings('clear');
@@ -8485,6 +8971,9 @@ __TARGET_LOCALE_OPTIONS_HTML__
       }
       if (settingsCacheClear) {
         settingsCacheClear.addEventListener('click', async () => {
+          if (!confirmDestructive(ui('settings.cache_clear_confirm', '确定要清空缓存吗？此操作不可撤销。'))) {
+            return;
+          }
           const cacheDir = applyCacheDirSetting(settingsCacheDir ? settingsCacheDir.value : '', true);
           settingsCacheClear.disabled = true;
           setSettingsStatus(ui('settings.cache_clearing', '正在清空缓存...'));
@@ -8520,6 +9009,35 @@ __TARGET_LOCALE_OPTIONS_HTML__
         settingsMemoryExport.addEventListener('click', () => {
           const cacheDir = applyCacheDirSetting(settingsCacheDir ? settingsCacheDir.value : '', true);
           window.location.href = `/api/translation-memory/export?cache_dir=${encodeURIComponent(cacheDir)}`;
+        });
+      }
+      if (settingsMemoryImport && settingsMemoryImportFile) {
+        settingsMemoryImport.addEventListener('click', () => {
+          settingsMemoryImportFile.click();
+        });
+        settingsMemoryImportFile.addEventListener('change', async () => {
+          const file = settingsMemoryImportFile.files[0];
+          if (!file) return;
+          settingsMemoryImport.disabled = true;
+          setSettingsStatus(ui('settings.memory_importing', '正在导入翻译记忆...'));
+          try {
+            const cacheDir = applyCacheDirSetting(settingsCacheDir ? settingsCacheDir.value : '', true);
+            const data = new FormData();
+            data.append('cache_dir', cacheDir);
+            data.append('jsonl_file', file, file.name);
+            const response = await fetch('/api/translation-memory/import', { method: 'POST', body: data });
+            const payload = await response.json();
+            if (!response.ok || !payload.ok) {
+              throw new Error(payload.error || ui('settings.memory_import_failed', '翻译记忆导入失败'));
+            }
+            setSettingsStatus(formatUi('settings.memory_import_success', '已导入 {count} 条翻译记忆。', { count: payload.imported || 0 }));
+            await loadTranslationMemorySettings();
+          } catch (error) {
+            setSettingsStatus(error.message || ui('settings.memory_import_failed', '翻译记忆导入失败'), true);
+          } finally {
+            settingsMemoryImport.disabled = false;
+            settingsMemoryImportFile.value = '';
+          }
         });
       }
       if (settingsMemoryCompact) {
@@ -10358,19 +10876,29 @@ __TARGET_LOCALE_OPTIONS_HTML__
       const total = Math.max(0, success + failure);
       const rawPercent = total ? ((success / total) * 100) : (record.status === 'done' ? 100 : 0);
       const boundedPercent = Math.max(0, Math.min(100, rawPercent));
-      const roundedPercent = Math.round(boundedPercent);
-      const percentText = total && success > 0 && boundedPercent < 1
-        ? '<1%'
-        : `${roundedPercent}%`;
+      const percentText = formatHistoryProgressPercent(boundedPercent, success, failure, total, record.status);
       const barPercent = total && success > 0 && boundedPercent < 1
         ? Math.max(boundedPercent, 0.6)
         : boundedPercent;
       return {
-        percent: roundedPercent,
+        percent: Math.round(boundedPercent),
         percentText,
         barPercentText: `${barPercent}%`,
         label: total ? `${success} / ${total} items` : `${Number(record.processed_sources || 0)} source${Number(record.processed_sources || 0) === 1 ? '' : 's'}`
       };
+    }
+
+    function formatHistoryProgressPercent(boundedPercent, success, failure, total, status) {
+      if (!total) {
+        return status === 'done' ? '100%' : '0%';
+      }
+      if (success > 0 && boundedPercent < 1) {
+        return '<1%';
+      }
+      if (failure > 0 && boundedPercent > 99 && boundedPercent < 100) {
+        return '99%';
+      }
+      return `${Math.round(boundedPercent)}%`;
     }
 
     function historyRecordHaystack(record) {
@@ -10910,8 +11438,8 @@ __TARGET_LOCALE_OPTIONS_HTML__
         batchSize: Number(new FormData(form).get('api_batch_size') || '40')
       };
       cancelBtn.hidden = options.showCancel === false ? true : false;
-      renderLoading();
-      loadingTimer = window.setInterval(renderLoading, 1000);
+      renderLoading({ overlay: mode === 'retry' });
+      loadingTimer = window.setInterval(() => renderLoading({ overlay: mode === 'retry' }), 1000);
     }
 
     function stopLoading() {
@@ -10925,6 +11453,10 @@ __TARGET_LOCALE_OPTIONS_HTML__
         progressTimer = null;
       }
       cancelBtn.hidden = true;
+      if (loadingOverlay) {
+        loadingOverlay.hidden = true;
+        loadingOverlay.innerHTML = '';
+      }
       retryActiveJobId = '';
     }
 
@@ -10982,7 +11514,7 @@ __TARGET_LOCALE_OPTIONS_HTML__
             requestTimeout: payload.request_timeout || loadingProgress.requestTimeout || 10,
             batchSize: payload.batch_size || loadingProgress.batchSize || 40
           };
-          renderLoading();
+          renderLoading({ overlay: isRetryMode });
           if (payload.status === 'done') {
             stopLoading();
             submit.disabled = false;
@@ -11000,6 +11532,7 @@ __TARGET_LOCALE_OPTIONS_HTML__
               } else {
                 statusBox.className = 'status success';
                 statusBox.textContent = formatUi('result.retry_success', '失败项已重试成功，更新 {retried} 条。耗时 {elapsed}。', { retried: payload.retried || 0, elapsed: formatSeconds(payload.elapsed_seconds || 0) });
+                resultState.retryLoadingRequested = false;
               }
               return;
             }
@@ -11020,6 +11553,7 @@ __TARGET_LOCALE_OPTIONS_HTML__
             stopLoading();
             submit.disabled = false;
           if (isRetryMode) {
+            resultState.retryLoadingRequested = false;
             resetRetryButton();
             renderResultShell();
           }
@@ -11029,6 +11563,7 @@ __TARGET_LOCALE_OPTIONS_HTML__
             stopLoading();
             submit.disabled = false;
             if (isRetryMode) {
+              resultState.retryLoadingRequested = false;
               resetRetryButton();
             }
             statusBox.className = 'status error';
@@ -11044,6 +11579,7 @@ __TARGET_LOCALE_OPTIONS_HTML__
           stopLoading();
           submit.disabled = false;
           if (isRetryMode) {
+            resultState.retryLoadingRequested = false;
             resetRetryButton();
             renderResultShell();
           }
@@ -11054,7 +11590,7 @@ __TARGET_LOCALE_OPTIONS_HTML__
       poll();
     }
 
-    function renderLoading() {
+    function renderLoading(options = {}) {
       const elapsed = Math.max(0, Math.floor((Date.now() - loadingStartedAt) / 1000));
       const data = new FormData(form);
       const providerName = ui(`provider.${provider.value}`, provider.options[provider.selectedIndex]?.textContent || ui('translator.provider', '翻译器'));
@@ -11117,9 +11653,16 @@ __TARGET_LOCALE_OPTIONS_HTML__
       const detail = isAi
         ? formatUi('loading.detail_ai', '翻译器：{provider}，并发上限：{concurrency}，每次请求 {batch} 条，{sourceLabel}：{sourceCount} 个。{cacheText}耗时 {elapsed}s。', { provider: providerName, concurrency, batch: loadingProgress.batchSize || 40, sourceLabel, sourceCount: detailSourceCount, cacheText, elapsed })
         : formatUi('loading.detail', '翻译器：{provider}，{sourceLabel}：{sourceCount} 个。{cacheText}耗时 {elapsed}s。', { provider: providerName, sourceLabel, sourceCount: detailSourceCount, cacheText, elapsed });
-      const card = document.getElementById('loading-card');
+      const target = options.overlay ? loadingOverlay : results;
+      if (!target) {
+        return;
+      }
+      if (options.overlay) {
+        target.hidden = false;
+      }
+      const card = target.querySelector('#loading-card');
       if (!card) {
-        results.innerHTML = `
+        target.innerHTML = `
         <div id="loading-card" class="loading-card">
           <div class="spinner" aria-hidden="true"></div>
           <div>
@@ -11134,14 +11677,14 @@ __TARGET_LOCALE_OPTIONS_HTML__
         </div>
       `;
       }
-      const titleNode = document.getElementById('loading-title');
-      const statusNode = document.getElementById('loading-status-text');
-      const metaNode = document.getElementById('loading-meta');
-      const progressNode = document.getElementById('loading-progress-bar');
-      const progressTextNode = document.getElementById('loading-progress-text');
-      const fileProgressLabelNode = document.getElementById('loading-file-progress-label');
-      const fileProgressNode = document.getElementById('loading-file-progress-bar');
-      const fileProgressTextNode = document.getElementById('loading-file-progress-text');
+      const titleNode = target.querySelector('#loading-title');
+      const statusNode = target.querySelector('#loading-status-text');
+      const metaNode = target.querySelector('#loading-meta');
+      const progressNode = target.querySelector('#loading-progress-bar');
+      const progressTextNode = target.querySelector('#loading-progress-text');
+      const fileProgressLabelNode = target.querySelector('#loading-file-progress-label');
+      const fileProgressNode = target.querySelector('#loading-file-progress-bar');
+      const fileProgressTextNode = target.querySelector('#loading-file-progress-text');
       if (titleNode) {
         titleNode.textContent = stage;
       }
@@ -11191,6 +11734,7 @@ __TARGET_LOCALE_OPTIONS_HTML__
       resultState.hardcodedSearch = '';
       resultState.apiLogSearch = '';
       resultState.summaryPopover = '';
+      resultState.retryLoadingRequested = false;
       resultState.reportPage = 1;
       resultState.hardcodedPage = 1;
       resultState.apiLogPage = 1;
@@ -11420,6 +11964,9 @@ __TARGET_LOCALE_OPTIONS_HTML__
         button.addEventListener('click', event => {
           event.stopPropagation();
           const key = button.dataset.summaryCard || 'outputs';
+          if (key === 'quality' && showRetryLoadingOverlayFromCard()) {
+            return;
+          }
           const popover = Array.from(results.querySelectorAll('[data-summary-popover]')).find(item => item.dataset.summaryPopover === key);
           const shouldOpen = !popover || popover.hidden;
           closeSummaryPopover();
@@ -11442,6 +11989,14 @@ __TARGET_LOCALE_OPTIONS_HTML__
         });
       });
       bindSummaryOutsideClose();
+    }
+
+    function showRetryLoadingOverlayFromCard() {
+      if (!resultState.retryLoadingRequested || loadingProgress.mode !== 'retry') {
+        return false;
+      }
+      renderLoading({ overlay: true });
+      return true;
     }
 
     function bindSummaryOutsideClose() {
@@ -12163,6 +12718,7 @@ __TARGET_LOCALE_OPTIONS_HTML__
       statusBox.className = 'status';
       statusBox.textContent = ui('result.retrying_failed', '正在重试失败的翻译项...');
       const failedCount = payload.api_failure_count || (Array.isArray(payload.api_failed_entries) ? payload.api_failed_entries.length : 0);
+      resultState.retryLoadingRequested = true;
       startLoading({
         mode: 'retry',
         showCancel: false,
@@ -12194,9 +12750,11 @@ __TARGET_LOCALE_OPTIONS_HTML__
         } else {
           statusBox.className = 'status success';
           statusBox.textContent = formatUi('result.retry_success', '失败项已重试成功，更新 {retried} 条。耗时 {elapsed}。', { retried: retryPayload.retried, elapsed: formatSeconds(retryPayload.elapsed_seconds) });
+          resultState.retryLoadingRequested = false;
         }
       } catch (error) {
         stopLoading();
+        resultState.retryLoadingRequested = false;
         statusBox.className = 'status error';
         statusBox.textContent = error.message;
         renderResultShell();
@@ -12273,12 +12831,31 @@ __TARGET_LOCALE_OPTIONS_HTML__
       if (!payload) {
         return `<div class="empty">${escapeHtml(ui('result.no_report', '还没有生成报告。'))}</div>`;
       }
+      const sc = payload.status_counts || {};
+      const successCount = (sc.translated || 0) + (sc.reused || 0);
+      const failedCount = sc.api_failed || 0;
+      const skippedCount = sc.skipped || 0;
+      const totalCount = successCount + failedCount + skippedCount;
+      const successRate = totalCount > 0 ? Math.round((successCount / totalCount) * 100) : 0;
+      const reportStatsCards = [
+        [ui('result.report_stats_success', '成功'), successCount, 'success'],
+        [ui('result.report_stats_failed', '失败'), failedCount, 'danger'],
+        [ui('result.report_stats_skipped', '跳过'), skippedCount, 'warning'],
+        [ui('result.report_stats_success_rate', '成功率'), successRate + '%', ''],
+      ];
+      const reportStatsHtml = reportStatsCards.map(([label, value, tone]) => `
+        <div class="history-stat" data-tone="${escapeHtml(tone)}">
+          <strong>${escapeHtml(value)}</strong>
+          <span>${escapeHtml(label)}</span>
+        </div>
+      `).join('');
       return `
         <div class="view-frame">
           <div class="view-head">
             <div><strong>${escapeHtml(ui('result.report', '翻译报告'))}</strong><div class="muted">${escapeHtml(ui('result.report_subtitle', '当前任务内嵌报告视图'))}</div></div>
             <div class="toolbar"><button type="button" class="secondary" id="report-doc-link" data-doc-target="history-and-report"><i class="ri-book-open-line"></i><span>${escapeHtml(ui('docs.open_report', '查看报告说明'))}</span></button></div>
           </div>
+          <div class="history-stats">${reportStatsHtml}</div>
           <div class="view-body">
             <div class="toolbar">
               <input id="report-search" value="${escapeHtml(resultState.reportSearch)}" placeholder="${escapeHtml(ui('result.search_report', '搜索状态、JAR、Mod ID、文件、Key、原文或译文'))}">
