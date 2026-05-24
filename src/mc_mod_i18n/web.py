@@ -136,7 +136,13 @@ from .ui_i18n import (
 )
 from .validator import validate_translation
 from . import provider_checks as _provider_checks
-from .web_assets import render_index_html
+from .web_assets import read_static_asset, render_index_html
+from .web_fonts import (
+    delete_user_font,
+    list_font_catalog,
+    resolve_font_file,
+    upload_user_font,
+)
 from . import web_branding as _web_branding
 from .web_branding import (
     BRANDING_CONFIG_FILENAME,
@@ -157,6 +163,8 @@ from .web_state import (
     clear_translation_memory,
     compact_translation_memory,
     import_translation_memory,
+    list_translation_memory_scopes,
+    query_translation_memory,
     update_translation_memory_entry,
     delete_translation_memory_entry,
     default_cache_root,
@@ -401,6 +409,46 @@ def make_handler(
                     return
                 self._send_bytes(icon_path.read_bytes(), "image/x-icon")
                 return
+            if parsed.path.startswith("/assets/css/") or parsed.path.startswith("/assets/js/"):
+                subdir = "css" if parsed.path.startswith("/assets/css/") else "js"
+                filename = parsed.path.removeprefix(f"/assets/{subdir}/")
+                data = read_static_asset(subdir, filename)
+                if data is None:
+                    self.send_error(404)
+                    return
+                content_type = "text/css; charset=utf-8" if subdir == "css" else "application/javascript; charset=utf-8"
+                self._send_bytes(data, content_type)
+                return
+            if parsed.path.startswith("/assets/fonts/"):
+                rest = parsed.path.removeprefix("/assets/fonts/")
+                scope, sep, encoded_name = rest.partition("/")
+                if not sep:
+                    self.send_error(404)
+                    return
+                name = unquote(encoded_name)
+                resolved = resolve_font_file(workdir, bundled_resource_root(), scope, name)
+                if resolved is None:
+                    self.send_error(404)
+                    return
+                font_path, content_type = resolved
+                try:
+                    payload = font_path.read_bytes()
+                except OSError:
+                    self.send_error(404)
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", content_type)
+                self.send_header("Content-Length", str(len(payload)))
+                self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+                self.end_headers()
+                self.wfile.write(payload)
+                return
+            if parsed.path == "/api/fonts":
+                try:
+                    self._send_json({"ok": True, **list_font_catalog(workdir, bundled_resource_root())})
+                except Exception as exc:
+                    self._send_json({"ok": False, "error": str(exc)}, status=500)
+                return
             if parsed.path.startswith("/api/progress/"):
                 self._send_progress(parsed.path.removeprefix("/api/progress/"))
                 return
@@ -466,6 +514,20 @@ def make_handler(
             if parsed.path == "/api/translation-memory":
                 try:
                     payload = self._handle_translation_memory(parsed.query)
+                    self._send_json(payload)
+                except Exception as exc:
+                    self._send_json({"ok": False, "error": str(exc)}, status=500)
+                return
+            if parsed.path == "/api/translation-memory/scopes":
+                try:
+                    payload = self._handle_translation_memory_scopes(parsed.query)
+                    self._send_json(payload)
+                except Exception as exc:
+                    self._send_json({"ok": False, "error": str(exc)}, status=500)
+                return
+            if parsed.path == "/api/translation-memory/list":
+                try:
+                    payload = self._handle_translation_memory_list(parsed.query)
                     self._send_json(payload)
                 except Exception as exc:
                     self._send_json({"ok": False, "error": str(exc)}, status=500)
@@ -609,6 +671,13 @@ def make_handler(
                 except Exception as exc:
                     self._send_json({"ok": False, "error": str(exc)}, status=400)
                 return
+            if parsed.path == "/api/fonts/upload":
+                try:
+                    payload = self._handle_font_upload()
+                    self._send_json(payload, status=200 if payload.get("ok") else 400)
+                except Exception as exc:
+                    self._send_json({"ok": False, "error": str(exc)}, status=400)
+                return
             if parsed.path == "/api/presets":
                 try:
                     payload = self._handle_preset_save()
@@ -658,6 +727,14 @@ def make_handler(
                     name = unquote(parsed.path.removeprefix("/api/presets/"))
                     delete_config_preset(workdir, name)
                     self._send_json({"ok": True, "presets": list_config_presets(workdir)})
+                except Exception as exc:
+                    self._send_json({"ok": False, "error": str(exc)}, status=400)
+                return
+            if parsed.path.startswith("/api/fonts/"):
+                try:
+                    font_id = unquote(parsed.path.removeprefix("/api/fonts/"))
+                    payload = delete_user_font(workdir, font_id)
+                    self._send_json(payload, status=200 if payload.get("ok") else 400)
                 except Exception as exc:
                     self._send_json({"ok": False, "error": str(exc)}, status=400)
                 return
@@ -853,6 +930,35 @@ def make_handler(
             scope_config = values.get("scope_config", [""])[0]
             scope = translation_memory_scope_from_config(json.loads(scope_config)) if scope_config else ""
             return {"ok": True, **translation_memory_stats(cache_root, scope=scope)}
+
+        def _handle_translation_memory_scopes(self, query: str) -> dict[str, Any]:
+            cache_root = self._cache_root_from_query(query)
+            scopes = list_translation_memory_scopes(cache_root)
+            return {"ok": True, "scopes": scopes}
+
+        def _handle_translation_memory_list(self, query: str) -> dict[str, Any]:
+            cache_root = self._cache_root_from_query(query)
+            values = parse_qs(query or "")
+            scope = values.get("scope", [""])[0]
+            q = values.get("q", [""])[0]
+            page_raw = values.get("page", ["1"])[0]
+            page_size_raw = values.get("page_size", ["50"])[0]
+            try:
+                page = int(page_raw)
+            except (TypeError, ValueError):
+                page = 1
+            try:
+                page_size = int(page_size_raw)
+            except (TypeError, ValueError):
+                page_size = 50
+            result = query_translation_memory(
+                cache_root,
+                scope=scope,
+                q=q,
+                page=page,
+                page_size=page_size,
+            )
+            return {"ok": True, **result}
 
         def _send_translation_memory_export(self, query: str) -> None:
             cache_root = self._cache_root_from_query(query)
@@ -1055,6 +1161,18 @@ def make_handler(
             payload = json.loads(body.decode("utf-8") or "{}")
             preset = write_config_preset(workdir, str(payload.get("name", "")), payload.get("config", {}))
             return {"ok": True, "preset": preset, "presets": list_config_presets(workdir)}
+
+        def _handle_font_upload(self) -> dict[str, Any]:
+            length = int(self.headers.get("Content-Length") or "0")
+            body = self.rfile.read(length)
+            try:
+                parts = parse_multipart(self.headers.get("Content-Type", ""), body)
+            except ValueError as exc:
+                return {"ok": False, "error": str(exc)}
+            file_part = next((p for p in parts if p.filename and p.data), None)
+            if file_part is None:
+                return {"ok": False, "error": "缺少字体文件"}
+            return upload_user_font(workdir, file_part.filename or "", file_part.data)
 
         def _handle_translate(self) -> dict[str, Any]:
             length = int(self.headers.get("Content-Length") or "0")
@@ -1919,6 +2037,9 @@ def run_json_translate_job(
         started_at = time.perf_counter()
         translator = create_translator(args)
         isolate_translator = args.provider == "deep-free"
+        same_locale = str(args.source_locale or "").strip().lower() == str(args.target_locale or "").strip().lower()
+        if isolate_translator and same_locale:
+            raise RuntimeError("deep-free job rejected: source locale equals target locale")
         report_entries: list[ReportEntry] = []
         output_paths: list[Path] = []
         output_names: set[str] = set()

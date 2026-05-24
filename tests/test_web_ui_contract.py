@@ -8,7 +8,33 @@ from pathlib import Path
 import unittest
 
 from mc_mod_i18n.ui_i18n import merged_catalog
-from mc_mod_i18n.web import INDEX_HTML, normalize_models_url, parse_models_response, unique_filename
+from mc_mod_i18n.web import INDEX_HTML as _SERVED_INDEX_HTML, normalize_models_url, parse_models_response, unique_filename
+from mc_mod_i18n.web_assets import read_static_asset
+
+
+def _bundle_referenced_assets(html: str) -> str:
+    """Append the bytes of every /assets/(css|js)/<name> referenced by the page.
+
+    Lets substring-based contract tests grep the entire logical document
+    (HTML + linked CSS + linked JS) without caring whether content sits
+    inline or in an external file.
+    """
+    parts = [html]
+    seen: set[tuple[str, str]] = set()
+    for subdir, filename in re.findall(r"/assets/(css|js)/([A-Za-z0-9_\-./]+)", html):
+        key = (subdir, filename)
+        if key in seen:
+            continue
+        seen.add(key)
+        data = read_static_asset(subdir, filename)
+        if data is None:
+            continue
+        parts.append(f"\n/* === {subdir}/{filename} === */\n")
+        parts.append(data.decode("utf-8", errors="replace"))
+    return "".join(parts)
+
+
+INDEX_HTML = _bundle_referenced_assets(_SERVED_INDEX_HTML)
 
 
 class WebUiContractTest(unittest.TestCase):
@@ -183,7 +209,9 @@ class WebUiContractTest(unittest.TestCase):
         source = Path(__file__).resolve().parents[1] / "src" / "mc_mod_i18n" / "web.py"
         text = source.read_text(encoding="utf-8")
         self.assertIn("MINECRAFT_LOCALES_JSON", text)
-        self.assertIn('const minecraftLocales = __MINECRAFT_LOCALES_JSON__;', text)
+        self.assertIn("minecraft_locales_json=MINECRAFT_LOCALES_JSON", text)
+        self.assertIn('const minecraftLocales = ', INDEX_HTML)
+        self.assertNotIn('__MINECRAFT_LOCALES_JSON__', INDEX_HTML)
         self.assertNotIn('["zh_tw", "繁體中文"]', text)
         self.assertNotIn('["zh_hk", "繁體中文（香港）"]', text)
         self.assertIn("locale-control-input", INDEX_HTML)
@@ -335,7 +363,7 @@ class WebUiContractTest(unittest.TestCase):
         self.assertNotIn(".branding-option span {\n      display: block;", INDEX_HTML)
 
     def test_settings_menu_exposes_glossary_management(self) -> None:
-        self.assertIn('id="settings-glossary-section"', INDEX_HTML)
+        self.assertIn('id="glossary-panel"', INDEX_HTML)
         self.assertIn('id="settings-glossary-editor"', INDEX_HTML)
         self.assertIn('id="settings-glossary-table"', INDEX_HTML)
         self.assertIn('id="settings-glossary-search"', INDEX_HTML)
@@ -350,7 +378,7 @@ class WebUiContractTest(unittest.TestCase):
         self.assertIn("collectGlossaryTermsFromTable", INDEX_HTML)
         self.assertIn("renderGlossaryConflicts", INDEX_HTML)
         self.assertIn("fetch('/api/glossary'", INDEX_HTML)
-        self.assertIn("settings.glossary_section", INDEX_HTML)
+        self.assertIn("nav.glossary", INDEX_HTML)
 
     def test_settings_menu_exposes_config_presets_without_api_key_storage(self) -> None:
         self.assertIn('id="settings-presets-section"', INDEX_HTML)
@@ -607,7 +635,7 @@ class WebUiContractTest(unittest.TestCase):
     def test_progress_polling_ignores_stale_async_responses_after_completion(self) -> None:
         self.assertIn("let progressPollToken = 0;", INDEX_HTML)
         self.assertIn("const pollToken = ++progressPollToken;", INDEX_HTML)
-        self.assertIn("if (pollToken !== progressPollToken || activeJobId !== jobId) {", INDEX_HTML)
+        self.assertIn("const isActivePoll = () => pollToken === progressPollToken", INDEX_HTML)
         self.assertIn("progressTimer = window.setTimeout(poll, 900);", INDEX_HTML)
         self.assertNotIn("progressTimer = window.setInterval(poll, 900);", INDEX_HTML)
 
@@ -1036,7 +1064,7 @@ class WebUiContractTest(unittest.TestCase):
         self.assertIn('<option value="en_us" selected>en_us - English (US)</option>', INDEX_HTML)
         source = Path(__file__).resolve().parents[1] / "src" / "mc_mod_i18n" / "web.py"
         text = source.read_text(encoding="utf-8")
-        self.assertIn('INDEX_HTML = INDEX_HTML.replace("__SOURCE_LOCALE_OPTIONS_HTML__", _locale_options_html("en_us"))', text)
+        self.assertIn('source_locale_options_html=_locale_options_html("en_us")', text)
         self.assertNotIn('<option value="en_us" selected>en_us - English (US)</option>', text)
         self.assertIn("inferLocaleFromFtbquestsUploadPath", INDEX_HTML)
         self.assertIn("syncFtbquestsSourceLocaleFromInput", INDEX_HTML)

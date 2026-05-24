@@ -520,6 +520,146 @@ def delete_translation_memory_entry(cache_root: Path, scope: str, source: str) -
     return {"ok": True}
 
 
+_TRANSLATION_MEMORY_SAMPLE_MAX = 60
+
+
+def _truncate_sample_text(value: str, limit: int = _TRANSLATION_MEMORY_SAMPLE_MAX) -> str:
+    text = str(value or "")
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "…"
+
+
+def _escape_like_pattern(value: str) -> str:
+    return (
+        str(value or "")
+        .replace("~", "~~")
+        .replace("%", "~%")
+        .replace("_", "~_")
+    )
+
+
+def list_translation_memory_scopes(cache_root: Path) -> list[dict[str, Any]]:
+    """按 scope 聚合返回翻译记忆概览，供翻译记忆一级页面侧栏使用。
+
+    返回列表按条目数倒序，每项包含 count / latest_updated_at 以及该 scope
+    最新一条的 source / target 样本（>60 字符截断）。
+    """
+    ensure_translation_memory_migrated(cache_root)
+    path = translation_memory_path(cache_root)
+    with connect_app_db(path) as connection:
+        scope_rows = connection.execute(
+            """
+            SELECT scope, COUNT(*) AS cnt, MAX(updated_at) AS latest
+            FROM translation_memory
+            GROUP BY scope
+            ORDER BY cnt DESC, scope ASC
+            """
+        ).fetchall()
+        results: list[dict[str, Any]] = []
+        for row in scope_rows:
+            scope_value = str(row["scope"] or "")
+            latest_value = str(row["latest"] or "")
+            sample = connection.execute(
+                """
+                SELECT source, target
+                FROM translation_memory
+                WHERE scope = ?
+                ORDER BY updated_at DESC, rowid DESC
+                LIMIT 1
+                """,
+                (scope_value,),
+            ).fetchone()
+            sample_source = _truncate_sample_text(sample["source"]) if sample else ""
+            sample_target = _truncate_sample_text(sample["target"]) if sample else ""
+            results.append(
+                {
+                    "scope": scope_value,
+                    "count": int(row["cnt"] or 0),
+                    "sample_source": sample_source,
+                    "sample_target": sample_target,
+                    "latest_updated_at": latest_value,
+                }
+            )
+    return results
+
+
+def query_translation_memory(
+    cache_root: Path,
+    *,
+    scope: str = "",
+    q: str = "",
+    page: int = 1,
+    page_size: int = 50,
+) -> dict[str, Any]:
+    """分页查询翻译记忆条目，供翻译记忆一级页面表格使用。
+
+    - scope 为空表示不限 scope；非空仅返回该 scope 下条目。
+    - q 为空表示不过滤；非空对 source / target 做大小写不敏感的模糊匹配。
+    - page 从 1 起；page_size 限制在 [1, 200]。
+    - 排序：updated_at DESC, rowid DESC。
+    """
+    ensure_translation_memory_migrated(cache_root)
+
+    try:
+        page_int = int(page)
+    except (TypeError, ValueError):
+        page_int = 1
+    try:
+        page_size_int = int(page_size)
+    except (TypeError, ValueError):
+        page_size_int = 50
+    page_int = max(1, page_int)
+    page_size_int = max(1, min(200, page_size_int))
+
+    scope_value = str(scope or "")
+    q_value = str(q or "")
+
+    where_clauses: list[str] = []
+    params: list[Any] = []
+    if scope_value:
+        where_clauses.append("scope = ?")
+        params.append(scope_value)
+    if q_value:
+        like_pattern = "%" + _escape_like_pattern(q_value).lower() + "%"
+        where_clauses.append("(LOWER(source) LIKE ? ESCAPE '~' OR LOWER(target) LIKE ? ESCAPE '~')")
+        params.extend([like_pattern, like_pattern])
+    where_sql = (" WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+
+    offset = (page_int - 1) * page_size_int
+    path = translation_memory_path(cache_root)
+    with connect_app_db(path) as connection:
+        total = int(
+            connection.execute(
+                f"SELECT COUNT(*) FROM translation_memory{where_sql}",
+                params,
+            ).fetchone()[0]
+        )
+        rows = connection.execute(
+            f"""
+            SELECT scope, source, target, updated_at
+            FROM translation_memory{where_sql}
+            ORDER BY updated_at DESC, rowid DESC
+            LIMIT ? OFFSET ?
+            """,
+            (*params, page_size_int, offset),
+        ).fetchall()
+    return {
+        "rows": [
+            {
+                "scope": str(row["scope"] or ""),
+                "source": str(row["source"] or ""),
+                "target": str(row["target"] or ""),
+                "updated_at": str(row["updated_at"] or ""),
+            }
+            for row in rows
+        ],
+        "total": total,
+        "page": page_int,
+        "page_size": page_size_int,
+    }
+
+
 def shared_cache_scope_dir(cache_root: Path, args: argparse.Namespace) -> Path:
     digest = compute_translation_config_hash(args)[:16]
     scope_dir = cache_root / digest
