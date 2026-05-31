@@ -1,6 +1,26 @@
 # mc-mod-i18n
 
-Minecraft Mod JAR 自动汉化工具。当前版本实现 CLI MVP：扫描 Mod JAR 中的英文语言文件，生成 `zh_cn` 资源包 ZIP 和 HTML 报告。
+Minecraft Mod JAR 自动汉化和本地化辅助工具，面向中文 Minecraft 玩家、整合包作者、服务器维护者和模组汉化维护者。
+
+项目会扫描 Mod JAR 中的英文语言文件，生成 `zh_cn` 资源包 ZIP 和 HTML 报告；也提供 Web UI、桌面版、翻译记忆、术语表、硬编码英文扫描和补丁 Mod 模板，帮助维护者把重复、容易出错的汉化流程自动化。
+
+English summary: `mc-mod-i18n` is an open-source localization assistant for Minecraft mods. It generates Chinese resource packs from mod JARs, reports untranslated or risky strings, supports multiple translation providers, and helps Chinese players and pack maintainers localize modded Minecraft content more reliably.
+
+## 项目价值
+
+Minecraft 模组生态非常依赖社区翻译。很多整合包会同时包含几十到上百个 Mod，语言文件、内嵌 JarJar、Ponder 教程、配置注释和 Java 代码硬编码文本常常分散在不同位置，人工维护成本很高。
+
+`mc-mod-i18n` 的目标是把这些维护工作变成可重复的开源工具链：
+
+- 为中文玩家快速生成可用的 `zh_cn` 资源包。
+- 为整合包维护者输出可审查的 HTML 报告和失败项。
+- 用术语表和翻译记忆减少重复翻译，保持同一套 Mod 内术语一致。
+- 扫描资源包无法覆盖的硬编码英文，并生成后续补丁 Mod / 配置模板的输入。
+- 支持本地离线、开源服务和 OpenAI-compatible / Anthropic-compatible 等多种翻译 provider。
+
+## 当前状态
+
+这个仓库处于活跃开发阶段，已经包含 CLI、Web UI、桌面启动入口、Windows 打包脚本、帮助文档、自动化测试和 NeoForge 硬编码补丁模板。后续重点包括更稳定的发布包、更多真实 Mod 样例、硬编码文本替换入口扩展、翻译质量校验和社区贡献文档。
 
 ## 使用
 
@@ -255,3 +275,11 @@ Web UI 处理完成后会显示“硬编码映射工作台”：
 `hardcoded-map.json` 不是资源包文件，单独放进资源包不会让 Java 代码里写死的英文生效。它的用途是作为运行时补丁 Mod / Mixin / 配置模板生成器的输入：补丁在游戏显示文本的入口处按原文查表替换，或把可配置的注释/模板写成目标模组能读取的格式。
 
 仓库内置一个最小 NeoForge 1.21.1 起步模板：`templates/neoforge-hardcoded-patch`。它会读取 `config/mc-mod-i18n/hardcoded-map.json`，并先通过 `ItemTooltipEvent` 替换物品 tooltip 中与原文完全匹配的文本。后续可以在这个模板上继续补 Screen、Ponder、配置注释等入口。
+
+## 贡献
+
+欢迎提交真实 Mod 样例、翻译 provider 适配、硬编码文本入口、术语表改进、UI/桌面体验优化和文档修正。提交问题时，尽量附上 Mod 来源、Minecraft/Loader 版本、复现命令、生成报告和期望输出。
+
+## 许可证
+
+本项目使用 MIT License，详见 [LICENSE](LICENSE)。
