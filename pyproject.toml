@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "mc-mod-i18n"
 version = "0.1.0"
-description = "Generate Chinese Minecraft mod resource packs from mod JAR language files."
+description = "Generate localized Minecraft mod resource packs from mod JAR language files."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
